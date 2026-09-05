@@ -1,0 +1,252 @@
+{
+  "3": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "绘星海_清新风格 StarSea_pastel _v5.safetensors"
+    }
+  },
+  "11": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "3",
+        0
+      ],
+      "clip": [
+        "3",
+        1
+      ],
+      "lora_name": "z3画风_illv0.1.safetensors",
+      "strength_model": 0.4,
+      "strength_clip": 0.4
+    }
+  },
+  "9": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "11",
+        0
+      ],
+      "clip": [
+        "11",
+        1
+      ],
+      "lora_name": "鬼针草-Illustriou_NoobAI_1.0.safetensors",
+      "strength_model": 0.8,
+      "strength_clip": 0.8
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "masterpiece, best quality, very aesthetic, absurdres, highres, anime style, soft cel shading, clean line art, thin black outlines, flat soft colors, cute moe style, (chibi:1.4), chibi, kawaii, cute, sticker style, (flat solid royal blue background:1.4), uniform royal blue backdrop, deep blue chroma key background, solid blue backdrop, no gradient, no shading, no shadow, no props, empty background, 1girl, solo, small body, large head, short stature, full body, standing upright, straight standing pose, both feet on the ground, front view, looking at viewer, (right leg slightly bent at knee:1.2), legs together, natural pose, (silver hair:1.5), pure silver-white hair, white hair, very long hair, side ponytail, single side ponytail, hair over shoulder, no blue tint in hair, bright silver-white hair, loli, petite, cute face, (pure white and pink gothic lolita dress:1.5), white gothic lolita dress, mostly white fabric, white off-shoulder dress, pink frills, pink lace trim, pink ribbons, pink bows, white detached sleeves, puffy long detached sleeves, (pink-purple gradient eyes:1.4), gradient iris, pink eyes, purple eyes, (pure white thighhighs:1.2), white thighhighs, (leg garter on left thigh:1.2), one leg garter, thigh garter, (tiny orange tangerine hairclip on side ponytail:1.4), small orange fruit hairpin, miniature orange charm with green leaf, small hair ornament only, elegant, soft smile, detailed outfit, clean lineart, royal blue background",
+      "clip": [
+        "9",
+        1
+      ]
+    }
+  },
+  "8": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "lowres, bad anatomy, bad hands, extra fingers, mutated hands, poorly drawn face, blurry, ugly, distorted, watermark, signature, text, bad proportions, cropped, worst quality, jpeg artifacts, multiple views, character sheet, three legs, extra legs, mutated legs, contorted pose, lying, lying down, reclining, sitting on object, prone, on the ground, giant orange, large orange object, orange fruit on body, orange object, props, floor objects, heterochromia, brown hair, two leg garters, adult, muscular, tall, (blue hair:1.5), blue-tinted hair, blue hair highlights, blue hair color, blue reflections in hair, ambient blue light on character, (blue dress:1.5), navy dress, dark blue dress, blue clothing, blue sleeves, blue ribbons, blue thighhighs, cyan dress, (clothing tinted blue:1.3), black dress, dark dress, red dress, (orange hair:1.5), orange hair color, orange hair highlights, orange streaks, dyed hair, gradient hair, multicolored hair, (light blue background:1.4), pale blue background, cyan background, sky blue background, pastel background, (orange background:1.3), (pink background:1.2), (white background:1.2), background gradient, gradient background, scenery, complex background, tube dress, strapless dress, slip dress, spaghetti strap, camisole, bare midriff, nsfw",
+      "clip": [
+        "9",
+        1
+      ]
+    }
+  },
+  "20": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    }
+  },
+  "6": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "9",
+        0
+      ],
+      "positive": [
+        "7",
+        0
+      ],
+      "negative": [
+        "8",
+        0
+      ],
+      "latent_image": [
+        "20",
+        0
+      ],
+      "seed": 2026097002,
+      "steps": 30,
+      "cfg": 8,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 0.8
+    }
+  },
+  "2": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "6",
+        0
+      ],
+      "vae": [
+        "3",
+        2
+      ]
+    }
+  },
+  "12": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "bbox/face_yolov8m.pt"
+    }
+  },
+  "14": {
+    "class_type": "FaceDetailer",
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "model": [
+        "9",
+        0
+      ],
+      "clip": [
+        "9",
+        1
+      ],
+      "vae": [
+        "3",
+        2
+      ],
+      "positive": [
+        "7",
+        0
+      ],
+      "negative": [
+        "8",
+        0
+      ],
+      "bbox_detector": [
+        "12",
+        0
+      ],
+      "guide_size": 512,
+      "guide_size_for": true,
+      "max_size": 1024,
+      "seed": 1,
+      "steps": 30,
+      "cfg": 5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 0.5,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.5,
+      "bbox_dilation": 10,
+      "bbox_crop_factor": 3,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 0,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 10,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": false,
+      "tiled_decode": false
+    }
+  },
+  "13": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "bbox/hand_yolov8s.pt"
+    }
+  },
+  "15": {
+    "class_type": "FaceDetailer",
+    "inputs": {
+      "image": [
+        "14",
+        0
+      ],
+      "model": [
+        "9",
+        0
+      ],
+      "clip": [
+        "9",
+        1
+      ],
+      "vae": [
+        "3",
+        2
+      ],
+      "positive": [
+        "7",
+        0
+      ],
+      "negative": [
+        "8",
+        0
+      ],
+      "bbox_detector": [
+        "13",
+        0
+      ],
+      "guide_size": 512,
+      "guide_size_for": true,
+      "max_size": 1024,
+      "seed": 0,
+      "steps": 30,
+      "cfg": 5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 0.5,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.5,
+      "bbox_dilation": 10,
+      "bbox_crop_factor": 3,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 0,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 10,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": false,
+      "tiled_decode": false
+    }
+  },
+  "5": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "15",
+        0
+      ],
+      "filename_prefix": "cliko_QBA5"
+    }
+  }
+}

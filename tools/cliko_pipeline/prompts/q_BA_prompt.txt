@@ -1,0 +1,52 @@
+cliko Q 版待机帧（double_lora_BA v5：站姿立绘、小橘子发饰、权重≤1.5）
+尺寸：1024x1024（方形）
+
+正向：
+masterpiece, best quality, very aesthetic, absurdres, highres, anime style,
+soft cel shading, clean line art, thin black outlines, flat soft colors, cute moe style,
+(chibi:1.4), chibi, kawaii, cute, sticker style,
+(flat solid royal blue background:1.4), uniform royal blue backdrop,
+deep blue chroma key background, solid blue backdrop,
+no gradient, no shading, no shadow, no props, empty background,
+
+1girl, solo, small body, large head, short stature,
+full body, standing upright, straight standing pose,
+both feet on the ground, front view, looking at viewer,
+(right leg slightly bent at knee:1.2), legs together, natural pose,
+(silver hair:1.5), pure silver-white hair, white hair, very long hair,
+side ponytail, single side ponytail, hair over shoulder,
+no blue tint in hair, bright silver-white hair,
+loli, petite, cute face,
+(pure white and pink gothic lolita dress:1.5), white gothic lolita dress,
+mostly white fabric, white off-shoulder dress,
+pink frills, pink lace trim, pink ribbons, pink bows,
+white detached sleeves, puffy long detached sleeves,
+(pink-purple gradient eyes:1.4), gradient iris, pink eyes, purple eyes,
+(pure white thighhighs:1.2), white thighhighs,
+(leg garter on left thigh:1.2), one leg garter, thigh garter,
+(tiny orange tangerine hairclip on side ponytail:1.4),
+small orange fruit hairpin, miniature orange charm with green leaf,
+small hair ornament only,
+elegant, soft smile, detailed outfit, clean lineart, royal blue background
+
+负向：
+lowres, bad anatomy, bad hands, extra fingers, mutated hands, poorly drawn face,
+blurry, ugly, distorted, watermark, signature, text, bad proportions, cropped,
+worst quality, jpeg artifacts, multiple views, character sheet,
+three legs, extra legs, mutated legs, contorted pose, lying, lying down,
+reclining, sitting on object, prone, on the ground,
+giant orange, large orange object, orange fruit on body, orange object,
+props, floor objects, heterochromia, brown hair, two leg garters,
+adult, muscular, tall,
+(blue hair:1.5), blue-tinted hair, blue hair highlights, blue hair color,
+blue reflections in hair, ambient blue light on character,
+(blue dress:1.5), navy dress, dark blue dress, blue clothing,
+blue sleeves, blue ribbons, blue thighhighs, cyan dress,
+(clothing tinted blue:1.3), black dress, dark dress, red dress,
+(orange hair:1.5), orange hair color, orange hair highlights, orange streaks,
+dyed hair, gradient hair, multicolored hair,
+(light blue background:1.4), pale blue background, cyan background,
+sky blue background, pastel background,
+(orange background:1.3), (pink background:1.2), (white background:1.2),
+background gradient, gradient background, scenery, complex background,
+tube dress, strapless dress, slip dress, spaghetti strap, camisole, bare midriff, nsfw

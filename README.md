@@ -74,6 +74,12 @@ python -m pytest tests -q
 指到临时文件）；覆盖 cron 解析、提醒去重、计算器安全、便签/会话/摘要/
 好感度持久化、人设注册表等核心逻辑。
 
+## 角色素材生成管线（可选）
+
+cliko 表情帧的本地 ComfyUI 出图管线（提示词/工作流/脚本）见
+[tools/cliko_pipeline/README.md](tools/cliko_pipeline/README.md)。
+生成的 PNG 素材只落在 gitignore 的 `user_pets/`，仓库只分发管线代码与提示词。
+
 ## 配置（.env）
 
 ```ini

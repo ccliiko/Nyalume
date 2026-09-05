@@ -1,0 +1,4 @@
+# 表情帧管线的本地依赖（ComfyUI 另装）
+pillow>=10.0
+numpy>=1.26
+scipy>=1.11
