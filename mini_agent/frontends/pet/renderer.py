@@ -4,15 +4,27 @@
 按心情画一只小奶猫：疏离/闹别扭/日常/心动/深爱，调用工具时显示“···”。
 """
 
+import math
 import os
+import time
 import tkinter as tk
 
 from . import pets_registry
+
+try:
+    from PIL import Image as PILImage
+    from PIL import ImageTk
+except ImportError:  # 无 Pillow 时只是不支持边缘趴头裁剪
+    PILImage = None
+    ImageTk = None
 
 _TRANSPARENT = "#010203"  # Windows 透明色键：窗口里这个颜色会被抠掉
 _ANIM_MS = 420
 _CLICK_TOLERANCE = 5
 _BUBBLE_MS = 2400
+_DOCK_EDGE = 60          # 距边缘多少像素触发趴边
+_IDLE_SECONDS = 30       # 超过多久没人理进入待机
+_HEAD_BOX = (0.16, 0.05, 0.84, 0.62)  # 立绘裁出“头”的区域（相对坐标）
 
 
 class PetWindow:
@@ -27,8 +39,15 @@ class PetWindow:
         self.working = False
         self._tick = 0
         self._photos = {}
+        self._dock_photos = {}
         self._after = None
         self._bubble_job = None
+        self.docked = False
+        self._dock_axis = None
+        self.idle_mode = False
+        self.last_activity = time.time()
+        self._moved = False
+        self._dock_box = None
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -64,6 +83,22 @@ class PetWindow:
     def set_working(self, flag: bool) -> None:
         self.working = bool(flag)
 
+    def poke(self) -> None:
+        """有人理它了：重置待机计时。"""
+        self.last_activity = time.time()
+        self.idle_mode = False
+
+    def hide(self) -> None:
+        """缩到后台（托盘仍可呼出）。"""
+        self.win.withdraw()
+
+    def show(self) -> None:
+        """从后台/托盘恢复显示。"""
+        if self.docked:
+            self._undock(restore=False)
+        self.win.deiconify()
+        self.win.lift()
+
     def cheer(self, text: str) -> None:
         """任务完成：头顶冒出一句台词，几秒后消失。"""
         if self._bubble_job:
@@ -93,17 +128,91 @@ class PetWindow:
         self.win.geometry(f"{self.w}x{self.h}+{x}+{y}")
 
     def _on_press(self, event) -> None:
+        self.poke()
         self._drag_start = (event.x_root, event.y_root, self.win.winfo_x(), self.win.winfo_y())
+        self._moved = False
 
     def _on_drag(self, event) -> None:
+        self.poke()
         x0, y0, wx, wy = self._drag_start
+        if (
+            not self._moved
+            and (
+                abs(event.x_root - x0) > _CLICK_TOLERANCE
+                or abs(event.y_root - y0) > _CLICK_TOLERANCE
+            )
+        ):
+            self._moved = True
+            if self.docked:
+                self._undock(restore=False)
         self.win.geometry(f"+{wx + event.x_root - x0}+{wy + event.y_root - y0}")
 
     def _on_release(self, event) -> None:
+        self.poke()
         x0, y0, _, _ = self._drag_start
-        if abs(event.x_root - x0) < _CLICK_TOLERANCE and abs(event.y_root - y0) < _CLICK_TOLERANCE:
+        if self._moved:
+            self._maybe_dock()
+        elif (
+            abs(event.x_root - x0) < _CLICK_TOLERANCE
+            and abs(event.y_root - y0) < _CLICK_TOLERANCE
+        ):
             if self.on_click:
                 self.on_click()
+
+    # ---------- 桌面边缘：趴边只露头 ----------
+
+    def _maybe_dock(self) -> None:
+        sw = self.win.winfo_screenwidth()
+        sh = self.win.winfo_screenheight()
+        x = self.win.winfo_x()
+        y = self.win.winfo_y()
+        w, h = self.w, self.h
+        distances = {
+            "left": x,
+            "right": sw - (x + w),
+            "top": y,
+            "bottom": sh - (y + h),
+        }
+        axis = min(distances, key=distances.get)
+        if distances[axis] > _DOCK_EDGE:
+            self.docked = False
+            self._dock_axis = None
+            return
+        cw, ch = self._head_size()
+        if axis == "left":
+            nx, ny = 0, max(0, min(y, sh - ch))
+        elif axis == "right":
+            nx, ny = sw - cw, max(0, min(y, sh - ch))
+        elif axis == "top":
+            nx, ny = max(0, min(x, sw - cw)), 0
+        else:
+            nx, ny = max(0, min(x, sw - cw)), sh - ch
+        self.docked = True
+        self._dock_axis = axis
+        self.canvas.config(width=cw, height=ch)
+        self.win.geometry(f"{cw}x{ch}+{nx}+{ny}")
+
+    def _head_size(self) -> tuple[int, int]:
+        paths = pets_registry.frame_paths(self.pet, "idle")
+        if not paths and PILImage is None:
+            return int(self.w * 0.62), int(self.h * 0.52)
+        if paths and PILImage is not None:
+            with PILImage.open(paths[0]) as im:
+                w, h = im.size
+            l, t, r, b = _HEAD_BOX
+            return max(60, int((r - l) * w)), max(60, int((b - t) * h))
+        return int(self.w * 0.62), int(self.h * 0.52)
+
+    def _undock(self, restore: bool = False) -> None:
+        """拖出来时恢复完整窗口尺寸；restore=True 时回到右下角默认位置。"""
+        self.docked = False
+        self._dock_axis = None
+        self.canvas.config(width=self.w, height=self.h)
+        if restore:
+            self._place_bottom_right()
+        else:
+            x, y = self.win.winfo_x(), self.win.winfo_y()
+            self.win.geometry(f"{self.w}x{self.h}+{x}+{y}")
 
     # ---------- 动画 ----------
 
@@ -112,6 +221,13 @@ class PetWindow:
         frames = self.pet.get("frames") or {}
         if self.working and "working" in frames:
             return "working"
+        if (
+            self.idle_mode
+            and not self.docked
+            and not self.working
+            and "idle" in frames
+        ):
+            return "idle"
         if self.mood in frames:
             return self.mood
         if "idle" in frames:
@@ -151,6 +267,12 @@ class PetWindow:
         self._after = self.win.after(_ANIM_MS, self._animate)
 
     def _draw(self) -> None:
+        now = time.time()
+        self.idle_mode = (
+            not self.docked
+            and not self.working
+            and now - self.last_activity >= _IDLE_SECONDS
+        )
         group = self._group_name()
         paths = pets_registry.frame_paths(self.pet, group)
         if not paths:
@@ -158,12 +280,30 @@ class PetWindow:
         self.canvas.delete("pet")
         if paths:
             path = paths[self._tick % len(paths)]
-            photo = self._photos.get(path)
-            if photo is None:
-                photo = tk.PhotoImage(file=path)
-                self._photos[path] = photo
+            if self.docked and PILImage is not None and ImageTk is not None:
+                photo = self._dock_photos.get(path)
+                if photo is None:
+                    with PILImage.open(path) as im:
+                        l, t, r, b = _HEAD_BOX
+                        box = (int(l * im.width), int(t * im.height),
+                               int(r * im.width), int(b * im.height))
+                        crop = im.convert("RGBA").crop(box)
+                    photo = ImageTk.PhotoImage(crop, master=self.win)
+                    self._dock_photos[path] = photo
+            else:
+                photo = self._photos.get(path)
+                if photo is None:
+                    photo = tk.PhotoImage(file=path)
+                    self._photos[path] = photo
+            y_off = 0
+            if self.idle_mode:
+                y_off = int(math.sin(self._tick * 0.7) * 3)
+            if self.docked:
+                cx, cy = photo.width() / 2, photo.height() / 2
+            else:
+                cx, cy = self.w / 2, self.h / 2
             self.canvas.create_image(
-                self.w / 2, self.h / 2, image=photo, tags="pet"
+                cx, cy + y_off, image=photo, tags="pet"
             )
         else:
             self._draw_procedural(group)

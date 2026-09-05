@@ -2,3 +2,5 @@ openai>=1.40
 fastapi>=0.111
 uvicorn>=0.30
 python-dotenv>=1.0
+pillow>=10.0
+pystray>=0.19.5

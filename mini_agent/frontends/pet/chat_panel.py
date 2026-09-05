@@ -9,7 +9,9 @@ import threading
 import tkinter as tk
 
 from mini_agent.core import agent as core_agent
-from mini_agent.core import memory, personas
+from mini_agent.core import memory, personas, reminders
+
+from .pets_registry import band_info
 
 _BG = "#fff7fa"
 _HEADER_BG = "#f3d7e2"
@@ -21,12 +23,15 @@ class ChatPanel:
     def __init__(self, root, session_id: str, on_event=None):
         self.session_id = session_id
         self.on_event = on_event
+        self.on_background = None  # 由 PetApp 注入：隐藏到后台托盘
         self._q: queue.Queue = queue.Queue()
         self._busy = False
         self._streaming = False
         self._failed = False
         self._buf = ""
         self._block_start = None
+        self._state_win = None
+        self._state_text = None
         self.speaker_name = personas.current_persona_name()
 
         self.win = tk.Toplevel(root)
@@ -51,6 +56,16 @@ class ChatPanel:
             head, text="—", command=self.hide, relief="flat", bd=0,
             bg=_HEADER_BG, fg="#9c6b80", activebackground="#ecc3d3",
             font=("Microsoft YaHei", 10, "bold"), padx=10, cursor="hand2",
+        ).grid(row=0, column=3, sticky="e")
+        tk.Button(
+            head, text="挂后台", command=self._background, relief="flat", bd=0,
+            bg=_HEADER_BG, fg="#9c6b80", activebackground="#ecc3d3",
+            font=("Microsoft YaHei", 9), padx=8, cursor="hand2",
+        ).grid(row=0, column=2, sticky="e")
+        tk.Button(
+            head, text="📊 状态", command=self._open_state, relief="flat", bd=0,
+            bg=_HEADER_BG, fg="#9c6b80", activebackground="#ecc3d3",
+            font=("Microsoft YaHei", 9), padx=8, cursor="hand2",
         ).grid(row=0, column=1, sticky="e")
 
         # ---- 消息区（带颜色标签） ----
@@ -97,6 +112,83 @@ class ChatPanel:
 
         self._log_append_system("点我说话，我会一直记得我们的对话喵～")
         self.win.after(90, self._poll)
+
+    # ---------- 状态仪表盘（同 Web 的记忆/状态面板） ----------
+
+    def _open_state(self) -> None:
+        if self._state_win is not None and self._state_win.winfo_exists():
+            self._state_win.deiconify()
+            self._state_win.lift()
+            self._render_state()
+            return
+        win = tk.Toplevel(self.win)
+        win.title("记忆 / 状态")
+        win.geometry("360x460")
+        win.configure(bg="#fff7fa")
+        self._state_win = win
+        head = tk.Frame(win, bg="#f3d7e2")
+        head.pack(fill="x")
+        tk.Label(head, text="记忆 / 状态", bg="#f3d7e2", fg="#7c4a5f",
+                 font=("Microsoft YaHei", 11, "bold"), padx=12, pady=6).pack(side="left")
+        tk.Button(head, text="刷新", command=self._render_state, relief="flat", bd=0,
+                  bg="#f3d7e2", fg="#9c6b80", activebackground="#ecc3d3",
+                  cursor="hand2", font=("Microsoft YaHei", 9)).pack(side="right", padx=6)
+        text = tk.Text(win, wrap="word", state="disabled", bg="#ffffff",
+                       font=("Microsoft YaHei", 10), padx=10, pady=8, relief="flat")
+        text.pack(fill="both", expand=True, padx=8, pady=8)
+        text.tag_configure("h", foreground="#7c4a5f", font=("Microsoft YaHei", 10, "bold"))
+        text.tag_configure("body", foreground="#3a3a3a")
+        text.tag_configure("dim", foreground="#9aa3ad")
+        text.tag_configure("del", foreground="#d93025", underline=True)
+        text.bind("<Button-1>", self._on_state_click)
+        self._state_text = text
+        self._render_state()
+
+    def _render_state(self) -> None:
+        if self._state_win is None or not self._state_win.winfo_exists():
+            return
+        text = self._state_text
+        text.configure(state="normal")
+        text.delete("1.0", "end")
+        _, mood = band_info(memory.get_affection(self.session_id))
+        text.insert("end", f"当前心情：{mood}\n\n", "h")
+
+        text.insert("end", "滚动摘要（L2）\n", "h")
+        summary = memory.get_summary(self.session_id)
+        text.insert("end", (summary or "暂无，多聊几句会自动生成") + "\n\n", "body")
+
+        text.insert("end", "便签（L3）\n", "h")
+        notes = memory.get_recent_notes(6)
+        if not notes:
+            text.insert("end", "还没有便签\n\n", "dim")
+        for n in notes:
+            tag = f"[{n['tag']}] " if n["tag"] else ""
+            text.insert("end", f"· {tag}{n['content']}\n", "body")
+        text.insert("end", "\n定时提醒\n", "h")
+        rows = reminders.list_reminders()
+        if not rows:
+            text.insert("end", "暂无；可以对我说“每天 9 点提醒我…”\n", "dim")
+        for r in rows:
+            text.insert("end", "[取消] ", (f"del_{r['id']}", "del"))
+            text.insert("end", f"#{r['id']} {r['content']}（{r['cron']}）\n", "body")
+        text.configure(state="disabled")
+
+    def _on_state_click(self, event) -> None:
+        text = self._state_text
+        index = text.index(f"@{event.x},{event.y}")
+        tags = text.tag_names(index)
+        for tag in tags:
+            if tag.startswith("del_"):
+                rid = int(tag.split("_", 1)[1])
+                reminders.delete_reminder(rid)
+                self._render_state()
+                return
+
+    # ---------- 挂后台 ----------
+
+    def _background(self) -> None:
+        if self.on_background:
+            self.on_background()
 
     # ---------- 人设名同步 ----------
 

@@ -143,6 +143,42 @@
       background: #fff;
       cursor: pointer;
     }
+    .wall-wrap { position: relative; }
+    .wall-btn {
+      border: 1px solid #ccd3dd;
+      background: #fff;
+      color: #5b6472;
+      border-radius: 6px;
+      font-size: 13px;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+    .wall-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 6px);
+      background: #fff;
+      border: 1px solid #d9dee7;
+      border-radius: 8px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+      padding: 4px;
+      z-index: 30;
+      min-width: 130px;
+    }
+    .wall-menu.hidden { display: none; }
+    .wall-menu button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: none;
+      background: transparent;
+      padding: 7px 10px;
+      font-size: 13px;
+      cursor: pointer;
+      border-radius: 6px;
+      color: #3a4049;
+    }
+    .wall-menu button:hover { background: #eef1f6; }
     #log {
       flex: 1;
       overflow-y: auto;
@@ -192,8 +228,17 @@
     <main>
       <header id="chat-head">
         <span id="chat-title">新对话</span>
+        <div class="wall-wrap">
+          <button id="wall-btn" class="wall-btn" title="聊天壁纸">🖼 壁纸</button>
+          <div id="wall-menu" class="wall-menu hidden">
+            <button data-act="char">角色（cliko）</button>
+            <button data-act="upload">上传图片…</button>
+            <button data-act="clear">清除壁纸</button>
+          </div>
+        </div>
         <select id="persona-select" title="切换人设"></select>
       </header>
+      <input id="wall-file" type="file" accept="image/*" hidden>
       <div id="log"><div class="empty-hint">点击左侧会话，或点 ＋ 开始新对话</div></div>
       <div id="input-row">
         <input id="input" placeholder="试试：帮我算 (12+8)*3，然后记个便签" autocomplete="off">
@@ -210,11 +255,44 @@
     const chatTitle = document.getElementById("chat-title");
     const personaSelect = document.getElementById("persona-select");
     const state = { currentId: null, busy: false, speaker: "cliko" };
+    const wallBtn = document.getElementById("wall-btn");
+    const wallMenu = document.getElementById("wall-menu");
+    const wallFile = document.getElementById("wall-file");
 
     function esc(s) {
       const d = document.createElement("div");
       d.textContent = String(s == null ? "" : s);
       return d.innerHTML;
+    }
+
+    function applyWallpaper(url) {
+      document.body.style.background = "#fff center/cover no-repeat";
+      document.body.style.backgroundImage = "url('" + url + "')";
+    }
+
+    function clearWallpaperUI() {
+      document.body.style.background = "";
+      state.wallUrl = null;
+      localStorage.removeItem("mini_wallpaper");
+    }
+
+    async function applyCharacterWallpaper() {
+      try {
+        const res = await fetch("/api/skin/current");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        if (state.wallUrl) URL.revokeObjectURL(state.wallUrl);
+        state.wallUrl = URL.createObjectURL(await res.blob());
+        applyWallpaper(state.wallUrl);
+        localStorage.setItem("mini_wallpaper", "character");
+      } catch (e) {
+        alert("读取角色壁纸失败：" + e.message);
+      }
+    }
+
+    async function initWallpaper() {
+      if (localStorage.getItem("mini_wallpaper") === "character") {
+        await applyCharacterWallpaper();
+      }
     }
 
     async function api(path, options) {
@@ -476,6 +554,29 @@
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
     setInterval(pollReminders, 15000);
 
+    wallBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      wallMenu.classList.toggle("hidden");
+    });
+    wallMenu.addEventListener("click", async (e) => {
+      const act = e.target.dataset && e.target.dataset.act;
+      if (!act) return;
+      wallMenu.classList.add("hidden");
+      if (act === "char") await applyCharacterWallpaper();
+      else if (act === "upload") wallFile.click();
+      else if (act === "clear") clearWallpaperUI();
+    });
+    wallFile.addEventListener("change", () => {
+      const file = wallFile.files && wallFile.files[0];
+      if (!file) return;
+      if (state.wallUrl) URL.revokeObjectURL(state.wallUrl);
+      state.wallUrl = URL.createObjectURL(file);
+      applyWallpaper(state.wallUrl);
+      localStorage.removeItem("mini_wallpaper"); // 上传图仅本次会话生效
+      wallFile.value = "";
+    });
+    document.addEventListener("click", () => wallMenu.classList.add("hidden"));
+
     // 启动：建出/选中第一个会话并回显历史
     (async function init() {
       await renderSessions();
@@ -484,6 +585,7 @@
         await renderState();
       }
       await initPersona();
+      await initWallpaper();
     })();
   </script>
 </body>
