@@ -127,5 +127,18 @@ def due_reminders():
     return reminders.check_due()
 
 
+@app.get("/api/state")
+def agent_state(session_id: str = "web-default"):
+    """记忆/状态仪表盘数据：会话滚动摘要 + 最近便签 + 定时提醒。"""
+    return {
+        "session_id": session_id,
+        "summary": memory.get_summary(session_id),
+        "notes": memory.get_recent_notes(8),
+        "reminders": reminders.list_reminders(),
+        "persona": personas.resolve_persona_id(),
+        "persona_name": personas.current_persona_name(),
+    }
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
