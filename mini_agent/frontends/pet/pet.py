@@ -7,6 +7,7 @@ from mini_agent.core import memory
 from .chat_panel import ChatPanel
 from .pets_registry import (
     band_info,
+    cheer_phrases,
     get_pet,
     list_pets,
     load_config,
@@ -22,6 +23,7 @@ class PetApp:
         self.session_id = self.cfg.get("session_id") or "pet"
         self.pet_id = self.cfg.get("pet") or "neko-placeholder"
         self.affection = memory.get_affection(self.session_id)
+        self._cheer_idx = 0
 
         self.chat = ChatPanel(self.root, self.session_id, on_event=self._on_chat_event)
         self.chat.hide()
@@ -74,6 +76,12 @@ class PetApp:
         elif kind == "affection":
             self.affection = int(value)
             self.window.set_affection(self.affection)
+        elif kind == "cheer":
+            phrases = cheer_phrases(get_pet(self.pet_id))
+            if phrases:
+                phrase = phrases[self._cheer_idx % len(phrases)]
+                self._cheer_idx += 1
+                self.window.cheer(phrase)
 
     def _quit(self) -> None:
         save_config(self.cfg)

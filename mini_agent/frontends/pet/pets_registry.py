@@ -8,6 +8,7 @@
   "name": "我的宠物",
   "width": 160,
   "height": 160,
+  "cheer": ["菲比啾比！", "啾比～"],          // 任务完成时头顶冒出的台词（可多句轮换）
   "frames": {
     "idle":    ["idle_0.png", "idle_1.png"],   // 待机帧（可多帧循环）
     "distant": ["distant.png"],                 // 好感度分档（可缺省）
@@ -39,6 +40,7 @@ BUILTIN_PET = {
     "height": 150,
     "dir": None,
     "frames": {},
+    "cheer": ["菲比啾比！"],
 }
 
 # 与内核好感度分档一致的皮肤分组：(-100~-41 疏离 / -40~0 闹别扭 /
@@ -65,6 +67,9 @@ def _read_manifest(path: str) -> dict | None:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         frames = data.get("frames") or {}
+        cheer = data.get("cheer") or []
+        if isinstance(cheer, str):
+            cheer = [cheer]
         return {
             "id": str(data["id"]),
             "name": str(data.get("name") or data["id"]),
@@ -72,6 +77,7 @@ def _read_manifest(path: str) -> dict | None:
             "height": int(data.get("height", 160)),
             "dir": os.path.dirname(path),
             "frames": {k: list(v) for k, v in frames.items()},
+            "cheer": [str(p).strip() for p in cheer if str(p).strip()],
         }
     except (OSError, ValueError, KeyError, TypeError):
         return None
@@ -110,6 +116,12 @@ def frame_paths(pet: dict, group: str) -> list[str]:
         for rel in rels
         if os.path.isfile(os.path.join(base, rel))
     ]
+
+
+def cheer_phrases(pet: dict) -> list[str]:
+    """任务完成台词；皮肤没配就回退到内置占位猫的默认台词。"""
+    phrases = pet.get("cheer") or BUILTIN_PET.get("cheer") or []
+    return [str(p) for p in phrases if str(p).strip()]
 
 
 def load_config() -> dict:

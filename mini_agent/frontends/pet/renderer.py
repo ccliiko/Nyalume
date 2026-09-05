@@ -12,6 +12,7 @@ from . import pets_registry
 _TRANSPARENT = "#010203"  # Windows 透明色键：窗口里这个颜色会被抠掉
 _ANIM_MS = 420
 _CLICK_TOLERANCE = 5
+_BUBBLE_MS = 2400
 
 
 class PetWindow:
@@ -27,6 +28,7 @@ class PetWindow:
         self._tick = 0
         self._photos = {}
         self._after = None
+        self._bubble_job = None
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -62,6 +64,14 @@ class PetWindow:
     def set_working(self, flag: bool) -> None:
         self.working = bool(flag)
 
+    def cheer(self, text: str) -> None:
+        """任务完成：头顶冒出一句台词，几秒后消失。"""
+        if self._bubble_job:
+            self.win.after_cancel(self._bubble_job)
+        self.canvas.delete("bubble")
+        self._draw_bubble(str(text))
+        self._bubble_job = self.win.after(_BUBBLE_MS, self._clear_bubble)
+
     def bind_context(self, callback) -> None:
         """绑定右键菜单弹出。"""
         self.canvas.bind("<Button-3>", callback)
@@ -69,6 +79,8 @@ class PetWindow:
     def destroy(self) -> None:
         if self._after:
             self.win.after_cancel(self._after)
+        if self._bubble_job:
+            self.win.after_cancel(self._bubble_job)
         self.win.destroy()
 
     # ---------- 窗口行为 ----------
@@ -105,6 +117,33 @@ class PetWindow:
         if "idle" in frames:
             return "idle"
         return self.mood if self.working else self.mood
+
+    def _clear_bubble(self) -> None:
+        self._bubble_job = None
+        self.canvas.delete("bubble")
+
+    def _draw_bubble(self, text: str) -> None:
+        """在宠物头顶画一个圆角感的气泡（Canvas 矩形 + 指向下方的小尾巴）。"""
+        c = self.canvas
+        font = ("Microsoft YaHei", 11, "bold")
+        width = min(self.w - 10, max(52, len(text) * 15 + 24))
+        height = 32
+        bx = (self.w - width) / 2
+        by = 4
+        c.create_rectangle(
+            bx, by, bx + width, by + height,
+            fill="#ffffff", outline="#f2a6bd", width=2, tags="bubble",
+        )
+        c.create_polygon(
+            self.w / 2 - 7, by + height - 1,
+            self.w / 2 + 7, by + height - 1,
+            self.w / 2, by + height + 7,
+            fill="#ffffff", outline="#f2a6bd", tags="bubble",
+        )
+        c.create_text(
+            self.w / 2, by + height / 2 - 1, text=text,
+            fill="#6b4f6e", font=font, tags="bubble",
+        )
 
     def _animate(self) -> None:
         self._tick += 1

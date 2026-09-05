@@ -15,6 +15,7 @@ class ChatPanel:
         self._q: queue.Queue = queue.Queue()
         self._busy = False
         self._streaming = False
+        self._failed = False
         self._buf = ""
         self._block_start = None
 
@@ -97,6 +98,7 @@ class ChatPanel:
         self._log_append("\n你：" + text)
         self._status.config(text="正在思考…")
         self._busy = True
+        self._failed = False
         self._send.config(state="disabled")
         threading.Thread(target=self._worker, args=(text,), daemon=True).start()
 
@@ -131,6 +133,7 @@ class ChatPanel:
                         self.on_event("tool", value)
                     self._status.config(text=f"🔧 正在调用工具：{value}…")
                 elif kind == "error":
+                    self._failed = True
                     if self.on_event:
                         self.on_event("error", value)
                     if self._streaming:
@@ -147,6 +150,8 @@ class ChatPanel:
                     self._streaming = False
                     self._status.config(text="")
                     self._send.config(state="normal")
+                    if not self._failed and self.on_event:
+                        self.on_event("cheer", None)
                     if self.on_event:
                         self.on_event("done", None)
         except queue.Empty:
