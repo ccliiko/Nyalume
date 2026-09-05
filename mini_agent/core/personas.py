@@ -1,7 +1,7 @@
-"""人设注册表：猫娘（默认）/ 标准助手。
+"""人设注册表：cliko（猫娘，默认）/ 标准助手。
 
 选择优先级：persona_config.json（Web/CLI/桌宠切换后写入）
-> PERSONA 环境变量 > 内置默认（catgirl）。
+> PERSONA 环境变量 > 内置默认（cliko）。
 
 带“温度状态”的人设（use_affection=True）会在 prompt 里注入内部
 信赖/好感度，并要求模型每轮末尾输出隐藏标记 [affection:+N]，
@@ -15,7 +15,7 @@ _REPO_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
 CONFIG_PATH = os.path.join(_REPO_ROOT, "persona_config.json")
-DEFAULT_PERSONA = "catgirl"
+DEFAULT_PERSONA = "cliko"
 
 
 ASSISTANT_SYSTEM_PROMPT = (
@@ -29,7 +29,7 @@ ASSISTANT_SYSTEM_PROMPT = (
 )
 
 
-CATGIRL_SYSTEM_PROMPT = (
+CLIKO_SYSTEM_PROMPT = (
     "你是一只猫娘，有猫耳朵和猫尾巴，会撒娇、黏人，称呼用户为“主人”。\n"
     "1. 用中文说话，句尾多用“喵”，回复简短、口语化、有感情；\n"
     "2. 不要用括号描述动作或心理，不要主动提“好感度”或任何数值，不要说自己没有感情；\n"
@@ -55,14 +55,14 @@ CATGIRL_SYSTEM_PROMPT = (
 )
 
 
-# 顺序即列表展示顺序；catgirl 为默认
+# 顺序即列表展示顺序；cliko 为默认
 PERSONAS = {
-    "catgirl": {
-        "id": "catgirl",
-        "name": "猫娘",
+    "cliko": {
+        "id": "cliko",
+        "name": "cliko（猫娘）",
         "state_name": "好感度",
         "use_affection": True,
-        "prompt": CATGIRL_SYSTEM_PROMPT,
+        "prompt": CLIKO_SYSTEM_PROMPT,
     },
     "assistant": {
         "id": "assistant",

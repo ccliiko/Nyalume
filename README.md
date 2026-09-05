@@ -15,7 +15,7 @@
   （攒够轮数后自动归档值得记住的内容，按内容去重，checkpoint 记录进度）
 - 工具调用：当前时间 / 安全计算器 / 带标签的便签存取（可按标签筛选）/
   网页搜索（必应 RSS，免密钥，国内可直接访问）
-- 人设可切换（默认猫娘）：`catgirl`（猫娘）/ `assistant`（标准助手）；
+- 人设可切换（默认 cliko）：`cliko`（猫娘）/ `assistant`（标准助手）；
   Web 顶栏下拉、CLI `/persona`、桌宠右键都能切
 - 温度状态机：带人设的角色把好感度/信赖度作为会话状态存 SQLite，
   每轮由模型输出隐藏标记、服务端校验并持久化、展示前剥离；
@@ -65,7 +65,7 @@ python pet.py          # 无控制台双击 start_pet.bat
 LLM_API_KEY=你的key
 LLM_BASE_URL=https://api.deepseek.com/v1
 LLM_MODEL=deepseek-chat
-PERSONA=catgirl     # catgirl=猫娘（默认）/ assistant=标准助手
+PERSONA=cliko       # cliko=猫娘（默认）/ assistant=标准助手
 ```
 
 如果你的 key 来自其他 OpenAI 兼容平台（硅基流动、OpenRouter 等），只改
@@ -79,7 +79,7 @@ mini_agent/                项目包
 │   ├── agent.py           Agent 编排（多轮/工具循环/流式/记忆分层）
 │   ├── llm.py             模型接入（OpenAI 兼容，流式/非流式）
 │   ├── memory.py          三层记忆 + 会话管理（SQLite）
-│   ├── personas.py        人设注册表（猫娘/助手 + 温度状态注入）
+│   ├── personas.py        人设注册表（cliko/助手 + 温度状态注入）
 │   └── tools.py           工具注册表（时间/计算器/便签/网页搜索）
 └── frontends/             前端层：只消费内核的 run_stream 事件
     ├── cli.py             命令行（流式打字机）
@@ -109,7 +109,7 @@ agent.db                   SQLite 数据（默认放在仓库根，可用 MEMORY
 4. 模型层用 OpenAI 兼容接口，换模型只改配置，不换代码
 5. 便签带 tag 列 + 工具描述引导：用户说“算完记下来”时直接保存完整算式与结果，
    并在回复中复述已保存内容，不反问用户
-6. 猫娘好感度不是模型“嘴上说说”：模型每轮输出隐藏标记 `[affection:+N]`，
+6. cliko 的好感度不是模型“嘴上说说”：模型每轮输出隐藏标记 `[affection:+N]`，
    服务端校验范围、写 SQLite、展示前剥离——状态归程序管，人设归模型演；
    分 5 段温度让“表达随状态变化”，但工具调用等能力不受影响
 7. 工具用注册表管理：新增工具 = 一次 `@register` 注册（名字/描述/参数声明），
@@ -118,7 +118,7 @@ agent.db                   SQLite 数据（默认放在仓库根，可用 MEMORY
    由模型自行解释，不中断对话
 8. 流式不是“最后一屏渲染”：`llm.chat_stream` 逐块产出正文/工具增量，
    Agent 在流上把同一 index 的 tool_calls 碎片拼回完整参数再执行；
-   猫娘好感度隐藏标记靠“末尾 40 字符缓冲、流结束后剥离再补发”处理，
+   cliko 的好感度隐藏标记靠“末尾 40 字符缓冲、流结束后剥离再补发”处理，
    既有打字机效果，又不会把内部状态流给前端
 9. 记忆分三层而不是一味加长上下文：窗口只放最近 20 条控 token；
    被挤出的旧消息按批（攒够 6 条）交给模型滚成摘要，下轮以 system 上下文注入；
@@ -137,5 +137,5 @@ agent.db                   SQLite 数据（默认放在仓库根，可用 MEMORY
     gitignore 的 user_pets/，仓库本身不含任何角色图片
 13. 人设也是注册表而不是 if-else：每个角色 = id + prompt + 是否启用
     “温度状态”；切换只写一份 persona_config.json，解析优先级为
-    运行时配置 > PERSONA 环境变量 > 默认 catgirl，所以 Web/CLI/桌宠
+    运行时配置 > PERSONA 环境变量 > 默认 cliko，所以 Web/CLI/桌宠
     三个入口共用同一份选择，互不冲突
