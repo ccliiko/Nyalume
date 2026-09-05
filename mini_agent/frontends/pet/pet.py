@@ -87,6 +87,7 @@ class PetApp:
 
     def _switch_persona(self, persona_id: str) -> None:
         personas.set_persona(persona_id)
+        self.chat.refresh_speaker()
         if self.chat.win.state() != "withdrawn":
             self.chat.hide()
 

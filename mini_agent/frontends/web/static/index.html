@@ -160,7 +160,7 @@
     const listBox = document.getElementById("session-list");
     const chatTitle = document.getElementById("chat-title");
     const personaSelect = document.getElementById("persona-select");
-    const state = { currentId: null, busy: false };
+    const state = { currentId: null, busy: false, speaker: "cliko" };
 
     async function api(path, options) {
       const res = await fetch(path, options);
@@ -177,6 +177,10 @@
       return sameDay ? time : d.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" }) + " " + time;
     }
 
+    function shortName(label) {
+      return String(label || "").split("（")[0].trim() || label;
+    }
+
     function titleOf(s) {
       const t = (s.title || "").replace(/\s+/g, " ").trim();
       return t ? t.slice(0, 18) : "新对话";
@@ -185,7 +189,7 @@
     function append(role, text) {
       const div = document.createElement("div");
       div.className = "msg " + role;
-      div.textContent = (role === "user" ? "你：" : "Agent：") + text;
+      div.textContent = (role === "user" ? "你：" : state.speaker + "：") + text;
       log.appendChild(div);
       log.scrollTop = log.scrollHeight;
       return div;
@@ -241,6 +245,7 @@
         personaSelect.appendChild(opt);
       }
       personaSelect.value = cur.persona;
+      state.speaker = shortName(personaSelect.selectedOptions[0].textContent);
       document.title = "mini-agent · " + (personaSelect.selectedOptions[0] || {}).textContent || "mini-agent";
       personaSelect.addEventListener("change", async () => {
         const pid = personaSelect.value;
@@ -250,6 +255,7 @@
           body: JSON.stringify({ persona: pid })
         });
         const label = personaSelect.selectedOptions[0].textContent;
+        state.speaker = shortName(label);
         document.title = "mini-agent · " + label;
       });
     }
@@ -336,12 +342,12 @@
               const ev = JSON.parse(line.slice(6));
               if (ev.type === "text") {
                 full += ev.text;
-                agentDiv.textContent = "Agent：" + full;
+                agentDiv.textContent = state.speaker + "：" + full;
                 statusDiv.remove();
               } else if (ev.type === "tool") {
                 statusDiv.textContent = "🔧 正在调用工具：" + ev.name + "…";
               } else if (ev.type === "error") {
-                agentDiv.textContent = "Agent：出错了 " + ev.message;
+                agentDiv.textContent = state.speaker + "：出错了 " + ev.message;
                 statusDiv.remove();
               }
             }
@@ -349,7 +355,7 @@
           log.scrollTop = log.scrollHeight;
         }
       } catch (e) {
-        agentDiv.textContent = "Agent：请求失败 " + e;
+        agentDiv.textContent = state.speaker + "：请求失败 " + e;
         statusDiv.remove();
       } finally {
         state.busy = false;

@@ -58,7 +58,7 @@ def main() -> None:
             continue
         if not text:
             continue
-        print("\nAgent> ", end="", flush=True)
+        print(f"\n{personas.current_persona_name()}> ", end="", flush=True)
         try:
             for ev in agent.run_stream(session_id, text):
                 if ev["type"] == "text":

@@ -9,7 +9,7 @@ import threading
 import tkinter as tk
 
 from mini_agent.core import agent as core_agent
-from mini_agent.core import memory
+from mini_agent.core import memory, personas
 
 _BG = "#fff7fa"
 _HEADER_BG = "#f3d7e2"
@@ -27,9 +27,10 @@ class ChatPanel:
         self._failed = False
         self._buf = ""
         self._block_start = None
+        self.speaker_name = personas.current_persona_name()
 
         self.win = tk.Toplevel(root)
-        self.win.title("cliko · 桌宠对话")
+        self.win.title(f"{self.speaker_name} · 桌宠对话")
         self.win.geometry("400x560")
         self.win.minsize(340, 430)
         self.win.configure(bg=_BG)
@@ -41,10 +42,11 @@ class ChatPanel:
         head = tk.Frame(self.win, bg=_HEADER_BG)
         head.grid(row=0, column=0, sticky="ew")
         head.columnconfigure(0, weight=1)
-        tk.Label(
-            head, text="💬 cliko", bg=_HEADER_BG, fg="#7c4a5f",
+        self._head_label = tk.Label(
+            head, text="💬 " + self.speaker_name, bg=_HEADER_BG, fg="#7c4a5f",
             font=("Microsoft YaHei", 12, "bold"), padx=14, pady=8,
-        ).grid(row=0, column=0, sticky="w")
+        )
+        self._head_label.grid(row=0, column=0, sticky="w")
         tk.Button(
             head, text="—", command=self.hide, relief="flat", bd=0,
             bg=_HEADER_BG, fg="#9c6b80", activebackground="#ecc3d3",
@@ -96,6 +98,14 @@ class ChatPanel:
         self._log_append_system("点我说话，我会一直记得我们的对话喵～")
         self.win.after(90, self._poll)
 
+    # ---------- 人设名同步 ----------
+
+    def refresh_speaker(self) -> None:
+        """人设切换后调用：更新窗口标题、顶栏和后续消息前缀。"""
+        self.speaker_name = personas.current_persona_name()
+        self.win.title(f"{self.speaker_name} · 桌宠对话")
+        self._head_label.config(text="💬 " + self.speaker_name)
+
     # ---------- 显隐 ----------
 
     def toggle(self) -> None:
@@ -135,7 +145,7 @@ class ChatPanel:
         self._buf += text
         self._log.configure(state="normal")
         self._log.delete(self._block_start, "end-1c")
-        self._log.insert("end", "Agent：" + self._buf, "agent")
+        self._log.insert("end", f"{self.speaker_name}：" + self._buf, "agent")
         self._log.configure(state="disabled")
         self._log.see("end")
 
@@ -199,7 +209,9 @@ class ChatPanel:
                         self._streaming = False
                         self._status.config(text="")
                     else:
-                        self._append_line("system", "Agent：出错了 " + str(value))
+                        self._append_line(
+                            "system", f"{self.speaker_name}：出错了 " + str(value)
+                        )
                         self._status.config(text="")
                 elif kind == "affection":
                     if self.on_event:

@@ -109,6 +109,13 @@ def current_persona_id() -> str:
     return resolve_persona_id()
 
 
+def current_persona_name() -> str:
+    """当前生效人设的聊天前缀名：cliko（猫娘）→ cliko，标准助手原样。"""
+    name = get_persona(resolve_persona_id())["name"]
+    short = name.split("（", 1)[0].strip()
+    return short or name
+
+
 def set_persona(persona_id: str) -> bool:
     """切换人设并持久化（写入仓库根 persona_config.json，gitignore）。"""
     persona_id = (persona_id or "").strip().lower()
