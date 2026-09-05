@@ -9,3 +9,4 @@ agent.db
 user_pets/*
 !user_pets/README.md
 pet_config.json
+persona_config.json

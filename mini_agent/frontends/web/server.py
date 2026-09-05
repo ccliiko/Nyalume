@@ -7,11 +7,11 @@ import json
 import os
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from mini_agent.core import memory
+from mini_agent.core import memory, personas
 from mini_agent.core.agent import run_stream
 
 app = FastAPI(title="mini-agent")
@@ -23,9 +23,33 @@ class ChatIn(BaseModel):
     message: str
 
 
+class PersonaIn(BaseModel):
+    persona: str
+
+
 @app.get("/")
 def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
+@app.get("/api/personas")
+def list_personas():
+    """人设列表（供前端下拉/菜单展示）。"""
+    return personas.list_personas()
+
+
+@app.get("/api/persona")
+def current_persona():
+    return {"persona": personas.resolve_persona_id()}
+
+
+@app.put("/api/persona")
+def switch_persona(body: PersonaIn):
+    """切换人设并持久化，下一条消息生效。"""
+    persona_id = (body.persona or "").strip().lower()
+    if not personas.set_persona(persona_id):
+        raise HTTPException(status_code=400, detail=f"未知人设：{body.persona}")
+    return {"ok": True, "persona": persona_id}
 
 
 @app.get("/api/sessions")

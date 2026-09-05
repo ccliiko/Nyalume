@@ -2,7 +2,7 @@
 
 import tkinter as tk
 
-from mini_agent.core import memory
+from mini_agent.core import memory, personas
 
 from .chat_panel import ChatPanel
 from .pets_registry import (
@@ -53,6 +53,15 @@ class PetApp:
                 command=lambda pid=pet["id"]: self._switch_pet(pid),
             )
         menu.add_cascade(label="更换皮肤", menu=skins)
+
+        pmenu = tk.Menu(menu, tearoff=0)
+        for p in personas.list_personas():
+            checked = "✔ " if p["id"] == personas.resolve_persona_id() else ""
+            pmenu.add_command(
+                label=checked + p["name"],
+                command=lambda pid=p["id"]: self._switch_persona(pid),
+            )
+        menu.add_cascade(label="人设", menu=pmenu)
         menu.add_separator()
         menu.add_command(label="退出", command=self._quit)
         try:
@@ -65,6 +74,11 @@ class PetApp:
         self.cfg["pet"] = pet_id
         save_config(self.cfg)
         self._spawn_pet()
+
+    def _switch_persona(self, persona_id: str) -> None:
+        personas.set_persona(persona_id)
+        if self.chat.win.state() != "withdrawn":
+            self.chat.hide()
 
     # ---------- 聊天事件 → 宠物状态 ----------
 
