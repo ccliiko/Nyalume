@@ -1,7 +1,7 @@
 """命令行入口：python cli.py"""
 
+import agent
 import memory
-from agent import run
 
 
 def main() -> None:
@@ -24,8 +24,15 @@ def main() -> None:
         if not text:
             continue
         print("\nAgent> ", end="", flush=True)
-        reply = run(session_id, text)
-        print(reply)
+        try:
+            for ev in agent.run_stream(session_id, text):
+                if ev["type"] == "text":
+                    print(ev["text"], end="", flush=True)
+                elif ev["type"] == "error":
+                    print(f"\n[错误] {ev['message']}", end="")
+        except KeyboardInterrupt:
+            print("\n[中断]")
+        print()
 
 
 if __name__ == "__main__":

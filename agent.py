@@ -32,6 +32,7 @@ CATGIRL_SYSTEM_PROMPT = (
 
 MAX_TOOL_ROUNDS = 5  # 防止模型无限调工具
 _AFFECTION_RE = re.compile(r"\[affection\s*:\s*([+-]?\d+)\s*\]\s*$", re.MULTILINE)
+_TAIL_BUF = 40  # 流式输出时留出尾部缓冲，等流结束再剥好感度隐藏标记
 
 
 def _system_prompt(affection: int) -> str:
@@ -54,8 +55,13 @@ def _strip_affection_marker(text: str) -> tuple[int, str]:
     return 0, text.rstrip()
 
 
-def run(session_id: str, user_text: str) -> str:
-    """处理一条用户消息，返回助手最终回复。"""
+def run_stream(session_id: str, user_text: str):
+    """流式处理一条用户消息，产出事件 dict：
+
+    - {"type": "text", "text": "..."}    正文增量，可直接追加展示
+    - {"type": "tool", "name": "..."}    正在调用某个工具
+    - {"type": "error", "message": "..."} 出错（此前已输出的正文保留）
+    """
     memory.save_message(session_id, "user", user_text)
 
     # 对话历史只取最近 N 条，控制 token；人设需要知道当前好感度
@@ -65,40 +71,101 @@ def run(session_id: str, user_text: str) -> str:
     # 本轮工具调用产生的中间消息，不写回历史库
     tool_messages: list[dict] = []
 
-    for _ in range(MAX_TOOL_ROUNDS):
-        resp = llm.chat_once(messages + tool_messages, tools=TOOL_SCHEMAS)
-        choice = resp["choices"][0]["message"]
+    try:
+        for _ in range(MAX_TOOL_ROUNDS):
+            content_parts: list[str] = []
+            tool_calls: dict[int, dict] = {}
+            pending_tail = ""
 
-        if not choice.get("tool_calls"):
-            delta, clean_text = _strip_affection_marker(choice.get("content") or "")
+            # 边收边放：正文直接流给调用方，但末尾留 _TAIL_BUF 个字符缓冲
+            for ev in llm.chat_stream(messages + tool_messages, tools=TOOL_SCHEMAS):
+                if ev["kind"] == "content":
+                    content_parts.append(ev["text"])
+                    pending_tail += ev["text"]
+                    if len(pending_tail) > _TAIL_BUF:
+                        emit, pending_tail = (
+                            pending_tail[:-_TAIL_BUF],
+                            pending_tail[-_TAIL_BUF:],
+                        )
+                        if emit:
+                            yield {"type": "text", "text": emit}
+                else:  # tool_delta：同一 index 的碎片要拼回一个完整调用
+                    call = tool_calls.setdefault(
+                        ev["index"], {"id": "", "name": "", "arguments": ""}
+                    )
+                    if ev["id"]:
+                        call["id"] = ev["id"]
+                    if ev["name"]:
+                        call["name"] = ev["name"]
+                    if ev["arguments"]:
+                        call["arguments"] += ev["arguments"]
+
+            full_content = "".join(content_parts)
+
+            if tool_calls:
+                # 这一轮模型决定调工具：正文先补齐输出，再执行并把结果追加进上下文
+                if pending_tail:
+                    yield {"type": "text", "text": pending_tail}
+                calls = []
+                for idx in sorted(tool_calls):
+                    tc = tool_calls[idx]
+                    calls.append(
+                        {
+                            "id": tc["id"] or f"call_{idx}",
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": tc["arguments"],
+                            },
+                        }
+                    )
+                tool_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": full_content or None,
+                        "tool_calls": calls,
+                    }
+                )
+                for call in calls:
+                    yield {"type": "tool", "name": call["function"]["name"]}
+                    try:
+                        fn_args = json.loads(call["function"]["arguments"] or "{}")
+                    except json.JSONDecodeError:
+                        fn_args = {}
+                    result = execute_tool(call["function"]["name"], fn_args)
+                    tool_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "content": result,
+                        }
+                    )
+                continue
+
+            # 最终回答：剥掉好感度标记，把缓冲尾部按干净正文补齐输出后持久化
+            delta, clean_text = _strip_affection_marker(full_content)
+            prefix_len = len(full_content) - len(pending_tail)
+            tail = clean_text[prefix_len:]
+            if tail:
+                yield {"type": "text", "text": tail}
             current = memory.get_affection(session_id)
             memory.set_affection(session_id, current + delta)
             memory.save_message(session_id, "assistant", clean_text)
-            return clean_text
+            return
 
-        # 把带工具调用的 assistant 消息和工具结果追加进本轮上下文
-        tool_messages.append(
-            {
-                "role": "assistant",
-                "content": choice.get("content"),
-                "tool_calls": choice["tool_calls"],
-            }
-        )
-        for call in choice["tool_calls"]:
-            fn_name = call["function"]["name"]
-            try:
-                fn_args = json.loads(call["function"].get("arguments") or "{}")
-            except json.JSONDecodeError:
-                fn_args = {}
-            result = execute_tool(fn_name, fn_args)
-            tool_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call["id"],
-                    "content": result,
-                }
-            )
+        fallback = "抱歉，我处理这个问题时循环太多次了，请换个说法再试。"
+        memory.save_message(session_id, "assistant", fallback)
+        yield {"type": "text", "text": fallback}
+    except Exception as e:
+        yield {"type": "error", "message": f"调用模型出错：{type(e).__name__}: {e}"}
 
-    fallback = "抱歉，我处理这个问题时循环太多次了，请换个说法再试。"
-    memory.save_message(session_id, "assistant", fallback)
-    return fallback
+
+def run(session_id: str, user_text: str) -> str:
+    """非流式入口：把流式事件里的正文拼起来，返回最终回复（兼容旧调用方）。"""
+    parts: list[str] = []
+    for ev in run_stream(session_id, user_text):
+        if ev["type"] == "text":
+            parts.append(ev["text"])
+        elif ev["type"] == "error":
+            parts.append(ev["message"])
+    return "".join(parts)

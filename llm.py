@@ -28,3 +28,31 @@ def chat_once(messages: list[dict], tools: list[dict] | None = None) -> dict:
         kwargs["tools"] = tools
     resp = get_client().chat.completions.create(**kwargs)
     return resp.model_dump()
+
+
+def chat_stream(messages: list[dict], tools: list[dict] | None = None):
+    """流式调用一次模型，逐块产出事件 dict：
+
+    - {"kind": "content", "text": "..."}       正文增量
+    - {"kind": "tool_delta", "index", "id", "name", "arguments"}  工具调用增量
+    """
+    kwargs = {"model": get_model(), "messages": messages, "stream": True}
+    if tools:
+        kwargs["tools"] = tools
+    stream = get_client().chat.completions.create(**kwargs)
+    for chunk in stream:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        if delta.content:
+            yield {"kind": "content", "text": delta.content}
+        if delta.tool_calls:
+            for tc in delta.tool_calls:
+                fn = tc.function
+                yield {
+                    "kind": "tool_delta",
+                    "index": tc.index if tc.index is not None else 0,
+                    "id": tc.id or "",
+                    "name": fn.name if fn and fn.name else "",
+                    "arguments": fn.arguments if fn and fn.arguments else "",
+                }

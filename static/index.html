@@ -11,6 +11,7 @@
     .msg { margin: 8px 0; }
     .user { color: #0b57d0; }
     .assistant { white-space: pre-wrap; }
+    .status { color: #888; font-size: 12px; font-style: italic; }
     #input-row { display: flex; margin-top: 12px; gap: 8px; }
     #input { flex: 1; padding: 8px; font-size: 14px; }
     button { padding: 8px 16px; }
@@ -34,6 +35,7 @@
       div.textContent = (role === "user" ? "你：" : "Agent：") + text;
       log.appendChild(div);
       log.scrollTop = log.scrollHeight;
+      return div;
     }
 
     async function send() {
@@ -41,17 +43,54 @@
       if (!message) return;
       input.value = "";
       append("user", message);
-      append("assistant", "思考中…");
+      const agentDiv = append("assistant", "");
+      const statusDiv = document.createElement("div");
+      statusDiv.className = "msg status";
+      statusDiv.textContent = "正在思考…";
+      log.appendChild(statusDiv);
+      sendBtn.disabled = true;
+      let full = "";
       try {
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ session_id: "web-default", message: message })
         });
-        const data = await res.json();
-        log.lastChild.textContent = "Agent：" + data.reply;
+        if (!res.ok || !res.body) throw new Error("HTTP " + res.status);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let sep;
+          while ((sep = buf.indexOf("\n\n")) >= 0) {
+            const frame = buf.slice(0, sep);
+            buf = buf.slice(sep + 2);
+            for (const line of frame.split("\n")) {
+              if (!line.startsWith("data: ")) continue;
+              const ev = JSON.parse(line.slice(6));
+              if (ev.type === "text") {
+                full += ev.text;
+                agentDiv.textContent = "Agent：" + full;
+                statusDiv.remove();
+              } else if (ev.type === "tool") {
+                statusDiv.textContent = "🔧 正在调用工具：" + ev.name + "…";
+              } else if (ev.type === "error") {
+                agentDiv.textContent = "Agent：出错了 " + ev.message;
+                statusDiv.remove();
+              }
+            }
+          }
+          log.scrollTop = log.scrollHeight;
+        }
       } catch (e) {
-        log.lastChild.textContent = "Agent：请求失败 " + e;
+        agentDiv.textContent = "Agent：请求失败 " + e;
+        statusDiv.remove();
+      } finally {
+        sendBtn.disabled = false;
+        input.focus();
       }
     }
 
