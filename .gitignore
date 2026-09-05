@@ -4,3 +4,8 @@ __pycache__/
 *.pyc
 .env
 agent.db
+
+# 桌宠：用户自备皮肤（可能含版权素材，只本地演示）与运行时配置
+user_pets/*
+!user_pets/README.md
+pet_config.json

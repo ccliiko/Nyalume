@@ -19,6 +19,7 @@
   每轮由模型输出隐藏标记、服务端校验并持久化，展示前剥离；
   好感度分 5 段温度（疏离/闹别扭/日常撒娇/心动黏人/深爱守护），只改语气不改能力
 - 入口：CLI（命令行） + Web（FastAPI 单页，支持多会话：新建 / 切换 / 删除 / 历史回显）
+  + 桌宠（透明置顶小窗、气泡对话、好感度切表情、右键换皮肤）
 
 ## 快速开始
 
@@ -46,6 +47,15 @@ python server.py
 两个入口都只是根目录薄封装，等价于：
 `python -m mini_agent.frontends.cli` / `python -m mini_agent.frontends.web.server`
 
+桌宠：
+
+```bash
+python pet.py          # 无控制台双击 start_pet.bat
+```
+
+桌宠内置一只程序绘制的占位猫；右键可换皮肤。外置皮肤放 `user_pets/`，
+格式与版权说明见 `user_pets/README.md`（该目录已 gitignore，不随仓库分发）。
+
 ## 配置（.env）
 
 ```ini
@@ -69,15 +79,22 @@ mini_agent/                项目包
 │   └── tools.py           工具注册表（时间/计算器/便签/网页搜索）
 └── frontends/             前端层：只消费内核的 run_stream 事件
     ├── cli.py             命令行（流式打字机）
-    └── web/               FastAPI + SSE + 单页聊天
-        ├── server.py      会话/消息 REST + SSE 聊天接口
-        └── static/index.html
-cli.py / server.py         仓库根启动入口（薄封装）
+    ├── web/               FastAPI + SSE + 单页聊天
+    │   ├── server.py      会话/消息 REST + SSE 聊天接口
+    │   └── static/index.html
+    └── pet/               桌宠前端（第四前端）
+        ├── pet.py         主程序（皮肤菜单/心情联动）
+        ├── renderer.py    透明小窗 + 帧动画（无素材时程序画占位猫）
+        ├── chat_panel.py  气泡对话（线程消费 run_stream）
+        └── pets_registry.py  皮肤注册表（manifest/好感度分档）
+cli.py / server.py / pet.py  仓库根启动入口（薄封装）
+start_pet.bat              双击启动桌宠（pythonw 无控制台）
+user_pets/                 用户自备皮肤（gitignore，仅本地演示）
 agent.db                   SQLite 数据（默认放在仓库根，可用 MEMORY_DB 覆盖）
 ```
 
 约定：新功能进 `core/`，新入口在 `frontends/` 里加一个目录
-（例如桌宠 = `frontends/pet/`），只消费 `agent.run_stream` 产出的事件，
+只消费 `agent.run_stream` 产出的事件，
 所以 CLI / Web / 桌宠不会互相重复业务逻辑。
 
 ## 面试时可以讲的设计点
@@ -110,3 +127,7 @@ agent.db                   SQLite 数据（默认放在仓库根，可用 MEMORY
 11. 代码按“内核 / 前端”分层：`core/` 不 import 任何前端，所有入口只消费
     `run_stream` 的统一事件（text/tool/error）；因此新增工具或记忆功能
     不会改动任何界面，加一个新前端（桌宠）也只等于多写一个事件消费者
+12. 桌宠皮肤是“纯资源”：manifest 里的帧图按好感度五档分组
+    （distant/grumpy/neutral/happy/love + working），渲染器只做映射；
+    内置占位猫由 Canvas 程序绘制、零版权负担，第三方素材只进
+    gitignore 的 user_pets/，仓库本身不含任何角色图片
