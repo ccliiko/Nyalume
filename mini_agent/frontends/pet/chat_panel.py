@@ -102,6 +102,10 @@ class ChatPanel:
         self._send.config(state="disabled")
         threading.Thread(target=self._worker, args=(text,), daemon=True).start()
 
+    def reminder(self, text: str) -> None:
+        """后台线程可调用：把定时提醒放入队列，主线程安全地写日志。"""
+        self._q.put(("reminder", text))
+
     def _worker(self, text: str) -> None:
         """后台线程：消费内核事件，主线程通过队列收。"""
         try:
@@ -145,6 +149,11 @@ class ChatPanel:
                 elif kind == "affection":
                     if self.on_event:
                         self.on_event("affection", value)
+                elif kind == "reminder":
+                    self._log_append("\n[⏰ 主动提醒] " + str(value))
+                    self._status.config(text="")
+                    if self.on_event:
+                        self.on_event("reminder", value)
                 elif kind == "done":
                     self._busy = False
                     self._streaming = False

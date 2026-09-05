@@ -359,9 +359,20 @@
       }
     }
 
+    async function pollReminders() {
+      // 服务器到点返回到期提醒——agent 会自己动，不需要用户先发消息
+      try {
+        const due = await api("/api/reminders/due");
+        for (const r of due) {
+          append("assistant", "[⏰ 主动提醒] " + r.content);
+        }
+      } catch (e) { /* 网络抖动忽略，下轮再试 */ }
+    }
+
     newBtn.addEventListener("click", newChat);
     sendBtn.addEventListener("click", send);
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+    setInterval(pollReminders, 15000);
 
     // 启动：建出/选中第一个会话并回显历史
     (async function init() {

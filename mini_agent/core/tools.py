@@ -14,6 +14,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 from .memory import note_list, note_save
+from .reminders import add_reminder, delete_reminder, list_reminders
 
 _REGISTRY: dict[str, dict] = {}
 
@@ -267,6 +268,67 @@ def _web_search(query: str, max_results: int = 5) -> str:
             f"   {item['snippet']}"
         )
     return "\n".join(lines)
+
+
+# ---------- 工具 6~8：定时主动提醒（cron） ----------
+
+
+@register(
+    "create_reminder",
+    "创建一条定时主动提醒。cron 用标准 5 段表达式：分 时 日 月 周"
+    "（周：0/7=周日，1-6=周一到周六）。"
+    "常见写法：'0 9 * * *'=每天 9 点；'*/30 * * * *'=每 30 分钟；"
+    "'0 9 * * 1-5'=工作日 9 点。"
+    "用户说“提醒我/定时/每天 X 点/每隔 X 分钟”时，把自然语言翻译成 cron"
+    "后调用本工具，并在回复中告诉用户已设好、到点会主动提醒。",
+    {
+        "content": {
+            "type": "string",
+            "description": "提醒内容，例如 喝水 / 恢复 408 复习",
+        },
+        "cron": {
+            "type": "string",
+            "description": "5 段 cron 表达式，例如 0 9 * * *",
+        },
+    },
+    required=["content", "cron"],
+)
+def _create_reminder(content: str, cron: str) -> str:
+    try:
+        rid = add_reminder(content, cron)
+    except ValueError as e:
+        return f"创建提醒失败：{e}"
+    return f"已设置定时提醒（#{rid}）：{content}，cron={cron}。到点 agent 会自己动，不用你再喊我。"
+
+
+@register(
+    "list_reminders",
+    "查看当前所有定时主动提醒。",
+    {},
+)
+def _list_reminders() -> str:
+    rows = list_reminders()
+    if not rows:
+        return "还没有定时提醒"
+    return "\n".join(
+        f"- #{r['id']} {r['content']}（cron: {r['cron']}）" for r in rows
+    )
+
+
+@register(
+    "cancel_reminder",
+    "取消一条定时提醒（按 id）。",
+    {
+        "reminder_id": {
+            "type": "integer",
+            "description": "提醒的 id，可用 list_reminders 查看",
+        }
+    },
+    required=["reminder_id"],
+)
+def _cancel_reminder(reminder_id: int) -> str:
+    ok = delete_reminder(int(reminder_id))
+    return f"已取消提醒 #{reminder_id}" if ok else f"没有找到提醒 #{reminder_id}"
 
 
 # 供 agent.py 使用的模型可见工具列表（注册完成后生成一次）

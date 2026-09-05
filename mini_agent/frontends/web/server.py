@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from mini_agent.core import memory, personas
+from mini_agent.core import memory, personas, reminders
 from mini_agent.core.agent import run_stream
 
 app = FastAPI(title="mini-agent")
@@ -25,6 +25,11 @@ class ChatIn(BaseModel):
 
 class PersonaIn(BaseModel):
     persona: str
+
+
+class ReminderIn(BaseModel):
+    content: str
+    cron: str
 
 
 @app.get("/")
@@ -90,6 +95,36 @@ def chat(body: ChatIn):
         media_type="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/api/reminders")
+def list_reminders():
+    """列出全部定时提醒。"""
+    return reminders.list_reminders()
+
+
+@app.post("/api/reminders")
+def create_reminder(body: ReminderIn):
+    """创建定时提醒（cron 5 段表达式）。"""
+    try:
+        rid = reminders.add_reminder(body.content, body.cron)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "id": rid}
+
+
+@app.delete("/api/reminders/{reminder_id}")
+def cancel_reminder(reminder_id: int):
+    ok = reminders.delete_reminder(reminder_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"没有提醒 #{reminder_id}")
+    return {"ok": True}
+
+
+@app.get("/api/reminders/due")
+def due_reminders():
+    """前端每 15 秒轮询：到期即返回并把 last_fired 落库（同分钟不重复）。"""
+    return reminders.check_due()
 
 
 if __name__ == "__main__":
