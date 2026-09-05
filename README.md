@@ -63,6 +63,17 @@ python pet.py          # 无控制台双击 start_pet.bat
 桌宠内置一只程序绘制的占位猫；右键可换皮肤。外置皮肤放 `user_pets/`，
 格式与版权说明见 `user_pets/README.md`（该目录已 gitignore，不随仓库分发）。
 
+## 测试
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests -q
+```
+
+测试不依赖 API Key，也不碰真实 `agent.db`（conftest 会把 `MEMORY_DB`
+指到临时文件）；覆盖 cron 解析、提醒去重、计算器安全、便签/会话/摘要/
+好感度持久化、人设注册表等核心逻辑。
+
 ## 配置（.env）
 
 ```ini

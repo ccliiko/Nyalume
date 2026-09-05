@@ -1,0 +1,2 @@
+# 开发/测试依赖（运行项目只需 requirements.txt）
+pytest>=9.0
