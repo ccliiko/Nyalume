@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>mini-agent</title>
+  <style>
+    body { font-family: "Microsoft YaHei", sans-serif; max-width: 720px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 20px; }
+    #log { background: #f7f7f8; border-radius: 8px; padding: 12px; height: 60vh; overflow-y: auto; }
+    .msg { margin: 8px 0; }
+    .user { color: #0b57d0; }
+    .assistant { white-space: pre-wrap; }
+    #input-row { display: flex; margin-top: 12px; gap: 8px; }
+    #input { flex: 1; padding: 8px; font-size: 14px; }
+    button { padding: 8px 16px; }
+  </style>
+</head>
+<body>
+  <h1>mini-agent</h1>
+  <div id="log"></div>
+  <div id="input-row">
+    <input id="input" placeholder="试试：帮我算 (12+8)*3，然后记个便签">
+    <button id="send">发送</button>
+  </div>
+  <script>
+    const log = document.getElementById("log");
+    const input = document.getElementById("input");
+    const sendBtn = document.getElementById("send");
+
+    function append(role, text) {
+      const div = document.createElement("div");
+      div.className = "msg " + role;
+      div.textContent = (role === "user" ? "你：" : "Agent：") + text;
+      log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    async function send() {
+      const message = input.value.trim();
+      if (!message) return;
+      input.value = "";
+      append("user", message);
+      append("assistant", "思考中…");
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: "web-default", message: message })
+        });
+        const data = await res.json();
+        log.lastChild.textContent = "Agent：" + data.reply;
+      } catch (e) {
+        log.lastChild.textContent = "Agent：请求失败 " + e;
+      }
+    }
+
+    sendBtn.onclick = send;
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+  </script>
+</body>
+</html>

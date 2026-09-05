@@ -1,0 +1,6 @@
+.venv/
+.pip-cache/
+__pycache__/
+*.pyc
+.env
+agent.db
