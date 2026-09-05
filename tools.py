@@ -32,10 +32,22 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "save_note",
-            "description": "保存一条便签（作为长期记忆）",
+            "description": "保存一条带标签的便签（作为长期记忆）。"
+            "若用户只说“记下来/记个便签/记个标签”而没有说明要记的内容，"
+            "就把上下文中最该记的内容整理成 content，例如计算结果记为 (13*78)=1014，"
+            "并自动取一个简短 tag（如 计算记录），不要留空或含糊。",
             "parameters": {
                 "type": "object",
-                "properties": {"content": {"type": "string", "description": "便签内容"}},
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "要保存的具体便签内容，例如 (13*78)=1014",
+                    },
+                    "tag": {
+                        "type": "string",
+                        "description": "可选标签，用于归类，例如 计算记录/待办/灵感",
+                    },
+                },
                 "required": ["content"],
             },
         },
@@ -44,8 +56,16 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "list_notes",
-            "description": "查看最近保存的便签",
-            "parameters": {"type": "object", "properties": {}},
+            "description": "查看最近保存的便签，可按标签筛选",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tag": {
+                        "type": "string",
+                        "description": "可选：只查看该标签下的便签；不填则查看全部最近便签",
+                    }
+                },
+            },
         },
     },
 ]
@@ -90,7 +110,7 @@ def execute_tool(name: str, arguments: dict) -> str:
     if name == "calculator":
         return _safe_calc(arguments.get("expression", ""))
     if name == "save_note":
-        return note_save(arguments.get("content", ""))
+        return note_save(arguments.get("content", ""), arguments.get("tag", ""))
     if name == "list_notes":
-        return note_list()
+        return note_list(arguments.get("tag", ""))
     return f"未知工具：{name}"

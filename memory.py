@@ -31,10 +31,15 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 content TEXT,
+                tag TEXT DEFAULT '',
                 ts REAL
             );
             """
         )
+        # 旧库迁移：notes 表没有 tag 列时补上
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(notes)")}
+        if "tag" not in cols:
+            conn.execute("ALTER TABLE notes ADD COLUMN tag TEXT DEFAULT ''")
 
 
 def ensure_session(session_id: str) -> None:
@@ -64,18 +69,39 @@ def load_history(session_id: str, limit: int = 20) -> list[dict]:
 
 # ---------- 便签工具用的两个函数 ----------
 
-def note_save(content: str) -> str:
+# ---------- 便签工具用的两个函数 ----------
+
+def note_save(content: str, tag: str = "") -> str:
+    tag = (tag or "").strip()
     with _conn() as conn:
-        conn.execute("INSERT INTO notes (content, ts) VALUES (?, ?)", (content, time.time()))
-    return "已保存便签"
+        conn.execute(
+            "INSERT INTO notes (content, tag, ts) VALUES (?, ?, ?)",
+            (content, tag, time.time()),
+        )
+    reply = f"已保存便签：{content}"
+    if tag:
+        reply += f"（标签：{tag}）"
+    return reply
 
 
-def note_list() -> str:
+def note_list(tag: str = "") -> str:
+    tag = (tag or "").strip()
     with _conn() as conn:
-        rows = conn.execute("SELECT content FROM notes ORDER BY id DESC LIMIT 10").fetchall()
+        if tag:
+            rows = conn.execute(
+                "SELECT content, tag FROM notes WHERE tag = ? ORDER BY id DESC LIMIT 10",
+                (tag,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT content, tag FROM notes ORDER BY id DESC LIMIT 10"
+            ).fetchall()
     if not rows:
-        return "还没有便签"
-    return "\n".join(f"- {r['content']}" for r in rows)
+        return "还没有便签" if not tag else f"没有找到标签为「{tag}」的便签"
+    return "\n".join(
+        f"- [{r['tag']}] {r['content']}" if r["tag"] else f"- {r['content']}"
+        for r in rows
+    )
 
 
 init_db()

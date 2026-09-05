@@ -10,7 +10,7 @@
 
 - 流式接入任意 OpenAI 兼容 API（默认 DeepSeek，可改）
 - 会话记忆：SQLite 保存多轮历史
-- 工具调用：当前时间 / 安全计算器 / 便签存取
+- 工具调用：当前时间 / 安全计算器 / 带标签的便签存取（可按标签筛选）
 - 入口：CLI（命令行） + Web（FastAPI 单页）
 
 ## 快速开始
@@ -52,7 +52,7 @@ LLM_MODEL=deepseek-chat
 ```text
 agent.py        核心 Agent 循环（记忆+模型+工具的编排）
 llm.py          模型接入层（OpenAI 兼容封装）
-tools.py        工具定义与执行（时间/计算器/便签）
+tools.py        工具定义与执行（时间/计算器/带标签便签）
 memory.py       会话记忆（SQLite）
 cli.py          命令行入口
 server.py       Web 入口（FastAPI）
@@ -65,3 +65,5 @@ static/index.html  网页聊天界面
 2. 工具调用的循环是怎么终止的：最大轮数 + finish_reason
 3. 历史消息里工具中间过程不落库，只存最终问答：避免脏数据
 4. 模型层用 OpenAI 兼容接口，换模型只改配置，不换代码
+5. 便签带 tag 列 + 工具描述引导：用户说“算完记下来”时直接保存完整算式与结果，
+   并在回复中复述已保存内容，不反问用户
