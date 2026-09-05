@@ -3,6 +3,7 @@
 import os
 import sqlite3
 import time
+import uuid
 
 DB_PATH = os.getenv("MEMORY_DB", os.path.join(os.path.dirname(__file__), "agent.db"))
 
@@ -207,6 +208,59 @@ def messages_since(session_id: str, since_id: int, limit: int = 30) -> list[dict
             (session_id, int(since_id), limit),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+# ---------- 会话管理：WebUI 列表 / 新建 / 删除 ----------
+
+def create_session(session_id: str | None = None) -> str:
+    """新建会话，返回会话 id。"""
+    sid = session_id or f"chat-{uuid.uuid4().hex[:10]}"
+    ensure_session(sid)
+    return sid
+
+
+def list_sessions(limit: int = 50) -> list[dict]:
+    """列出会话（按最近活动倒序）；标题取该会话的第一句用户消息。"""
+    with _conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT s.id AS id,
+                   s.created_at AS created_at,
+                   (SELECT m.ts FROM messages m
+                     WHERE m.session_id = s.id ORDER BY m.id DESC LIMIT 1) AS last_ts,
+                   (SELECT COUNT(*) FROM messages m
+                     WHERE m.session_id = s.id AND m.role IN ('user','assistant'))
+                     AS message_count,
+                   (SELECT m.content FROM messages m
+                     WHERE m.session_id = s.id AND m.role = 'user'
+                     ORDER BY m.id ASC LIMIT 1) AS title
+            FROM sessions s
+            ORDER BY COALESCE(last_ts, s.created_at) DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def session_messages(session_id: str, limit: int = 200) -> list[dict]:
+    """取某会话完整消息（按时间正序），供 WebUI 切换会话时回显历史。"""
+    ensure_session(session_id)
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT role, content, ts FROM messages WHERE session_id = ? "
+            "AND role IN ('user','assistant') ORDER BY id ASC LIMIT ?",
+            (session_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def delete_session(session_id: str) -> None:
+    """删除会话及其消息、滚动摘要（长期便签属于全局，不随会话删除）。"""
+    with _conn() as conn:
+        conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM summaries WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
 
 
 # ---------- 会话状态：好感度（人设状态机用） ----------

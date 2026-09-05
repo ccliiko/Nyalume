@@ -5,29 +5,163 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>mini-agent</title>
   <style>
-    body { font-family: "Microsoft YaHei", sans-serif; max-width: 720px; margin: 0 auto; padding: 16px; }
-    h1 { font-size: 20px; }
-    #log { background: #f7f7f8; border-radius: 8px; padding: 12px; height: 60vh; overflow-y: auto; }
-    .msg { margin: 8px 0; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Microsoft YaHei", sans-serif; height: 100vh; }
+    #app { display: flex; height: 100vh; }
+
+    #sidebar {
+      width: 240px;
+      flex: 0 0 240px;
+      background: #eef1f6;
+      border-right: 1px solid #d9dee7;
+      display: flex;
+      flex-direction: column;
+    }
+    .side-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+    }
+    .side-head strong { font-size: 16px; }
+    #new-btn {
+      border: none;
+      background: #0b57d0;
+      color: #fff;
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    #session-list { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+    .session-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px;
+      margin-bottom: 4px;
+      border-radius: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .session-item:hover { background: #dfe5ee; }
+    .session-item.active { background: #d3e2ff; }
+    .session-text { flex: 1; min-width: 0; }
+    .session-title {
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .session-meta { font-size: 11px; color: #8a93a3; margin-top: 2px; }
+    .del-btn {
+      border: none;
+      background: transparent;
+      color: #b0b7c2;
+      cursor: pointer;
+      font-size: 14px;
+      visibility: hidden;
+      padding: 2px 4px;
+    }
+    .session-item:hover .del-btn { visibility: visible; }
+    .del-btn:hover { color: #d93025; }
+
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    #chat-head {
+      padding: 12px 16px;
+      font-size: 15px;
+      font-weight: 600;
+      border-bottom: 1px solid #e4e7ec;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      max-width: 860px;
+      width: 100%;
+      margin: 0 auto;
+    }
+    .msg { margin: 10px 0; }
     .user { color: #0b57d0; }
     .assistant { white-space: pre-wrap; }
     .status { color: #888; font-size: 12px; font-style: italic; }
-    #input-row { display: flex; margin-top: 12px; gap: 8px; }
-    #input { flex: 1; padding: 8px; font-size: 14px; }
-    button { padding: 8px 16px; }
+    #input-row {
+      display: flex;
+      gap: 8px;
+      max-width: 860px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 12px 16px 16px;
+    }
+    #input {
+      flex: 1;
+      padding: 10px 12px;
+      font-size: 14px;
+      border: 1px solid #ccd3dd;
+      border-radius: 8px;
+    }
+    button[type=button] { padding: 10px 18px; cursor: pointer; }
+    #send { border: none; background: #0b57d0; color: #fff; border-radius: 8px; }
+    #send:disabled { opacity: 0.55; cursor: not-allowed; }
+    .empty-hint { color: #98a1af; text-align: center; margin-top: 40px; }
   </style>
 </head>
 <body>
-  <h1>mini-agent</h1>
-  <div id="log"></div>
-  <div id="input-row">
-    <input id="input" placeholder="试试：帮我算 (12+8)*3，然后记个便签">
-    <button id="send">发送</button>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="side-head">
+        <strong>mini-agent</strong>
+        <button id="new-btn" title="新建会话">＋</button>
+      </div>
+      <div id="session-list"></div>
+    </aside>
+    <main>
+      <header id="chat-head">新对话</header>
+      <div id="log"><div class="empty-hint">点击左侧会话，或点 ＋ 开始新对话</div></div>
+      <div id="input-row">
+        <input id="input" placeholder="试试：帮我算 (12+8)*3，然后记个便签" autocomplete="off">
+        <button id="send">发送</button>
+      </div>
+    </main>
   </div>
   <script>
     const log = document.getElementById("log");
     const input = document.getElementById("input");
     const sendBtn = document.getElementById("send");
+    const newBtn = document.getElementById("new-btn");
+    const listBox = document.getElementById("session-list");
+    const chatHead = document.getElementById("chat-head");
+    const state = { currentId: null, busy: false };
+
+    async function api(path, options) {
+      const res = await fetch(path, options);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    }
+
+    function fmtTime(ts) {
+      if (!ts) return "";
+      const d = new Date(ts * 1000);
+      const now = new Date();
+      const sameDay = d.toDateString() === now.toDateString();
+      const time = d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+      return sameDay ? time : d.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" }) + " " + time;
+    }
+
+    function titleOf(s) {
+      const t = (s.title || "").replace(/\s+/g, " ").trim();
+      return t ? t.slice(0, 18) : "新对话";
+    }
 
     function append(role, text) {
       const div = document.createElement("div");
@@ -38,7 +172,90 @@
       return div;
     }
 
+    async function renderSessions() {
+      const list = await api("/api/sessions");
+      if (list.length === 0) {
+        const created = await api("/api/sessions", { method: "POST" });
+        list.push({ id: created.id, created_at: Date.now() / 1000, title: "", message_count: 0 });
+      }
+      listBox.innerHTML = "";
+      for (const s of list) {
+        const item = document.createElement("div");
+        item.className = "session-item" + (s.id === state.currentId ? " active" : "");
+
+        const text = document.createElement("div");
+        text.className = "session-text";
+        const title = document.createElement("div");
+        title.className = "session-title";
+        title.textContent = titleOf(s);
+        const meta = document.createElement("div");
+        meta.className = "session-meta";
+        meta.textContent = (s.message_count || 0) + " 条 · " + fmtTime(s.last_ts || s.created_at);
+        text.append(title, meta);
+
+        const del = document.createElement("button");
+        del.className = "del-btn";
+        del.textContent = "✕";
+        del.title = "删除会话";
+        del.addEventListener("click", (e) => { e.stopPropagation(); removeSession(s.id); });
+
+        item.append(text, del);
+        item.addEventListener("click", () => switchTo(s.id));
+        listBox.appendChild(item);
+      }
+      const current = list.find((s) => s.id === state.currentId) || list[0] || null;
+      state.currentId = current ? current.id : null;
+      chatHead.textContent = current ? titleOf(current) : "新对话";
+      return list;
+    }
+
+    async function showMessages(sessionId) {
+      log.innerHTML = "";
+      const rows = await api(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
+      if (rows.length === 0) {
+        const hint = document.createElement("div");
+        hint.className = "empty-hint";
+        hint.textContent = "开始聊天吧";
+        log.appendChild(hint);
+        return;
+      }
+      for (const row of rows) append(row.role, row.content);
+    }
+
+    async function switchTo(sessionId) {
+      state.currentId = sessionId;
+      await showMessages(sessionId);
+      await renderSessions();
+    }
+
+    async function removeSession(sessionId) {
+      const wasCurrent = sessionId === state.currentId;
+      if (!confirm("删除这个会话？其中的消息和摘要会一并删除（便签保留）。")) return;
+      await api(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+      if (wasCurrent) {
+        state.currentId = null; // renderSessions 会归一化到列表第一个（没有就自动新建）
+        await renderSessions();
+        await showMessages(state.currentId);
+      } else {
+        await renderSessions();
+      }
+    }
+
+    async function newChat() {
+      const created = await api("/api/sessions", { method: "POST" });
+      state.currentId = created.id;
+      await showMessages(created.id);
+      await renderSessions();
+      input.focus();
+    }
+
     async function send() {
+      if (state.busy) return;
+      if (!state.currentId) {
+        const created = await api("/api/sessions", { method: "POST" });
+        state.currentId = created.id;
+        await renderSessions();
+      }
       const message = input.value.trim();
       if (!message) return;
       input.value = "";
@@ -48,13 +265,14 @@
       statusDiv.className = "msg status";
       statusDiv.textContent = "正在思考…";
       log.appendChild(statusDiv);
+      state.busy = true;
       sendBtn.disabled = true;
       let full = "";
       try {
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_id: "web-default", message: message })
+          body: JSON.stringify({ session_id: state.currentId, message: message })
         });
         if (!res.ok || !res.body) throw new Error("HTTP " + res.status);
         const reader = res.body.getReader();
@@ -89,13 +307,22 @@
         agentDiv.textContent = "Agent：请求失败 " + e;
         statusDiv.remove();
       } finally {
+        state.busy = false;
         sendBtn.disabled = false;
+        await renderSessions(); // 刷新标题与排序，但不重载消息流
         input.focus();
       }
     }
 
-    sendBtn.onclick = send;
+    newBtn.addEventListener("click", newChat);
+    sendBtn.addEventListener("click", send);
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+
+    // 启动：建出/选中第一个会话并回显历史
+    (async function init() {
+      await renderSessions();
+      if (state.currentId) await showMessages(state.currentId);
+    })();
   </script>
 </body>
 </html>
