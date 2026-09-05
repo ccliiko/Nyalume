@@ -9,6 +9,7 @@ from mini_agent.core import memory, personas, reminders
 
 from . import wallpaper
 from .chat_panel import ChatPanel
+from . import interactions
 from .pets_registry import (
     band_info,
     cheer_phrases,
@@ -62,20 +63,32 @@ class PetApp:
         if self.window:
             self.window.destroy()
         self.window = PetWindow(
-            self.root, get_pet(self.pet_id), on_click=self._pet_clicked
+            self.root,
+            get_pet(self.pet_id),
+            on_double_click=self._pet_double_clicked,
+            on_interact=self._pet_interact,
         )
         self.window.set_affection(self.affection)
         self.window.bind_context(self._popup_menu)
 
-    def _pet_clicked(self) -> None:
+    def _pet_double_clicked(self) -> None:
         if self.window:
             self.window.poke()
         self.chat.toggle()
+
+    def _pet_interact(self, region: str) -> None:
+        """单击不同部位：本地即时台词（好感度档位 × 部位）。"""
+        if not self.window:
+            return
+        self.window.poke()
+        line = interactions.pick_line(region, self.affection, self.session_id)
+        self.window.cheer(line)
 
     def _popup_menu(self, event) -> None:
         menu = tk.Menu(self.root, tearoff=0)
         _, mood_label = band_info(self.affection)
         menu.add_command(label="打开 / 收起对话", command=self.chat.toggle)
+        menu.add_command(label="单击摸头/摸身/摸腿，双击打开对话", state="disabled")
         menu.add_command(label=f"心情：{mood_label}", state="disabled")
         menu.add_command(label="挂后台（托盘）", command=self._hide_to_background)
 

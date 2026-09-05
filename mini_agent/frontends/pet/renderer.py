@@ -28,13 +28,19 @@ _HEAD_BOX = (0.16, 0.05, 0.84, 0.62)  # 立绘裁出“头”的区域（相对�
 
 
 class PetWindow:
-    """一只宠物 = 一个透明小窗。单击打开对话，按住拖动，右键出菜单。"""
+    """一只宠物 = 一个透明小窗。
 
-    def __init__(self, root, pet: dict, on_click=None):
+    单击（按身体部位）= 摸摸互动；双击 = 打开对话；
+    按住拖动 = 拖着走（拖拽中会有“被拎起来”的拉伸/倾斜动画）；
+    拖到屏幕边缘松手 = 趴边只露头；右键出菜单。
+    """
+
+    def __init__(self, root, pet: dict, on_double_click=None, on_interact=None):
         self.pet = pet
         self.w = int(pet.get("width", 150))
         self.h = int(pet.get("height", 150))
-        self.on_click = on_click
+        self.on_double_click = on_double_click
+        self.on_interact = on_interact
         self.mood = "neutral"
         self.working = False
         self._tick = 0
@@ -42,12 +48,20 @@ class PetWindow:
         self._dock_photos = {}
         self._after = None
         self._bubble_job = None
+        self._single_job = None
+        self._pending_click = None
         self.docked = False
         self._dock_axis = None
         self.idle_mode = False
         self.last_activity = time.time()
         self._moved = False
         self._dock_box = None
+        self._dragging = False
+        self._drag_dx = 0
+        self._drag_dy = 0
+        self._drag_photo = None
+        self._bounds = {}
+        self._last_path = ""
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -70,6 +84,7 @@ class PetWindow:
         self.canvas.bind("<ButtonPress-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
+        self.canvas.bind("<Double-Button-1>", self._on_double)
 
         self._animate()
 
@@ -116,6 +131,8 @@ class PetWindow:
             self.win.after_cancel(self._after)
         if self._bubble_job:
             self.win.after_cancel(self._bubble_job)
+        if self._single_job:
+            self.win.after_cancel(self._single_job)
         self.win.destroy()
 
     # ---------- 窗口行为 ----------
@@ -135,6 +152,9 @@ class PetWindow:
     def _on_drag(self, event) -> None:
         self.poke()
         x0, y0, wx, wy = self._drag_start
+        self._dragging = True
+        self._drag_dx = event.x_root - x0
+        self._drag_dy = event.y_root - y0
         if (
             not self._moved
             and (
@@ -146,18 +166,70 @@ class PetWindow:
             if self.docked:
                 self._undock(restore=False)
         self.win.geometry(f"+{wx + event.x_root - x0}+{wy + event.y_root - y0}")
+        self._draw()
 
     def _on_release(self, event) -> None:
         self.poke()
         x0, y0, _, _ = self._drag_start
         if self._moved:
+            self._dragging = False
+            self._draw()
             self._maybe_dock()
         elif (
             abs(event.x_root - x0) < _CLICK_TOLERANCE
             and abs(event.y_root - y0) < _CLICK_TOLERANCE
         ):
-            if self.on_click:
-                self.on_click()
+            if self._single_job:
+                self.win.after_cancel(self._single_job)
+            self._pending_click = (event.x, event.y)
+            self._single_job = self.win.after(
+                260, self._fire_single_click
+            )
+
+    def _on_double(self, event) -> None:
+        """双击 = 打开对话；取消未触发的单击互动。"""
+        self.poke()
+        if self._single_job:
+            self.win.after_cancel(self._single_job)
+            self._single_job = None
+        if self.on_double_click:
+            self.on_double_click()
+
+    def _fire_single_click(self) -> None:
+        self._single_job = None
+        if self._pending_click is None:
+            return
+        x, y = self._pending_click
+        self._pending_click = None
+        if self.on_interact:
+            self.on_interact(self._region_at(x, y))
+
+    def _region_at(self, x: int, y: int) -> str:
+        """按点击位置返回 head/body/legs/miss。"""
+        path = self._last_path
+        if path and path not in self._bounds and PILImage is not None:
+            try:
+                with PILImage.open(path) as im:
+                    self._bounds[path] = im.convert("RGBA").getbbox()
+            except Exception:
+                self._bounds[path] = None
+        box = self._bounds.get(path)
+        if box:
+            l, t, r, b = box
+            if not (l <= x < r and t <= y < b):
+                return "miss"
+            rel = (y - t) / max(1, (b - t))
+            if rel < 0.5:
+                return "head"
+            if rel < 0.82:
+                return "body"
+            return "legs"
+        # 没有位图时按窗口比例猜
+        if y < self.h * 0.38:
+            return "head"
+        if y < self.h * 0.72:
+            return "body"
+        return "legs"
 
     # ---------- 桌面边缘：趴边只露头 ----------
 
@@ -280,7 +352,27 @@ class PetWindow:
         self.canvas.delete("pet")
         if paths:
             path = paths[self._tick % len(paths)]
-            if self.docked and PILImage is not None and ImageTk is not None:
+            self._last_path = path
+            if (
+                self._dragging
+                and not self.docked
+                and PILImage is not None
+                and ImageTk is not None
+            ):
+                # 拖拽中被“拎起来”：轻微拉长 + 收窄 + 随拖动方向倾斜
+                with PILImage.open(path) as im:
+                    im = im.convert("RGBA")
+                angle = max(-10.0, min(10.0, self._drag_dx * 0.05))
+                sy = 1.0 + min(0.10, abs(self._drag_dy) / 5000)
+                sx = 1.0 - min(0.08, abs(self._drag_dy) / 6000)
+                im = im.rotate(angle, resample=PILImage.BILINEAR)
+                im = im.resize(
+                    (max(20, int(im.width * sx)), max(20, int(im.height * sy))),
+                    PILImage.LANCZOS,
+                )
+                photo = ImageTk.PhotoImage(im, master=self.win)
+                self._drag_photo = photo
+            elif self.docked and PILImage is not None and ImageTk is not None:
                 photo = self._dock_photos.get(path)
                 if photo is None:
                     with PILImage.open(path) as im:
