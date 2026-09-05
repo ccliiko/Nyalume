@@ -15,14 +15,14 @@
   （攒够轮数后自动归档值得记住的内容，按内容去重，checkpoint 记录进度）
 - 工具调用：当前时间 / 安全计算器 / 带标签的便签存取（可按标签筛选）/
   网页搜索（必应 RSS，免密钥，国内可直接访问）
-- 人设可切换（默认菲比）：`phoebe`（鸣潮菲比 Q版）/ `catgirl`（猫娘）/
-  `assistant`（标准助手）；Web 顶栏下拉、CLI `/persona`、桌宠右键都能切
+- 人设可切换（默认猫娘）：`catgirl`（猫娘）/ `assistant`（标准助手）；
+  Web 顶栏下拉、CLI `/persona`、桌宠右键都能切
 - 温度状态机：带人设的角色把好感度/信赖度作为会话状态存 SQLite，
   每轮由模型输出隐藏标记、服务端校验并持久化、展示前剥离；
-  分 5 段温度（疏离/别扭/日常/亲密/深爱，菲比与猫娘各自措辞），只改语气不改能力
+  分 5 段温度（疏离/闹别扭/日常撒娇/心动黏人/深爱守护），只改语气不改能力
 - 入口：CLI（命令行） + Web（FastAPI 单页，支持多会话：新建 / 切换 / 删除 / 历史回显）
   + 桌宠（透明置顶小窗、气泡对话、好感度切表情、右键换皮肤）
-  （桌宠任务完成会头顶冒出彩蛋台词，默认「菲比啾比！」，皮肤 manifest 可配）
+  （桌宠任务完成会头顶冒出彩蛋台词，默认「任务完成喵！」，皮肤 manifest 可配）
 
 ## 快速开始
 
@@ -65,7 +65,7 @@ python pet.py          # 无控制台双击 start_pet.bat
 LLM_API_KEY=你的key
 LLM_BASE_URL=https://api.deepseek.com/v1
 LLM_MODEL=deepseek-chat
-PERSONA=phoebe      # phoebe=菲比（默认）/ catgirl=猫娘 / assistant=标准助手
+PERSONA=catgirl     # catgirl=猫娘（默认）/ assistant=标准助手
 ```
 
 如果你的 key 来自其他 OpenAI 兼容平台（硅基流动、OpenRouter 等），只改
@@ -79,7 +79,7 @@ mini_agent/                项目包
 │   ├── agent.py           Agent 编排（多轮/工具循环/流式/记忆分层）
 │   ├── llm.py             模型接入（OpenAI 兼容，流式/非流式）
 │   ├── memory.py          三层记忆 + 会话管理（SQLite）
-│   ├── personas.py        人设注册表（菲比/猫娘/助手 + 温度状态注入）
+│   ├── personas.py        人设注册表（猫娘/助手 + 温度状态注入）
 │   └── tools.py           工具注册表（时间/计算器/便签/网页搜索）
 └── frontends/             前端层：只消费内核的 run_stream 事件
     ├── cli.py             命令行（流式打字机）
@@ -137,5 +137,5 @@ agent.db                   SQLite 数据（默认放在仓库根，可用 MEMORY
     gitignore 的 user_pets/，仓库本身不含任何角色图片
 13. 人设也是注册表而不是 if-else：每个角色 = id + prompt + 是否启用
     “温度状态”；切换只写一份 persona_config.json，解析优先级为
-    运行时配置 > PERSONA 环境变量 > 默认 phoebe，所以 Web/CLI/桌宠
+    运行时配置 > PERSONA 环境变量 > 默认 catgirl，所以 Web/CLI/桌宠
     三个入口共用同一份选择，互不冲突
