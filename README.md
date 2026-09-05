@@ -11,6 +11,8 @@
 - 流式接入任意 OpenAI 兼容 API（默认 DeepSeek，可改）
 - 会话记忆：SQLite 保存多轮历史
 - 工具调用：当前时间 / 安全计算器 / 带标签的便签存取（可按标签筛选）
+- 人设可配置：`PERSONA=catgirl` 开启猫娘人设，好感度作为会话状态存 SQLite，
+  每轮由模型输出隐藏标记、服务端校验并持久化，展示前剥离
 - 入口：CLI（命令行） + Web（FastAPI 单页）
 
 ## 快速开始
@@ -42,6 +44,7 @@ python server.py
 LLM_API_KEY=你的key
 LLM_BASE_URL=https://api.deepseek.com/v1
 LLM_MODEL=deepseek-chat
+PERSONA=assistant   # assistant=专业助手；catgirl=猫娘人设（含好感度）
 ```
 
 如果你的 key 来自其他 OpenAI 兼容平台（硅基流动、OpenRouter 等），只改
@@ -67,3 +70,5 @@ static/index.html  网页聊天界面
 4. 模型层用 OpenAI 兼容接口，换模型只改配置，不换代码
 5. 便签带 tag 列 + 工具描述引导：用户说“算完记下来”时直接保存完整算式与结果，
    并在回复中复述已保存内容，不反问用户
+6. 猫娘好感度不是模型“嘴上说说”：模型每轮输出隐藏标记 `[affection:+N]`，
+   服务端校验范围、写 SQLite、展示前剥离——状态归程序管，人设归模型演

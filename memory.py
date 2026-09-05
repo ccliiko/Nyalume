@@ -19,7 +19,8 @@ def init_db() -> None:
             """
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
-                created_at REAL
+                created_at REAL,
+                affection INTEGER DEFAULT 50
             );
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,11 +41,18 @@ def init_db() -> None:
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(notes)")}
         if "tag" not in cols:
             conn.execute("ALTER TABLE notes ADD COLUMN tag TEXT DEFAULT ''")
+        # 旧库迁移：sessions 表没有 affection 列时补上（人设好感度状态）
+        sess_cols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
+        if "affection" not in sess_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN affection INTEGER DEFAULT 50")
 
 
 def ensure_session(session_id: str) -> None:
     with _conn() as conn:
-        conn.execute("INSERT OR IGNORE INTO sessions VALUES (?, ?)", (session_id, time.time()))
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, created_at, affection) VALUES (?, ?, 50)",
+            (session_id, time.time()),
+        )
 
 
 def save_message(session_id: str, role: str, content: str) -> None:
@@ -102,6 +110,27 @@ def note_list(tag: str = "") -> str:
         f"- [{r['tag']}] {r['content']}" if r["tag"] else f"- {r['content']}"
         for r in rows
     )
+
+
+# ---------- 会话状态：好感度（人设状态机用） ----------
+
+def get_affection(session_id: str) -> int:
+    ensure_session(session_id)
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT affection FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+    return int(row["affection"] or 50)
+
+
+def set_affection(session_id: str, value: int) -> int:
+    ensure_session(session_id)
+    value = max(-100, min(200, int(value)))
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE sessions SET affection = ? WHERE id = ?", (value, session_id)
+        )
+    return value
 
 
 init_db()
