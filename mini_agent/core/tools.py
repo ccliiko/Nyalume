@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
-from memory import note_list, note_save
+from .memory import note_list, note_save
 
 _REGISTRY: dict[str, dict] = {}
 

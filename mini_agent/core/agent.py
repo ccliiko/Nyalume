@@ -4,9 +4,8 @@ import json
 import os
 import re
 
-import llm
-import memory
-from tools import TOOL_SCHEMAS, execute_tool
+from . import llm, memory
+from .tools import TOOL_SCHEMAS, execute_tool
 
 DEFAULT_SYSTEM_PROMPT = (
     "你是一个个人 AI 助手。回答简洁、友好。"

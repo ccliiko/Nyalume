@@ -5,7 +5,11 @@ import sqlite3
 import time
 import uuid
 
-DB_PATH = os.getenv("MEMORY_DB", os.path.join(os.path.dirname(__file__), "agent.db"))
+# 仓库根（mini_agent/core/memory.py 的上三级），默认数据文件仍放在项目根目录
+_PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+DB_PATH = os.getenv("MEMORY_DB", os.path.join(_PROJECT_ROOT, "agent.db"))
 
 
 def _conn() -> sqlite3.Connection:

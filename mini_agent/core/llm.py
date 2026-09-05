@@ -5,7 +5,11 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv()
+# 仓库根（mini_agent/core/llm.py 的上三级），无论从哪启动都能读到 .env
+_PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
 
 
 def get_client() -> OpenAI:

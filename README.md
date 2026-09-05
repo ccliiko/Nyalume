@@ -23,7 +23,7 @@
 ## 快速开始
 
 ```bash
-cd ai-agent-mini
+cd nanobot
 python -m venv .venv
 .venv\Scripts\activate        # Windows
 pip install -r requirements.txt
@@ -43,6 +43,9 @@ python server.py
 # 浏览器打开 http://127.0.0.1:8000
 ```
 
+两个入口都只是根目录薄封装，等价于：
+`python -m mini_agent.frontends.cli` / `python -m mini_agent.frontends.web.server`
+
 ## 配置（.env）
 
 ```ini
@@ -58,15 +61,24 @@ PERSONA=assistant   # assistant=专业助手；catgirl=猫娘人设（含好感�
 ## 目录结构
 
 ```text
-agent.py        核心 Agent 循环（记忆+模型+工具的编排）
-llm.py          模型接入层（OpenAI 兼容封装）
-tools.py        工具注册表（schema 自动生成/参数校验/异常兜底）+ 工具实现
-                （时间/计算器/带标签便签/网页搜索）
-memory.py       会话记忆（SQLite）：窗口历史 + L2 摘要 + L3 便签/归档进度
-cli.py          命令行入口
-server.py       Web 入口（FastAPI）
-static/index.html  网页聊天界面
+mini_agent/                项目包
+├── core/                  内核层：与具体前端无关
+│   ├── agent.py           Agent 编排（多轮/工具循环/流式/记忆分层）
+│   ├── llm.py             模型接入（OpenAI 兼容，流式/非流式）
+│   ├── memory.py          三层记忆 + 会话管理（SQLite）
+│   └── tools.py           工具注册表（时间/计算器/便签/网页搜索）
+└── frontends/             前端层：只消费内核的 run_stream 事件
+    ├── cli.py             命令行（流式打字机）
+    └── web/               FastAPI + SSE + 单页聊天
+        ├── server.py      会话/消息 REST + SSE 聊天接口
+        └── static/index.html
+cli.py / server.py         仓库根启动入口（薄封装）
+agent.db                   SQLite 数据（默认放在仓库根，可用 MEMORY_DB 覆盖）
 ```
+
+约定：新功能进 `core/`，新入口在 `frontends/` 里加一个目录
+（例如桌宠 = `frontends/pet/`），只消费 `agent.run_stream` 产出的事件，
+所以 CLI / Web / 桌宠不会互相重复业务逻辑。
 
 ## 面试时可以讲的设计点
 
@@ -95,3 +107,6 @@ static/index.html  网页聊天界面
 10. 会话列表不另建冗余表：标题直接用 SQL 取“该会话第一句用户消息”，
     排序按最近活动时间，删除时级联清理 messages/summaries（全局便签保留）；
     前端切换会话时才拉历史，SSE 流式回复期间不刷新列表，避免打断打字机效果
+11. 代码按“内核 / 前端”分层：`core/` 不 import 任何前端，所有入口只消费
+    `run_stream` 的统一事件（text/tool/error）；因此新增工具或记忆功能
+    不会改动任何界面，加一个新前端（桌宠）也只等于多写一个事件消费者
