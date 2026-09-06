@@ -493,9 +493,15 @@ class PetWindow:
         paths = pets_registry.frame_paths(self.pet, group)
         if not paths:
             paths = pets_registry.frame_paths(self.pet, "idle")
+        # 拖拽且皮肤提供了专门的“拎起帧”时，优先用拎起帧而不是拉伸普通帧
+        lift_path = None
+        if self._dragging and not self.docked:
+            lifts = pets_registry.frame_paths(self.pet, "lift")
+            if lifts:
+                lift_path = lifts[0]
         self.canvas.delete("pet")
         if paths:
-            path = paths[self._tick % len(paths)]
+            path = lift_path or paths[self._tick % len(paths)]
             self._last_path = path
             if path not in self._bounds and PILImage is not None:
                 try:
@@ -506,6 +512,7 @@ class PetWindow:
             if (
                 self._dragging
                 and not self.docked
+                and lift_path is None
                 and PILImage is not None
                 and ImageTk is not None
             ):
