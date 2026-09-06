@@ -26,6 +26,7 @@ _BUBBLE_MS = 2400
 _DOCK_EDGE = 60          # 距边缘多少像素触发趴边
 _IDLE_SECONDS = 30       # 超过多久没人理进入待机
 _HEAD_BOX = (0.16, 0.05, 0.84, 0.62)  # 立绘裁出“头”的区域（相对坐标）
+_DOCK_FOOTPRINT = 240   # 趴边素材缩放到多大的“露出”尺寸
 
 
 class PetWindow:
@@ -438,7 +439,7 @@ class PetWindow:
             self.docked = False
             self._dock_axis = None
             return
-        cw, ch = self._head_size()
+        cw, ch = self._peek_size(axis)
         if axis == "left":
             nx, ny = 0, max(0, min(y, sh - ch))
         elif axis == "right":
@@ -452,6 +453,29 @@ class PetWindow:
         self.canvas.config(width=cw, height=ch)
         self.win.geometry(f"{cw}x{ch}+{nx}+{ny}")
         self.hint("👆 拖出来", 5000)
+
+    def _peek_axis_path(self) -> str | None:
+        """当前趴边方向的专用素材路径；没有就返回 None。"""
+        if not self.docked or not self._dock_axis:
+            return None
+        paths = pets_registry.frame_paths(self.pet, f"peek_{self._dock_axis}")
+        return paths[0] if paths else None
+
+    def _peek_size(self, axis: str) -> tuple[int, int]:
+        """趴边窗口尺寸：有专用素材时按内容缩放到 _DOCK_FOOTPRINT。"""
+        paths = pets_registry.frame_paths(self.pet, f"peek_{axis}")
+        if not paths or PILImage is None:
+            return self._head_size()
+        try:
+            with PILImage.open(paths[0]) as im:
+                box = im.convert("RGBA").getbbox()
+            if not box:
+                return self._head_size()
+            w, h = box[2] - box[0], box[3] - box[1]
+            scale = _DOCK_FOOTPRINT / max(1, max(w, h))
+            return max(60, int(w * scale + 0.5)), max(60, int(h * scale + 0.5))
+        except Exception:
+            return self._head_size()
 
     def _head_size(self) -> tuple[int, int]:
         paths = pets_registry.frame_paths(self.pet, "idle")
@@ -546,6 +570,7 @@ class PetWindow:
         paths = pets_registry.frame_paths(self.pet, group)
         if not paths:
             paths = pets_registry.frame_paths(self.pet, "idle")
+        peek_path = self._peek_axis_path() if self.docked else None
         # 拖拽且皮肤提供了专门的“拎起帧”时，优先用拎起帧而不是拉伸普通帧
         lift_path = None
         if self._dragging and not self.docked:
@@ -554,7 +579,7 @@ class PetWindow:
                 lift_path = lifts[0]
         self.canvas.delete("pet")
         if paths:
-            path = lift_path or paths[self._tick % len(paths)]
+            path = lift_path or peek_path or paths[self._tick % len(paths)]
             self._last_path = path
             if path not in self._bounds and PILImage is not None:
                 try:
@@ -582,15 +607,26 @@ class PetWindow:
                 photo = ImageTk.PhotoImage(im, master=self.win)
                 self._drag_photo = photo
             elif self.docked and PILImage is not None and ImageTk is not None:
-                photo = self._dock_photos.get(path)
-                if photo is None:
-                    with PILImage.open(path) as im:
-                        l, t, r, b = _HEAD_BOX
-                        box = (int(l * im.width), int(t * im.height),
-                               int(r * im.width), int(b * im.height))
-                        crop = im.convert("RGBA").crop(box)
-                    photo = ImageTk.PhotoImage(crop, master=self.win)
-                    self._dock_photos[path] = photo
+                if peek_path:
+                    key = "peek:" + peek_path
+                    photo = self._dock_photos.get(key)
+                    if photo is None:
+                        with PILImage.open(peek_path) as im:
+                            im = im.convert("RGBA").resize(
+                                (self.w, self.h), PILImage.LANCZOS
+                            )
+                        photo = ImageTk.PhotoImage(im, master=self.win)
+                        self._dock_photos[key] = photo
+                else:
+                    photo = self._dock_photos.get(path)
+                    if photo is None:
+                        with PILImage.open(path) as im:
+                            l, t, r, b = _HEAD_BOX
+                            box = (int(l * im.width), int(t * im.height),
+                                   int(r * im.width), int(b * im.height))
+                            crop = im.convert("RGBA").crop(box)
+                        photo = ImageTk.PhotoImage(crop, master=self.win)
+                        self._dock_photos[path] = photo
             else:
                 photo = self._photos.get(path)
                 if photo is None:
