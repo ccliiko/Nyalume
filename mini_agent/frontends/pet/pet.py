@@ -172,10 +172,6 @@ class PetApp:
                 command=lambda pid=p["id"]: self._switch_persona(pid),
             )
         menu.add_cascade(label="人设", menu=pmenu)
-        menu.add_command(
-            label="壁纸与不透明度设置（在聊天窗右上角 🖼）",
-            command=self.chat.show,
-        )
         menu.add_separator()
         menu.add_command(label="退出", command=self._quit)
         try:

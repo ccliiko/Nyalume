@@ -385,7 +385,7 @@ class PetWindow:
                 self._moved = True
                 if self.docked:
                     self._undock(restore=False)
-        self.win.geometry(f"+{wx + event.x_root - x0}+{wy + event.y_root - y0}")
+            self.win.geometry(f"+{wx + event.x_root - x0}+{wy + event.y_root - y0}")
         self._queue_draw()
 
     def _queue_draw(self) -> None:

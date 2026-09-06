@@ -148,21 +148,21 @@ class WebChat:
             )
             self._plog(f"child pid={self._proc.pid}")
             self._visible = True
-            # 子进程秒退说明 WebView 起不来：退回系统默认浏览器
-            try:
-                self._proc.wait(timeout=1.8)
-            except subprocess.TimeoutExpired:
-                pass
-            if self._proc.poll() is not None:
-                self._plog(f"child exited early rc={self._proc.returncode}, open browser")
-                webbrowser.open(f"http://127.0.0.1:{WEB_PORT}")
-                self._visible = False
-            else:
-                self._plog("child alive after 1.8s")
+            # 不阻塞 Tk：后台稍后检查子进程是否秒退，退则退回默认浏览器
+            threading.Thread(target=self._watch_child, daemon=True).start()
         else:
             self._send("show")
             self._visible = True
         return True
+
+    def _watch_child(self) -> None:
+        time.sleep(2.2)
+        if self._proc is not None and self._proc.poll() is not None:
+            self._plog(
+                f"child exited early rc={self._proc.returncode}, open browser"
+            )
+            webbrowser.open(f"http://127.0.0.1:{WEB_PORT}")
+            self._visible = False
 
     def hide(self) -> None:
         if self._alive():
