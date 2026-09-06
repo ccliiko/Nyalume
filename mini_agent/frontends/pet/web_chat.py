@@ -12,9 +12,14 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import webbrowser
 
 WEB_PORT = 8000
+SERVER_LAST_ERROR = {"msg": ""}
+_REPO_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 
 
 def _server_alive(port: int = WEB_PORT) -> bool:
@@ -29,6 +34,7 @@ def start_web_server_if_needed(port: int = WEB_PORT) -> bool:
     """本地 Web 服务（FastAPI/uvicorn）没在跑就拉一个后台线程。"""
     if _server_alive(port):
         return True
+    SERVER_LAST_ERROR["msg"] = ""
     try:
         import uvicorn
 
@@ -42,15 +48,37 @@ def start_web_server_if_needed(port: int = WEB_PORT) -> bool:
             try:
                 uvicorn.Server(config).run()
             except Exception:
-                pass
+                SERVER_LAST_ERROR["msg"] = traceback.format_exc()
 
         threading.Thread(target=run, daemon=True).start()
-    except Exception:
+    except Exception as e:
+        SERVER_LAST_ERROR["msg"] = f"{type(e).__name__}: {e}"
         return False
-    for _ in range(40):
+    for _ in range(60):
         if _server_alive(port):
             return True
         time.sleep(0.1)
+    # 线程方式失败：换独立 pythonw 子进程再试一次（服务常驻，pet 退出也不断）
+    try:
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "mini_agent.frontends.web.server",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            cwd=_REPO_ROOT,
+        )
+        for _ in range(60):
+            if _server_alive(port):
+                return True
+            time.sleep(0.1)
+    except Exception as e:
+        SERVER_LAST_ERROR["msg"] += f"\nsubprocess fallback: {type(e).__name__}: {e}"
+    if not SERVER_LAST_ERROR["msg"]:
+        SERVER_LAST_ERROR["msg"] = "waiting server timed out (thread+subprocess)"
     return False
 
 
@@ -93,7 +121,11 @@ class WebChat:
     def show(self) -> bool:
         if not self._alive():
             if not start_web_server_if_needed():
-                self._plog("server start FAILED")
+                self._plog(
+                    "server start FAILED: "
+                    + (SERVER_LAST_ERROR["msg"] or "unknown")
+                    .replace("\n", " | ")[:800]
+                )
                 return False
             self._plog("server ok, spawning child")
             args = [
