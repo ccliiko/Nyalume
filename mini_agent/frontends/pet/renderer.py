@@ -49,6 +49,17 @@ def _unpremul(im: PILImage.Image) -> PILImage.Image:
     )
 
 
+def _harden(im: PILImage.Image) -> PILImage.Image:
+    """缩放后再把边缘二值化，避免 Tk 色键窗的半透明深色外晕。"""
+    arr = np.asarray(im).copy()
+    keep = arr[..., 3] >= 110
+    arr[..., 3] = np.where(keep, 255, 0)
+    arr[..., 0] = np.where(keep, arr[..., 0], 1)
+    arr[..., 1] = np.where(keep, arr[..., 1], 2)
+    arr[..., 2] = np.where(keep, arr[..., 2], 3)
+    return PILImage.fromarray(arr)
+
+
 class PetWindow:
     """一只宠物 = 一个透明小窗。
 
@@ -552,6 +563,7 @@ class PetWindow:
             im = _premul(im)
             im = im.resize((cw, ch), PILImage.LANCZOS)
             im = _unpremul(im)
+            im = _harden(im)
         photo = ImageTk.PhotoImage(im, master=self.win)
         self._dock_photos[key] = photo
         return photo
@@ -688,6 +700,7 @@ class PetWindow:
                     PILImage.LANCZOS,
                 )
                 im = _unpremul(im)
+                im = _harden(im)
                 photo = ImageTk.PhotoImage(im, master=self.win)
                 self._drag_photo = photo
             elif self.docked and PILImage is not None and ImageTk is not None:
