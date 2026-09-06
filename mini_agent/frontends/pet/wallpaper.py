@@ -5,9 +5,7 @@
 """
 
 import ctypes
-import glob
 import os
-import time
 import winreg
 
 from PIL import Image, ImageDraw
@@ -71,6 +69,14 @@ def apply_wallpaper(image_path: str) -> tuple[bool, str]:
     image_path = os.path.abspath(image_path)
     if not os.path.isfile(image_path):
         return False, "壁纸文件不存在"
+    # 部分 Windows 11 版本对 SPI 设置 PNG 不刷新，BMP 最稳：自动转一份同名的 .bmp
+    if os.path.splitext(image_path)[1].lower() != ".bmp":
+        bmp_path = os.path.splitext(image_path)[0] + ".bmp"
+        try:
+            Image.open(image_path).convert("RGB").save(bmp_path)
+            image_path = bmp_path
+        except OSError:
+            return False, "壁纸图片无法读取"
     prev = _current_wallpaper()
     cfg = load_config()
     if prev and prev != image_path:
@@ -107,7 +113,7 @@ def restore_wallpaper() -> tuple[bool, str]:
 
 
 def character_wallpaper(
-    out_path: str, width: int = 1920, height: int = 1080, unique: bool = True
+    out_path: str, width: int = 1920, height: int = 1080, unique: bool = False
 ) -> str:
     """用当前皮肤的 idle 帧合成一张渐变底壁纸，返回文件路径。"""
     cfg = load_config()
@@ -134,27 +140,8 @@ def character_wallpaper(
     )
     margin = int(width * 0.05)
     canvas.paste(char, (width - char.width - margin, height - char.height), char)
-    # 桌宠菜单用唯一文件名（Windows 对同名文件有缓存）；
-    # Web 端用固定名即可（每次合成内容一致，无需清旧文件）。
-    if unique:
-        stamp = time.strftime("%Y%m%d_%H%M%S")
-        out = os.path.join(
-            os.path.dirname(os.path.abspath(out_path)),
-            f"{os.path.splitext(os.path.basename(out_path))[0]}_{stamp}.png",
-        )
-    else:
-        out = os.path.abspath(out_path)
+    # 固定文件名（配合 apply_wallpaper 的清缓存刷新，同名也能换图），
+    # 不做自动删除——旧文件被删会让注册表/恢复逻辑指向不存在的文件。
+    out = os.path.abspath(out_path)
     canvas.convert("RGB").save(out)
-    if unique:
-        for old in glob.glob(
-            os.path.join(
-                os.path.dirname(out),
-                f"{os.path.splitext(os.path.basename(out_path))[0]}_*.png",
-            )
-        ):
-            if os.path.abspath(old) != os.path.abspath(out):
-                try:
-                    os.remove(old)
-                except OSError:
-                    pass
     return out
