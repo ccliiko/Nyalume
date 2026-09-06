@@ -94,6 +94,8 @@ class PetWindow:
         self._drag_photo = None
         self._bounds = {}
         self._last_path = ""
+        self._draw_scheduled = False
+        self._lift_base = {}
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -119,6 +121,7 @@ class PetWindow:
         self.canvas.bind("<Double-Button-1>", self._on_double)
 
         self._animate()
+        self.win.after(150, self._prewarm_peeks)
 
     # ---------- 对外接口 ----------
 
@@ -371,6 +374,17 @@ class PetWindow:
                 if self.docked:
                     self._undock(restore=False)
         self.win.geometry(f"+{wx + event.x_root - x0}+{wy + event.y_root - y0}")
+        self._queue_draw()
+
+    def _queue_draw(self) -> None:
+        """拖动时鼠标事件很密：合并绘制到 ~30ms 一次，避免每事件都重算旋转/缩放。"""
+        if self._draw_scheduled:
+            return
+        self._draw_scheduled = True
+        self.win.after(30, self._flush_draw)
+
+    def _flush_draw(self) -> None:
+        self._draw_scheduled = False
         self._draw()
 
     def _on_release(self, event) -> None:
@@ -480,6 +494,7 @@ class PetWindow:
         self.canvas.config(width=cw, height=ch)
         self.win.geometry(f"{cw}x{ch}+{nx}+{ny}")
         self.hint("👆 拖出来", 5000)
+        self._draw()
 
     def _peek_axis_path(self) -> str | None:
         """当前趴边方向的专用素材路径；没有就返回 None。"""
@@ -503,6 +518,43 @@ class PetWindow:
             return max(60, int(w * scale + 0.5)), max(60, int(h * scale + 0.5))
         except Exception:
             return self._head_size()
+
+    def _prewarm_peeks(self) -> None:
+        """提前把四个趴边方向的小图渲染好，松手贴边时立刻显示。"""
+
+        def step(i: int) -> None:
+            axes = ("top", "bottom", "left", "right")
+            if i >= len(axes):
+                return
+            self._peek_photo_for(axes[i])
+            self.win.after(60, lambda: step(i + 1))
+
+        step(0)
+
+    def _peek_photo_for(self, axis: str):
+        """构建/复用某方向的趴边小图（裁剪内容框 + 预乘缩放）。"""
+        if PILImage is None or ImageTk is None:
+            return None
+        paths = pets_registry.frame_paths(self.pet, f"peek_{axis}")
+        if not paths:
+            return None
+        peek_path = paths[0]
+        key = "peek:" + peek_path
+        photo = self._dock_photos.get(key)
+        if photo is not None:
+            return photo
+        cw, ch = self._peek_size(axis)
+        with PILImage.open(peek_path) as im:
+            im = im.convert("RGBA")
+            box = im.getbbox()
+            if box:
+                im = im.crop(box)
+            im = _premul(im)
+            im = im.resize((cw, ch), PILImage.LANCZOS)
+            im = _unpremul(im)
+        photo = ImageTk.PhotoImage(im, master=self.win)
+        self._dock_photos[key] = photo
+        return photo
 
     def _head_size(self) -> tuple[int, int]:
         paths = pets_registry.frame_paths(self.pet, "idle")
@@ -621,8 +673,11 @@ class PetWindow:
                 and ImageTk is not None
             ):
                 # 拖拽中被“拎起来”：轻微拉长 + 收窄 + 随拖动方向倾斜
-                with PILImage.open(path) as im:
-                    im = im.convert("RGBA")
+                im = self._lift_base.get(path)
+                if im is None:
+                    with PILImage.open(path) as im0:
+                        im = im0.convert("RGBA")
+                    self._lift_base[path] = im
                 angle = max(-10.0, min(10.0, self._drag_dx * 0.05))
                 sy = 1.0 + min(0.10, abs(self._drag_dy) / 5000)
                 sx = 1.0 - min(0.08, abs(self._drag_dy) / 6000)
@@ -637,22 +692,7 @@ class PetWindow:
                 self._drag_photo = photo
             elif self.docked and PILImage is not None and ImageTk is not None:
                 if peek_path:
-                    key = "peek:" + peek_path
-                    photo = self._dock_photos.get(key)
-                    if photo is None:
-                        with PILImage.open(peek_path) as im:
-                            im = im.convert("RGBA")
-                            box = im.getbbox()
-                            if box:
-                                im = im.crop(box)
-                            im = _premul(im)
-                            im = im.resize(
-                                (self._dock_cw or self.w, self._dock_ch or self.h),
-                                PILImage.LANCZOS,
-                            )
-                            im = _unpremul(im)
-                        photo = ImageTk.PhotoImage(im, master=self.win)
-                        self._dock_photos[key] = photo
+                    photo = self._peek_photo_for(self._dock_axis)
                 else:
                     photo = self._dock_photos.get(path)
                     if photo is None:
