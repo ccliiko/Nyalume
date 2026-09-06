@@ -180,6 +180,19 @@ def _list_notes(tag: str = "") -> str:
     return note_list(tag)
 
 
+@register(
+    "delete_note",
+    "删除一条便签（用户说“删掉某条便签/忘记 XX”时调用；找不到要如实说）。",
+    {"content": {"type": "string", "description": "要删除的便签原文内容"}},
+    required=["content"],
+)
+def _delete_note(content: str) -> str:
+    from .memory import note_delete_by_content
+
+    ok = note_delete_by_content(content)
+    return f"已删除便签：{content}" if ok else f"没有找到这条便签：{content}"
+
+
 # ---------- 工具 5：网页搜索（必应，免密钥） ----------
 
 _SEARCH_TIMEOUT = 12

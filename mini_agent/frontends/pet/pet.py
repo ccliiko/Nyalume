@@ -40,7 +40,7 @@ class PetApp:
 
         self.chat = WebChat(on_event=self._on_chat_event)
         self.window: PetWindow | None = None
-        self._scheduler = reminders.ReminderScheduler(self._on_reminder)
+        self._scheduler = reminders.ReminderScheduler(self._on_reminder, interval=5.0)
         self._scheduler.start()
         self._tray_icon = None
         self._hint_shown = False

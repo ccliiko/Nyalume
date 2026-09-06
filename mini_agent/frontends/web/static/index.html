@@ -462,7 +462,8 @@
         if (!st.notes.length) html += '<div class="state-empty">还没有便签</div>';
         for (const n of st.notes) {
           const tag = n.tag ? "[" + n.tag + "] " : "";
-          html += '<div class="state-item"><span>' + esc(tag + n.content) + "</span></div>";
+          html += '<div class="state-item"><span>' + esc(tag + n.content) + "</span>"
+            + '<button class="state-del" data-type="note" data-id="' + n.id + '" title="删除便签">✕</button></div>';
         }
         html += '<div class="state-section">定时提醒</div>';
         if (!st.reminders.length) html += '<div class="state-empty">暂无，可以跟 cliko 说“每天 9 点提醒我…”</div>';
@@ -473,7 +474,10 @@
         }
         body.innerHTML = html;
         body.querySelectorAll(".state-del").forEach((btn) => {
-          btn.addEventListener("click", () => removeReminder(Number(btn.dataset.id)));
+          btn.addEventListener("click", () => {
+            if (btn.dataset.type === "note") removeNote(Number(btn.dataset.id));
+            else removeReminder(Number(btn.dataset.id));
+          });
         });
       } catch (e) { /* 网络抖动忽略 */ }
     }
@@ -483,6 +487,13 @@
         await api("/api/reminders/" + id, { method: "DELETE" });
         await renderState();
       } catch (e) { alert("取消失败：" + e.message); }
+    }
+
+    async function removeNote(id) {
+      try {
+        await api("/api/notes/" + id, { method: "DELETE" });
+        await renderState();
+      } catch (e) { alert("删除便签失败：" + e.message); }
     }
 
     async function renderSessions() {

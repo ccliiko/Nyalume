@@ -37,6 +37,14 @@ _NOTE_EXTRACT_SYSTEM_PROMPT = (
 def _system_prompt(affection: int, memory_context: str = "") -> str:
     """拼 system prompt：当前人设 + 内部温度状态 + 记忆上下文。"""
     base = persona_base_prompt(resolve_persona_id(), affection)
+    base += (
+        "\n\n【工具纪律】用户提出可执行请求（设/查/取消提醒、记/删便签、"
+        "搜索、计算）时必须立刻调用对应工具，不要先反问“要不要/是不是”。"
+        "“X 分钟后/小时后提醒一次”用 remind_me_in；只有明确说“每隔/每天/周期”"
+        "才用 create_reminder，绝不把一次性提醒写成每分钟。"
+        "只有看到工具返回了“已设好/已保存”才算完成，未调用工具不得声称已设置；"
+        "查提醒用 list_reminders 以数据库为准，不要凭记忆编造。"
+    )
     if memory_context:
         base += "\n\n" + memory_context
     return base

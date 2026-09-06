@@ -10,6 +10,7 @@ def test_tool_schemas_include_reminder_tools():
     assert "create_reminder" in names
     assert "remind_me_in" in names
     assert "cancel_reminder" in names
+    assert "delete_note" in names
     assert "web_search" in names
 
 

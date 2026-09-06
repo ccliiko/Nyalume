@@ -133,9 +133,32 @@ def get_recent_notes(limit: int = 3) -> list[dict]:
     """取最近 N 条便签，用于每轮注入上下文（L3 自动召回）。"""
     with _conn() as conn:
         rows = conn.execute(
-            "SELECT content, tag FROM notes ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT id, content, tag FROM notes ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
-    return [{"content": r["content"], "tag": r["tag"]} for r in rows]
+    return [
+        {"id": r["id"], "content": r["content"], "tag": r["tag"]} for r in rows
+    ]
+
+
+def note_delete(note_id: int) -> bool:
+    """按 id 删除便签。"""
+    with _conn() as conn:
+        cur = conn.execute("DELETE FROM notes WHERE id = ?", (int(note_id),))
+    return cur.rowcount > 0
+
+
+def note_delete_by_content(content: str) -> bool:
+    """删除与内容完全一致的最近一条便签（供 delete_note 工具用）。"""
+    content = (content or "").strip()
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM notes WHERE content = ? ORDER BY id DESC LIMIT 1",
+            (content,),
+        ).fetchone()
+        if not row:
+            return False
+        conn.execute("DELETE FROM notes WHERE id = ?", (row["id"],))
+    return True
 
 
 # ---------- L2 滚动摘要：把超出窗口的旧消息合并成摘要 ----------

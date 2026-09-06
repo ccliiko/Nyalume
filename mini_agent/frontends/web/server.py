@@ -170,6 +170,13 @@ def agent_state(session_id: str = "web-default"):
     }
 
 
+@app.delete("/api/notes/{note_id}")
+def delete_note(note_id: int):
+    if not memory.note_delete(note_id):
+        raise HTTPException(status_code=404, detail=f"没有便签 #{note_id}")
+    return {"ok": True}
+
+
 @app.get("/api/skin/current")
 def current_skin_image():
     """当前桌宠皮肤的合成壁纸（渐变底+角色），供 Web 当背景用。"""
