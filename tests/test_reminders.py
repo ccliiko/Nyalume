@@ -38,6 +38,21 @@ def test_cron_every_30_minutes_and_steps():
     )
 
 
+def test_one_shot_reminder_auto_deleted_after_fire():
+    rid = reminders.add_reminder("喝水", "0 10 * * *", one_shot=True)
+    assert reminders.list_reminders(), "一次性提醒应已入库"
+    due = reminders.check_due(now=datetime.datetime(2026, 9, 5, 10, 0))
+    assert [d["id"] for d in due] == [rid]
+    assert not any(r["id"] == rid for r in reminders.list_reminders()), \
+        "一次性提醒触发后应自动删除"
+
+
+def test_recurring_reminder_kept_after_fire():
+    rid = reminders.add_reminder("每天喝水", "0 10 * * *", one_shot=False)
+    reminders.check_due(now=datetime.datetime(2026, 9, 5, 10, 0))
+    assert any(r["id"] == rid for r in reminders.list_reminders())
+
+
 def test_cron_bad_expression_raises():
     try:
         reminders.cron_matches("0 9 * *")

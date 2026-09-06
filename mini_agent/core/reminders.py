@@ -30,10 +30,20 @@ def _ensure_table() -> None:
                 cron TEXT NOT NULL,
                 enabled INTEGER DEFAULT 1,
                 last_fired REAL,
+                one_shot INTEGER DEFAULT 0,
                 created_at REAL
             )
             """
         )
+    cols = {
+        row["name"]
+        for row in _conn().execute("PRAGMA table_info(reminders)")
+    }
+    if "one_shot" not in cols:
+        with _conn() as conn:
+            conn.execute(
+                "ALTER TABLE reminders ADD COLUMN one_shot INTEGER DEFAULT 0"
+            )
 
 
 # ---------- cron 解析（只支持数字；5 段：分 时 日 月 周） ----------
@@ -98,7 +108,7 @@ def cron_matches(expression: str, when: datetime.datetime | None = None) -> bool
 
 # ---------- CRUD ----------
 
-def add_reminder(content: str, cron: str) -> int:
+def add_reminder(content: str, cron: str, one_shot: bool = False) -> int:
     """新增提醒；cron 非法时抛 ValueError。返回自增 id。"""
     content = (content or "").strip()
     cron = (cron or "").strip()
@@ -108,8 +118,9 @@ def add_reminder(content: str, cron: str) -> int:
     _ensure_table()
     with _conn() as conn:
         cur = conn.execute(
-            "INSERT INTO reminders (content, cron, enabled, created_at) VALUES (?, ?, 1, ?)",
-            (content, cron, time.time()),
+            "INSERT INTO reminders (content, cron, enabled, one_shot, created_at)"
+            " VALUES (?, ?, 1, ?, ?)",
+            (content, cron, 1 if one_shot else 0, time.time()),
         )
     return int(cur.lastrowid)
 
@@ -117,7 +128,10 @@ def add_reminder(content: str, cron: str) -> int:
 def list_reminders(enabled_only: bool = True) -> list[dict]:
     """列出提醒，按创建时间倒序。"""
     _ensure_table()
-    sql = "SELECT id, content, cron, enabled, last_fired, created_at FROM reminders"
+    sql = (
+        "SELECT id, content, cron, enabled, last_fired, one_shot, created_at"
+        " FROM reminders"
+    )
     if enabled_only:
         sql += " WHERE enabled = 1"
     sql += " ORDER BY id DESC"
@@ -133,8 +147,13 @@ def delete_reminder(reminder_id: int) -> bool:
     return cur.rowcount > 0
 
 
-def check_due(now: datetime.datetime | None = None) -> list[dict]:
-    """返回当前这一分钟到期的提醒，并把 last_fired 更新为现在。"""
+def check_due(now: datetime.datetime | None = None, claim: bool = True) -> list[dict]:
+    """返回当前这一分钟到期的提醒。
+
+    claim=True（桌宠/CLI 调度器）：把 last_fired 更新为现在，
+    一次性提醒（remind_me_in）触发后自动删除；
+    claim=False（Web 轮询）：只读展示，不抢触发权。
+    """
     now = now or datetime.datetime.now()
     _ensure_table()
     minute_start = now.replace(second=0, microsecond=0).timestamp()
@@ -146,16 +165,32 @@ def check_due(now: datetime.datetime | None = None) -> list[dict]:
         except ValueError:
             continue
         last = row.get("last_fired")
-        if last is not None and last >= minute_start:
+        if claim and last is not None and last >= minute_start:
             continue  # 这一分钟已经触发过
-        due.append({"id": row["id"], "content": row["content"], "cron": row["cron"]})
+        due.append(
+            {
+                "id": row["id"],
+                "content": row["content"],
+                "cron": row["cron"],
+            }
+        )
     if due:
         with _conn() as conn:
             for item in due:
-                conn.execute(
-                    "UPDATE reminders SET last_fired = ? WHERE id = ?",
-                    (now.timestamp(), item["id"]),
-                )
+                if claim:
+                    row = conn.execute(
+                        "SELECT one_shot FROM reminders WHERE id = ?",
+                        (item["id"],),
+                    ).fetchone()
+                    conn.execute(
+                        "UPDATE reminders SET last_fired = ? WHERE id = ?",
+                        (now.timestamp(), item["id"]),
+                    )
+                    if row and row["one_shot"]:
+                        # 一次性提醒：触发即删，不会再响
+                        conn.execute(
+                            "DELETE FROM reminders WHERE id = ?", (item["id"],)
+                        )
     return due
 
 

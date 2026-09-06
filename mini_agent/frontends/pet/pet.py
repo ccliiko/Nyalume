@@ -1,6 +1,8 @@
 """桌宠主程序：python -m mini_agent.frontends.pet.pet（或仓库根 python pet.py）。"""
 
+import os
 import queue
+import tempfile
 import time
 import tkinter as tk
 
@@ -263,6 +265,20 @@ class PetApp:
                     self._quit()
                     return
                 elif kind == "reminder":
+                    try:
+                        with open(
+                            os.path.join(
+                                tempfile.gettempdir(), "cliko_pet_reminder.log"
+                            ),
+                            "a",
+                            encoding="utf-8",
+                        ) as f:
+                            f.write(
+                                time.strftime("%H:%M:%S")
+                                + f" fire: {value[:60]}\n"
+                            )
+                    except Exception:
+                        pass
                     if self.window:
                         self.window.show()  # 隐藏/趴边时先现身
                         self.window.start_reminder(f"🔔 提醒：{value[:42]}")

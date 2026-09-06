@@ -153,8 +153,8 @@ def cancel_reminder(reminder_id: int):
 
 @app.get("/api/reminders/due")
 def due_reminders():
-    """前端每 15 秒轮询：到期即返回并把 last_fired 落库（同分钟不重复）。"""
-    return reminders.check_due()
+    """前端轮询：只读返回到期提醒；触发权（落库/删一次性）归桌宠调度器。"""
+    return reminders.check_due(claim=False)
 
 
 @app.get("/api/state")

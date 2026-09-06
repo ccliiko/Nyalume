@@ -674,6 +674,11 @@
       try {
         const due = await api("/api/reminders/due");
         for (const r of due) {
+          const key = r.id + "-" + Math.floor(Date.now() / 60000);
+          if (window.__reminderSeen && window.__reminderSeen.has(key)) continue;
+          if (!window.__reminderSeen) window.__reminderSeen = new Set();
+          window.__reminderSeen.add(key);
+          if (window.__reminderSeen.size > 300) window.__reminderSeen.clear();
           append("assistant", "[⏰ 主动提醒] " + r.content);
         }
         await renderState();
