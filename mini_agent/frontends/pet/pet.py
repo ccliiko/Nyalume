@@ -1,14 +1,11 @@
 """桌宠主程序：python -m mini_agent.frontends.pet.pet（或仓库根 python pet.py）。"""
 
-import os
 import queue
 import time
 import tkinter as tk
-from tkinter import filedialog, messagebox
 
 from mini_agent.core import memory, personas, reminders
 
-from . import wallpaper
 from .chat_panel import ChatPanel
 from . import interactions
 from .pets_registry import (
@@ -158,9 +155,18 @@ class PetApp:
             )
         menu.add_cascade(label="人设", menu=pmenu)
         wall = tk.Menu(menu, tearoff=0)
-        wall.add_command(label="设为 cliko 壁纸", command=self._set_character_wallpaper)
-        wall.add_command(label="自定义壁纸…", command=self._set_custom_wallpaper)
-        wall.add_command(label="恢复原壁纸", command=self._restore_wallpaper)
+        wall.add_command(
+            label="聊天窗：角色（cliko）",
+            command=lambda: self.chat.apply_character_wallpaper(),
+        )
+        wall.add_command(
+            label="聊天窗：自定义图片…",
+            command=lambda: self.chat.apply_custom_wallpaper(),
+        )
+        wall.add_command(
+            label="聊天窗：清除壁纸",
+            command=lambda: self.chat.clear_wallpaper(),
+        )
         menu.add_cascade(label="壁纸", menu=wall)
         menu.add_separator()
         menu.add_command(label="退出", command=self._quit)
@@ -259,34 +265,6 @@ class PetApp:
         except queue.Empty:
             pass
         self.root.after(200, self._drain_commands)
-
-    # ---------- 壁纸 ----------
-
-    def _set_character_wallpaper(self) -> None:
-        try:
-            out = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-                "user_pets", "cliko", "wallpaper_character.png",
-            )
-            path = wallpaper.character_wallpaper(out)
-            ok, msg = wallpaper.apply_wallpaper(path)
-        except Exception as e:
-            ok, msg = False, f"生成壁纸失败：{e}"
-        messagebox.showinfo("壁纸", msg) if ok else messagebox.showerror("壁纸", msg)
-
-    def _set_custom_wallpaper(self) -> None:
-        path = filedialog.askopenfilename(
-            title="选择壁纸图片",
-            filetypes=[("图片", "*.png *.jpg *.jpeg *.webp *.bmp")],
-        )
-        if not path:
-            return
-        ok, msg = wallpaper.apply_wallpaper(path)
-        messagebox.showinfo("壁纸", msg) if ok else messagebox.showerror("壁纸", msg)
-
-    def _restore_wallpaper(self) -> None:
-        ok, msg = wallpaper.restore_wallpaper()
-        messagebox.showinfo("壁纸", msg) if ok else messagebox.showerror("壁纸", msg)
 
     def _quit(self) -> None:
         save_config(self.cfg)
