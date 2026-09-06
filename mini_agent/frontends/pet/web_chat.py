@@ -64,6 +64,16 @@ class WebChat:
         self._errlog = os.path.join(
             tempfile.gettempdir(), "cliko_webchat_err.log"
         )
+        self._parentlog = os.path.join(
+            tempfile.gettempdir(), "cliko_webchat_parent.log"
+        )
+
+    def _plog(self, text: str) -> None:
+        try:
+            with open(self._parentlog, "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%H:%M:%S')} {text}\n")
+        except Exception:
+            pass
 
     @property
     def win(self):
@@ -83,7 +93,9 @@ class WebChat:
     def show(self) -> bool:
         if not self._alive():
             if not start_web_server_if_needed():
+                self._plog("server start FAILED")
                 return False
+            self._plog("server ok, spawning child")
             args = [
                 sys.executable,
                 "-m",
@@ -98,6 +110,7 @@ class WebChat:
                 stderr=open(self._errlog, "a", encoding="utf-8"),
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
+            self._plog(f"child pid={self._proc.pid}")
             self._visible = True
             # 子进程秒退说明 WebView 起不来：退回系统默认浏览器
             try:
@@ -105,8 +118,11 @@ class WebChat:
             except subprocess.TimeoutExpired:
                 pass
             if self._proc.poll() is not None:
+                self._plog(f"child exited early rc={self._proc.returncode}, open browser")
                 webbrowser.open(f"http://127.0.0.1:{WEB_PORT}")
                 self._visible = False
+            else:
+                self._plog("child alive after 1.8s")
         else:
             self._send("show")
             self._visible = True
