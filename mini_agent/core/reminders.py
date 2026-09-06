@@ -194,6 +194,46 @@ def check_due(now: datetime.datetime | None = None, claim: bool = True) -> list[
     return due
 
 
+def report_missed_today(now: datetime.datetime | None = None) -> list[dict]:
+    """启动补发：今天已经错过、但还没触发过的周期提醒，补报最近一次。
+
+    只在桌宠/CLI 启动时调用一次；补报后写入 last_fired，避免每次重启重复轰炸。
+    """
+    now = now or datetime.datetime.now()
+    reported: list[dict] = []
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    cursor = now.replace(second=0, microsecond=0) - datetime.timedelta(minutes=1)
+    for row in list_reminders():
+        if row.get("one_shot"):
+            continue  # 一次性错过就算了，不补
+        try:
+            found: datetime.datetime | None = None
+            probe = cursor
+            while probe >= day_start:
+                if cron_matches(row["cron"], probe):
+                    found = probe
+                    break
+                probe -= datetime.timedelta(minutes=1)
+        except ValueError:
+            continue
+        if found is None:
+            continue
+        last = row.get("last_fired")
+        if last is not None and last >= found.timestamp():
+            continue  # 这个时刻已经触发过
+        reported.append(
+            {"id": row["id"], "content": row["content"], "scheduled": found}
+        )
+    if reported:
+        with _conn() as conn:
+            for item in reported:
+                conn.execute(
+                    "UPDATE reminders SET last_fired = ? WHERE id = ?",
+                    (now.timestamp(), item["id"]),
+                )
+    return reported
+
+
 # ---------- 后台调度线程（CLI / 桌宠用） ----------
 
 class ReminderScheduler(threading.Thread):

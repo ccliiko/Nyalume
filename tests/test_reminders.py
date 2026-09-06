@@ -61,6 +61,22 @@ def test_parse_remind_request_detects_one_shot():
     assert _parse_remind_request("每天9点提醒我喝水") is None
 
 
+def test_report_missed_today_catches_latest_occurrence_once():
+    rid = reminders.add_reminder("喝水", "0 9 * * *", one_shot=False)
+    now = datetime.datetime(2026, 9, 5, 10, 15)
+    missed = reminders.report_missed_today(now=now)
+    assert [m["id"] for m in missed] == [rid]
+    assert missed[0]["scheduled"] == datetime.datetime(2026, 9, 5, 9, 0)
+    # 已补报：再次调用不再重复
+    assert reminders.report_missed_today(now=now) == []
+
+
+def test_report_missed_skips_one_shot():
+    reminders.add_reminder("一次性", "0 9 * * *", one_shot=True)
+    now = datetime.datetime(2026, 9, 5, 10, 15)
+    assert reminders.report_missed_today(now=now) == []
+
+
 def test_cron_bad_expression_raises():
     try:
         reminders.cron_matches("0 9 * *")

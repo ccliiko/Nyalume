@@ -50,6 +50,21 @@ class PetApp:
         self._spawn_pet()
         self.root.after(200, self._drain_commands)
         self.root.after(1500, self._sync_affection_loop)
+        self.root.after(3000, self._catch_up_missed_reminders)
+
+    def _catch_up_missed_reminders(self) -> None:
+        """启动补发：今天错过且未触发的周期提醒，补报最近一次（只补一次）。"""
+        try:
+            for item in reminders.report_missed_today():
+                when = item["scheduled"].strftime("%H:%M")
+                self._cmd_q.put(
+                    (
+                        "reminder",
+                        f"[补发] 错过了 {when} 的提醒：{item['content'][:42]}",
+                    )
+                )
+        except Exception:
+            pass
 
     def _sync_affection_loop(self) -> None:
         """Web 聊天也会改好感度：定时读库同步到桌宠表情档。"""
