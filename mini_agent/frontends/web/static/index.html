@@ -7,6 +7,41 @@
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; font-family: "Microsoft YaHei", sans-serif; height: 100vh; }
+    #wall-bg {
+      position: fixed;
+      left: 0; top: 0; right: 0; bottom: 0;
+      z-index: -1;
+      background: #fff center/cover no-repeat fixed;
+      opacity: 0.7;
+      transition: opacity 0.2s;
+    }
+    body.wall-on #sidebar,
+    body.wall-on .side-block {
+      background: rgba(238, 241, 246, 0.62);
+    }
+    body.wall-on #chat-head {
+      background: rgba(255, 255, 255, 0.45);
+      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(12px);
+    }
+    body.wall-on .msg {
+      background: rgba(255, 255, 255, 0.62);
+      border-radius: 12px;
+      padding: 8px 12px;
+      width: fit-content;
+      max-width: 85%;
+      -webkit-backdrop-filter: blur(3px);
+      backdrop-filter: blur(3px);
+      white-space: pre-wrap;
+    }
+    body.wall-on .msg.user { background: rgba(214, 228, 255, 0.66); }
+    body.wall-on .msg.status {
+      background: transparent;
+      font-style: italic;
+      color: #666;
+      width: 100%;
+      text-align: center;
+    }
     #app { display: flex; height: 100vh; }
 
     #sidebar {
@@ -179,6 +214,17 @@
       color: #3a4049;
     }
     .wall-menu button:hover { background: #eef1f6; }
+    .wall-opt {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: #5b6472;
+      border-top: 1px solid #eef1f6;
+    }
+    .wall-opt input[type="range"] { width: 110px; }
     #log {
       flex: 1;
       overflow-y: auto;
@@ -213,6 +259,7 @@
   </style>
 </head>
 <body>
+  <div id="wall-bg"></div>
   <div id="app">
     <aside id="sidebar">
       <div class="side-head">
@@ -234,6 +281,15 @@
             <button data-act="char">角色（cliko）</button>
             <button data-act="upload">上传图片…</button>
             <button data-act="clear">清除壁纸</button>
+            <div class="wall-opt">
+              <label for="wall-opacity">不透明度</label>
+              <input id="wall-opacity" type="range" min="10" max="100" value="70">
+              <span id="wall-opacity-val">70%</span>
+            </div>
+            <label class="wall-opt" for="wall-full">
+              <span>铺满全窗口（含顶部栏）</span>
+              <input id="wall-full" type="checkbox" checked>
+            </label>
           </div>
         </div>
         <select id="persona-select" title="切换人设"></select>
@@ -259,6 +315,38 @@
     const wallBtn = document.getElementById("wall-btn");
     const wallMenu = document.getElementById("wall-menu");
     const wallFile = document.getElementById("wall-file");
+    const wallBg = document.getElementById("wall-bg");
+    const wallOpacity = document.getElementById("wall-opacity");
+    const wallOpacityVal = document.getElementById("wall-opacity-val");
+    const wallFull = document.getElementById("wall-full");
+
+    function updateWallUI() {
+      const op = Number(wallOpacity.value);
+      wallBg.style.opacity = op / 100;
+      wallOpacityVal.textContent = op + "%";
+      localStorage.setItem("wall_opacity", String(op));
+      const full = wallFull.checked;
+      localStorage.setItem("wall_full", full ? "1" : "0");
+      if (full) {
+        wallBg.style.top = "0";
+        wallBg.style.bottom = "0";
+        document.body.classList.remove("wall-partial");
+      } else {
+        wallBg.style.top = "53px";   // 不含顶部选项栏
+        wallBg.style.bottom = "70px"; // 不含输入行
+        document.body.classList.add("wall-partial");
+      }
+    }
+
+    function loadWallSettings() {
+      const savedOp = localStorage.getItem("wall_opacity");
+      if (savedOp) wallOpacity.value = Number(savedOp);
+      const savedFull = localStorage.getItem("wall_full");
+      if (savedFull !== null) wallFull.checked = savedFull === "1";
+      updateWallUI();
+    }
+    wallOpacity.addEventListener("input", updateWallUI);
+    wallFull.addEventListener("change", updateWallUI);
 
     function esc(s) {
       const d = document.createElement("div");
@@ -267,16 +355,17 @@
     }
 
     function applyWallpaper(url) {
-      const css = "#fff url('" + url + "') center/cover no-repeat fixed";
-      document.documentElement.style.background = css;
-      document.body.style.background = css;
-      appEl.style.background = css;
+      wallBg.style.backgroundImage = "url('" + url + "')";
+      wallBg.style.backgroundColor = "#fff";
+      document.body.classList.add("wall-on");
+      state.wallUrl = url;
+      updateWallUI();
     }
 
     function clearWallpaperUI() {
-      document.documentElement.style.background = "";
-      document.body.style.background = "";
-      appEl.style.background = "";
+      wallBg.style.backgroundImage = "none";
+      wallBg.style.opacity = "1";
+      document.body.classList.remove("wall-on", "wall-partial");
       state.wallUrl = null;
       localStorage.removeItem("mini_wallpaper");
     }
@@ -295,6 +384,7 @@
     }
 
     async function initWallpaper() {
+      loadWallSettings();
       if (localStorage.getItem("mini_wallpaper") === "character") {
         await applyCharacterWallpaper();
       }

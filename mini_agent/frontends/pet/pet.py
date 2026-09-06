@@ -6,8 +6,8 @@ import tkinter as tk
 
 from mini_agent.core import memory, personas, reminders
 
-from .chat_panel import ChatPanel
 from . import interactions
+from .web_chat import WebChat
 from .pets_registry import (
     band_info,
     cheer_phrases,
@@ -38,9 +38,7 @@ class PetApp:
         self._cap_shown = {"hi": False, "lo": False}
         self._daily_cap_date = ""
 
-        self.chat = ChatPanel(self.root, self.session_id, on_event=self._on_chat_event)
-        self.chat.on_background = self._hide_to_background
-        self.chat.hide()
+        self.chat = WebChat(on_event=self._on_chat_event)
         self.window: PetWindow | None = None
         self._scheduler = reminders.ReminderScheduler(self._on_reminder)
         self._scheduler.start()
@@ -49,6 +47,23 @@ class PetApp:
         self._cmd_q: queue.Queue = queue.Queue()
         self._spawn_pet()
         self.root.after(200, self._drain_commands)
+        self.root.after(1500, self._sync_affection_loop)
+
+    def _sync_affection_loop(self) -> None:
+        """Web 聊天也会改好感度：定时读库同步到桌宠表情档。"""
+        try:
+            value = memory.get_affection(self.session_id)
+            if value != self.affection:
+                self.affection = value
+                if self.window:
+                    self.window.set_affection(value)
+                if value < 200:
+                    self._cap_shown["hi"] = False
+                if value > -100:
+                    self._cap_shown["lo"] = False
+        except Exception:
+            pass
+        self.root.after(2000, self._sync_affection_loop)
 
     def _on_reminder(self, content: str) -> None:
         """后台线程命中提醒：写入会话历史 + 走队列在主线程冒泡。"""
@@ -56,7 +71,8 @@ class PetApp:
             memory.save_message(self.session_id, "assistant", f"[定时提醒] {content}")
         except Exception:
             pass
-        self.chat.reminder(content)
+        if self.window:
+            self.window.cheer(f"[提醒] {content[:22]}")
 
     # ---------- 宠物窗口 ----------
 
@@ -154,20 +170,10 @@ class PetApp:
                 command=lambda pid=p["id"]: self._switch_persona(pid),
             )
         menu.add_cascade(label="人设", menu=pmenu)
-        wall = tk.Menu(menu, tearoff=0)
-        wall.add_command(
-            label="聊天窗：角色（cliko）",
-            command=lambda: self.chat.apply_character_wallpaper(),
+        menu.add_command(
+            label="壁纸与不透明度设置（在聊天窗右上角 🖼）",
+            command=self.chat.show,
         )
-        wall.add_command(
-            label="聊天窗：自定义图片…",
-            command=lambda: self.chat.apply_custom_wallpaper(),
-        )
-        wall.add_command(
-            label="聊天窗：清除壁纸",
-            command=lambda: self.chat.clear_wallpaper(),
-        )
-        menu.add_cascade(label="壁纸", menu=wall)
         menu.add_separator()
         menu.add_command(label="退出", command=self._quit)
         try:
@@ -185,8 +191,6 @@ class PetApp:
     def _switch_persona(self, persona_id: str) -> None:
         personas.set_persona(persona_id)
         self.chat.refresh_speaker()
-        if self.chat.win.state() != "withdrawn":
-            self.chat.hide()
 
     # ---------- 聊天事件 → 宠物状态 ----------
 
@@ -216,8 +220,7 @@ class PetApp:
     # ---------- 挂后台 / 托盘 ----------
 
     def _hide_to_background(self) -> None:
-        if self.chat.win.state() != "withdrawn":
-            self.chat.hide()
+        self.chat.hide()
         if self.window:
             self.window.hide()
         self._ensure_tray()
@@ -268,6 +271,7 @@ class PetApp:
 
     def _quit(self) -> None:
         save_config(self.cfg)
+        self.chat.close()
         self._scheduler.stop()
         if self._tray_icon is not None:
             try:
