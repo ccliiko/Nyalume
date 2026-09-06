@@ -54,6 +54,7 @@ class PetWindow:
         self._hint_job = None
         self._speech_win = None
         self._speech_job = None
+        self._speech_size = (0, 0)
         self._single_job = None
         self._pending_click = None
         self._double_at = 0.0
@@ -171,6 +172,7 @@ class PetWindow:
             fill="#5b3a66", font=font,
         )
         self._speech_win = speech
+        self._speech_size = (sw, sh)
         speech.geometry(f"{sw}x{sh}+0+0")
         self._place_speech()
         self._speech_job = self.win.after(ms, self._clear_speech)
@@ -186,6 +188,8 @@ class PetWindow:
             sh = self._speech_win.winfo_height()
         except tk.TclError:
             return
+        if sw <= 1 or sh <= 1:
+            sw, sh = self._speech_size
         if sw <= 1:
             return
         px = self.win.winfo_rootx() + self.w // 2 - sw // 2
