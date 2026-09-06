@@ -2,6 +2,7 @@
 
 import os
 import queue
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -37,6 +38,8 @@ class PetApp:
         self.pet_id = self.cfg.get("pet") or "neko-placeholder"
         self.affection = memory.get_affection(self.session_id)
         self._cheer_idx = 0
+        self._cap_shown = {"hi": False, "lo": False}
+        self._daily_cap_date = ""
 
         self.chat = ChatPanel(self.root, self.session_id, on_event=self._on_chat_event)
         self.chat.on_background = self._hide_to_background
@@ -98,16 +101,34 @@ class PetApp:
             self.window.set_affection(new_affection)
             self.chat.refresh_state()
             memory.add_day_affection_delta(self.session_id, allowed)
+            if new_affection < 200:
+                self._cap_shown["hi"] = False
+            if new_affection > -100:
+                self._cap_shown["lo"] = False
+        if not allowed and delta:
+            # 数值被上限挡住：同类上限提示只弹一次
+            if self.affection >= 200:
+                if not self._cap_shown["hi"]:
+                    self._cap_shown["hi"] = True
+                    self.window.cheer("好感度已经到顶啦，再多就要溢出来了喵～")
+                    return
+            elif self.affection <= -100:
+                if not self._cap_shown["lo"]:
+                    self._cap_shown["lo"] = True
+                    self.window.cheer("好感度已经见底了喵…再低就真的不理主人了。")
+                    return
+            else:
+                today = time.strftime("%Y-%m-%d")
+                if self._daily_cap_date != today:
+                    self._daily_cap_date = today
+                    self.window.cheer("今天的好感度变动到上限啦，明天再继续宠我喵～")
+                    return
         if region == "miss":
             pass
         elif allowed > 0:
             self.window.emote("shy" if region in ("body", "legs") else "happy")
         elif allowed < 0:
             self.window.emote("annoyed")
-        elif delta:
-            # 今天已到 ±10 上限：不再改数值，给一句“明天再来”的反馈
-            self.window.cheer("今天的好感度变动到上限啦，明天再继续宠我喵～")
-            return
         line = interactions.pick_line(region, self.affection, self.session_id)
         self.window.cheer(line)
 
@@ -150,6 +171,7 @@ class PetApp:
 
     def _switch_pet(self, pet_id: str) -> None:
         self.pet_id = pet_id
+        self._cap_shown = {"hi": False, "lo": False}
         self.cfg["pet"] = pet_id
         save_config(self.cfg)
         self._spawn_pet()
@@ -171,6 +193,10 @@ class PetApp:
             self.window.set_working(False)
         elif kind == "affection":
             self.affection = int(value)
+            if self.affection < 200:
+                self._cap_shown["hi"] = False
+            if self.affection > -100:
+                self._cap_shown["lo"] = False
             self.window.set_affection(self.affection)
         elif kind == "cheer":
             phrases = cheer_phrases(get_pet(self.pet_id))

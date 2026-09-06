@@ -5,7 +5,9 @@
 """
 
 import ctypes
+import glob
 import os
+import time
 import winreg
 
 from PIL import Image, ImageDraw
@@ -15,6 +17,15 @@ from .pets_registry import frame_paths, get_pet, load_config, save_config
 SPI_SETDESKWALLPAPER = 20
 SPIF_UPDATEINIFILE = 0x01
 SPIF_SENDCHANGE = 0x02
+
+_SystemParametersInfoW = ctypes.windll.user32.SystemParametersInfoW
+_SystemParametersInfoW.argtypes = [
+    ctypes.c_uint,
+    ctypes.c_uint,
+    ctypes.c_wchar_p,
+    ctypes.c_uint,
+]
+_SystemParametersInfoW.restype = ctypes.c_int
 
 
 def _current_wallpaper() -> str:
@@ -40,7 +51,7 @@ def apply_wallpaper(image_path: str) -> tuple[bool, str]:
     cfg = load_config()
     if prev and prev != image_path:
         cfg["prev_wallpaper"] = prev
-    ok = ctypes.windll.user32.SystemParametersInfoW(
+    ok = _SystemParametersInfoW(
         SPI_SETDESKWALLPAPER, 0, image_path,
         SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
     )
@@ -55,7 +66,7 @@ def restore_wallpaper() -> tuple[bool, str]:
     prev = cfg.get("prev_wallpaper") or ""
     if not prev or not os.path.isfile(prev):
         return False, "没有可恢复的原壁纸"
-    ok = ctypes.windll.user32.SystemParametersInfoW(
+    ok = _SystemParametersInfoW(
         SPI_SETDESKWALLPAPER, 0, prev,
         SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
     )
@@ -92,5 +103,22 @@ def character_wallpaper(out_path: str, width: int = 1920, height: int = 1080) ->
     )
     margin = int(width * 0.05)
     canvas.paste(char, (width - char.width - margin, height - char.height), char)
-    canvas.convert("RGB").save(out_path)
-    return out_path
+    # 唯一文件名：Windows 对同名壁纸文件可能有缓存，不刷新
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    out = os.path.join(
+        os.path.dirname(os.path.abspath(out_path)),
+        f"{os.path.splitext(os.path.basename(out_path))[0]}_{stamp}.png",
+    )
+    canvas.convert("RGB").save(out)
+    for old in glob.glob(
+        os.path.join(
+            os.path.dirname(out),
+            f"{os.path.splitext(os.path.basename(out_path))[0]}_*.png",
+        )
+    ):
+        if os.path.abspath(old) != os.path.abspath(out):
+            try:
+                os.remove(old)
+            except OSError:
+                pass
+    return out

@@ -21,6 +21,7 @@ except ImportError:  # 无 Pillow 时只是不支持边缘趴头裁剪
 _TRANSPARENT = "#010203"  # Windows 透明色键：窗口里这个颜色会被抠掉
 _ANIM_MS = 420
 _CLICK_TOLERANCE = 5
+_DRAG_TOLERANCE = 8    # 位移超过才算拖动（防双击微抖误入拎起态）
 _BUBBLE_MS = 2400
 _DOCK_EDGE = 60          # 距边缘多少像素触发趴边
 _IDLE_SECONDS = 30       # 超过多久没人理进入待机
@@ -54,6 +55,9 @@ class PetWindow:
         self._speech_job = None
         self._single_job = None
         self._pending_click = None
+        self._double_at = 0.0
+        self._last_release_at = 0.0
+        self._grab_active = False
         self.docked = False
         self._dock_axis = None
         self.idle_mode = False
@@ -137,7 +141,7 @@ class PetWindow:
                 pass
             self._speech_win = None
         sw = max(60, min(260, len(text) * 15 + 26))
-        sh = 34
+        sh = 30
         speech = tk.Toplevel(self.win)
         speech.overrideredirect(True)
         speech.attributes("-topmost", True)
@@ -150,17 +154,17 @@ class PetWindow:
             highlightthickness=0, bd=0,
         )
         c.pack()
-        c.create_rectangle(
-            1, 1, sw - 1, sh - 10,
-            fill="#ffffff", outline="#f2a6bd", width=2,
-        )
-        c.create_polygon(
-            sw / 2 - 7, sh - 12, sw / 2 + 7, sh - 12,
-            sw / 2, sh - 1, fill="#ffffff", outline="#f2a6bd",
-        )
+        # 透明气泡：不画白底框，只画带白描边的文字（桌面背景上也可读）
+        font = ("Microsoft YaHei", 10, "bold")
+        for ox in (-1, 0, 1):
+            for oy in (-1, 0, 1):
+                c.create_text(
+                    sw / 2 + ox, (sh - 6) / 2 + oy, text=text,
+                    fill="#ffffff", font=font,
+                )
         c.create_text(
-            sw / 2, (sh - 8) / 2, text=text,
-            fill="#6b4f6e", font=("Microsoft YaHei", 10, "bold"),
+            sw / 2, (sh - 6) / 2, text=text,
+            fill="#5b3a66", font=font,
         )
         self._speech_win = speech
         px = self.win.winfo_rootx() + self.w // 2 - sw // 2
@@ -234,16 +238,27 @@ class PetWindow:
         self._fx_job = self.win.after(ms, self._clear_fx)
 
     def _face_rect(self):
-        """从角色 alpha 边框估计脸部中心与半径（用于红晕/特效定位）。"""
+        """脸部中心与半径（红晕/爱心/气泡特效定位）。
+
+        皮肤 manifest 可配 face: {cx, cy, fr}（相对画布的归一化值），
+        没有配置时退回按 alpha 边框粗略估计。
+        """
+        fb = self.pet.get("face") or {}
+        if fb:
+            return (
+                float(fb.get("cx", 0.5)) * self.w,
+                float(fb.get("cy", 0.3)) * self.h,
+                max(8, float(fb.get("fr", 0.06)) * self.w),
+            )
         box = self._bounds.get(self._last_path)
         if not box or PILImage is None:
             return None
         l, t, r, b = box
-        head_w = r - l
-        head_h = (b - t) * 0.42
+        char_w = r - l
+        char_h = b - t
         cx = (l + r) / 2
-        fy = t + head_h * 0.72
-        fr = max(8, head_w * 0.24)
+        fy = t + char_h * 0.30
+        fr = max(8, char_w * 0.10)
         return cx, fy, fr
 
     def bind_context(self, callback) -> None:
@@ -281,49 +296,70 @@ class PetWindow:
 
     def _on_press(self, event) -> None:
         self.poke()
+        # 松手后 0.6s 内又按下：多半是双击的第二下，取消待触发的单击摸摸
+        if (
+            self._single_job is not None
+            and time.time() - self._last_release_at < 0.6
+        ):
+            self.win.after_cancel(self._single_job)
+            self._single_job = None
+            self._pending_click = None
         self._drag_start = (event.x_root, event.y_root, self.win.winfo_x(), self.win.winfo_y())
         self._moved = False
 
     def _on_drag(self, event) -> None:
         self.poke()
         x0, y0, wx, wy = self._drag_start
-        self._dragging = True
-        self._drag_dx = event.x_root - x0
-        self._drag_dy = event.y_root - y0
-        if (
-            not self._moved
-            and (
-                abs(event.x_root - x0) > _CLICK_TOLERANCE
-                or abs(event.y_root - y0) > _CLICK_TOLERANCE
-            )
-        ):
-            self._moved = True
-            if self.docked:
-                self._undock(restore=False)
+        dx = event.x_root - x0
+        dy = event.y_root - y0
+        self._drag_dx = dx
+        self._drag_dy = dy
+        if abs(dx) > _DRAG_TOLERANCE or abs(dy) > _DRAG_TOLERANCE:
+            if not self._dragging:
+                try:
+                    self.canvas.grab_set()
+                    self._grab_active = True
+                except tk.TclError:
+                    pass
+                self._dragging = True
+            if not self._moved:
+                self._moved = True
+                if self.docked:
+                    self._undock(restore=False)
         self.win.geometry(f"+{wx + event.x_root - x0}+{wy + event.y_root - y0}")
         self._draw()
 
     def _on_release(self, event) -> None:
         self.poke()
         x0, y0, _, _ = self._drag_start
-        if self._moved:
-            self._dragging = False
+        if self._grab_active:
+            try:
+                self.canvas.grab_release()
+            except tk.TclError:
+                pass
+            self._grab_active = False
+        dragging = self._dragging
+        self._dragging = False
+        if dragging:
             self._draw()
             self._maybe_dock()
         elif (
             abs(event.x_root - x0) < _CLICK_TOLERANCE
             and abs(event.y_root - y0) < _CLICK_TOLERANCE
+            and time.time() - self._double_at > 0.35
         ):
             if self._single_job:
                 self.win.after_cancel(self._single_job)
             self._pending_click = (event.x, event.y)
             self._single_job = self.win.after(
-                260, self._fire_single_click
+                330, self._fire_single_click
             )
+        self._last_release_at = time.time()
 
     def _on_double(self, event) -> None:
         """双击 = 打开对话；取消未触发的单击互动。"""
         self.poke()
+        self._double_at = time.time()
         if self._single_job:
             self.win.after_cancel(self._single_job)
             self._single_job = None
@@ -512,7 +548,6 @@ class PetWindow:
             if (
                 self._dragging
                 and not self.docked
-                and lift_path is None
                 and PILImage is not None
                 and ImageTk is not None
             ):
@@ -545,7 +580,7 @@ class PetWindow:
                     photo = tk.PhotoImage(file=path)
                     self._photos[path] = photo
             y_off = 0
-            if self.idle_mode:
+            if self.idle_mode and not self._dragging:
                 y_off = int(math.sin(self._tick * 0.7) * 3)
             if self.docked:
                 cx, cy = photo.width() / 2, photo.height() / 2
