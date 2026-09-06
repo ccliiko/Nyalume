@@ -206,11 +206,15 @@ def run_stream(session_id: str, user_text: str):
     messages.extend(memory.load_history(session_id))
     # 硬保险 1：识别出延时提醒请求时，把“必须调 remind_me_in”直接写进本轮指令
     hint = _parse_remind_request(user_text)
+    pre_note = ""
     if hint:
+        minutes, content = hint
+        pre_note = execute_tool("remind_me_in", {"content": content, "minutes": minutes})
         messages[0]["content"] += (
-            "\n【本条硬性要求】用户明确要求了延时提醒（X 分钟后做某事）。"
-            "你必须先调用 remind_me_in（参数 minutes 和 content）并看到返回含 #id，"
-            "再告诉用户已设好；严禁只口头说“设好啦”却不调用工具。"
+            "\n【提醒已由系统预先建好，无需你再调用任何提醒工具】\n"
+            + pre_note
+            + "\n请直接把你看到的结果（含 #id 与触发时间）转述给用户，"
+            "时间以结果为准，不要凭感觉猜时间，也不要重复设置。"
         )
 
     # 本轮工具调用产生的中间消息，不写回历史库
@@ -279,7 +283,15 @@ def run_stream(session_id: str, user_text: str):
                         fn_args = json.loads(call["function"]["arguments"] or "{}")
                     except json.JSONDecodeError:
                         fn_args = {}
-                    result = execute_tool(call["function"]["name"], fn_args)
+                    if (
+                        pre_note
+                        and call["function"]["name"]
+                        in ("remind_me_in", "create_reminder")
+                    ):
+                        # 系统已预建：模型再调提醒工具就让它“照抄”，防止重复建
+                        result = f"（提醒已由系统预建，不要重复创建：{pre_note}）"
+                    else:
+                        result = execute_tool(call["function"]["name"], fn_args)
                     tool_messages.append(
                         {
                             "role": "tool",
@@ -291,11 +303,14 @@ def run_stream(session_id: str, user_text: str):
 
             # 最终回答：剥掉好感度标记，把缓冲尾部按干净正文补齐输出后持久化
             auto_note = ""
-            if hint and not {"remind_me_in", "create_reminder"} & called_tools:
-                # 硬保险 2：模型没真调工具却声称设好——这里自动补建并如实告知
-                minutes, content = hint
-                result = execute_tool("remind_me_in", {"content": content, "minutes": minutes})
-                auto_note = "\n（检测到刚才的提醒没有真正建上，我已自动补设：" + result + "）"
+            if pre_note:
+                tm = re.search(r"约 (\d{1,2}:\d{2})", pre_note)
+                rm = re.search(r"#(\d+)", pre_note)
+                if tm and tm.group(1) not in clean_text:
+                    rid = f"#{rm.group(1)}" if rm else ""
+                    auto_note = (
+                        f"\n（提醒实际已建好：{rid}，约 {tm.group(1)} 触发，以这条为准）"
+                    )
             delta, clean_text = _strip_affection_marker(full_content)
             prefix_len = len(full_content) - len(pending_tail)
             tail = clean_text[prefix_len:]
