@@ -50,6 +50,8 @@ class PetWindow:
         self._bubble_job = None
         self._fx_job = None
         self._hint_job = None
+        self._speech_win = None
+        self._speech_job = None
         self._single_job = None
         self._pending_click = None
         self.docked = False
@@ -117,69 +119,132 @@ class PetWindow:
         self.win.lift()
 
     def cheer(self, text: str) -> None:
-        """任务完成：头顶冒出一句台词，几秒后消失。"""
-        if self._bubble_job:
-            self.win.after_cancel(self._bubble_job)
-        self.canvas.delete("bubble")
-        self._draw_bubble(str(text))
-        self._bubble_job = self.win.after(_BUBBLE_MS, self._clear_bubble)
+        """任务完成：头顶独立气泡冒出台词，几秒后消失（不遮立绘）。"""
+        self._show_speech(str(text), _BUBBLE_MS)
 
     def hint(self, text: str, ms: int = 6000) -> None:
         """头顶小图标/文字提示（不影响互动气泡）。"""
-        if self._hint_job:
-            self.win.after_cancel(self._hint_job)
-        self.canvas.delete("hint")
-        self.canvas.create_text(
-            self.w / 2, 18, text=text,
-            fill="#6b4f6e", font=("Microsoft YaHei", 10, "bold"),
-            tags="hint",
+        self._show_speech(text, ms)
+
+    def _show_speech(self, text: str, ms: int) -> None:
+        """在宠物正上方的独立透明窗里画气泡，避免被角色帧遮挡。"""
+        if self._speech_job:
+            self.win.after_cancel(self._speech_job)
+        if self._speech_win is not None:
+            try:
+                self._speech_win.destroy()
+            except tk.TclError:
+                pass
+            self._speech_win = None
+        sw = max(60, min(260, len(text) * 15 + 26))
+        sh = 34
+        speech = tk.Toplevel(self.win)
+        speech.overrideredirect(True)
+        speech.attributes("-topmost", True)
+        try:
+            speech.attributes("-transparentcolor", _TRANSPARENT)
+        except tk.TclError:
+            pass
+        c = tk.Canvas(
+            speech, width=sw, height=sh, bg=_TRANSPARENT,
+            highlightthickness=0, bd=0,
         )
-        self._hint_job = self.win.after(ms, self._clear_hint)
+        c.pack()
+        c.create_rectangle(
+            1, 1, sw - 1, sh - 10,
+            fill="#ffffff", outline="#f2a6bd", width=2,
+        )
+        c.create_polygon(
+            sw / 2 - 7, sh - 12, sw / 2 + 7, sh - 12,
+            sw / 2, sh - 1, fill="#ffffff", outline="#f2a6bd",
+        )
+        c.create_text(
+            sw / 2, (sh - 8) / 2, text=text,
+            fill="#6b4f6e", font=("Microsoft YaHei", 10, "bold"),
+        )
+        self._speech_win = speech
+        px = self.win.winfo_rootx() + self.w // 2 - sw // 2
+        py = self.win.winfo_rooty() - sh - 6
+        sw_screen = self.win.winfo_screenwidth()
+        px = max(2, min(px, sw_screen - sw - 2))
+        if py < 2:
+            py = self.win.winfo_rooty() + self.h + 6  # 顶部放不下就放下方
+        speech.geometry(f"{sw}x{sh}+{px}+{py}")
+        self._speech_job = self.win.after(ms, self._clear_speech)
+
+    def _clear_speech(self) -> None:
+        self._speech_job = None
+        if self._speech_win is not None:
+            try:
+                self._speech_win.destroy()
+            except tk.TclError:
+                pass
+            self._speech_win = None
 
     def emote(self, kind: str, ms: int = 3200) -> None:
         """动作层：在帧上叠临时效果（红晕/爱心/生气/音符等），不换帧。"""
         if self._fx_job:
             self.win.after_cancel(self._fx_job)
         self.canvas.delete("fx")
+        if self.docked:
+            return
         c = self.canvas
         w, h = self.w, self.h
+        rect = self._face_rect()
+        if rect is None:
+            return
+        cx, fy, fr = rect
         if kind in ("happy", "shy"):
-            r = max(6, int(w * 0.055))
+            r = max(5, int(fr * 0.5))
             for sign in (-1, 1):
                 c.create_oval(
-                    w / 2 + sign * w * 0.20 - r,
-                    h * 0.20 - r * 0.4,
-                    w / 2 + sign * w * 0.20 + r,
-                    h * 0.20 + r,
+                    cx + sign * fr * 1.15 - r,
+                    fy - r,
+                    cx + sign * fr * 1.15 + r,
+                    fy + r * 0.6,
                     fill="#ffb3ba", outline="", tags="fx",
                 )
         if kind in ("love", "shy"):
+            hy = max(4, fy - fr * 1.6)
             c.create_text(
-                w / 2, h * 0.04, text="♥",
+                cx, hy, text="♥",
                 fill="#ff5c7a",
-                font=("Segoe UI Symbol", max(10, int(w * 0.09))),
+                font=("Segoe UI Symbol", max(9, int(fr * 0.7))),
                 tags="fx",
             )
         if kind == "annoyed":
             c.create_text(
-                w * 0.72, h * 0.08, text="💢",
-                font=("Segoe UI Emoji", max(10, int(w * 0.09))),
+                min(w - 14, cx + fr * 1.6), max(4, fy - fr * 1.3), text="💢",
+                font=("Segoe UI Emoji", max(9, int(fr * 0.65))),
                 tags="fx",
             )
         if kind == "music":
             c.create_text(
-                w * 0.78, h * 0.12, text="♪",
+                min(w - 14, cx + fr * 1.7), max(4, fy - fr * 1.4), text="♪",
                 fill="#d65a86",
-                font=("Segoe UI Emoji", max(10, int(w * 0.08))),
+                font=("Segoe UI Emoji", max(9, int(fr * 0.6))),
                 tags="fx",
             )
         if kind == "sleepy":
             c.create_text(
-                w * 0.74, h * 0.08, text="💤",
-                font=("Segoe UI Emoji", max(10, int(w * 0.09))),
+                min(w - 14, cx + fr * 1.7), max(4, fy - fr * 1.2), text="💤",
+                font=("Segoe UI Emoji", max(9, int(fr * 0.65))),
                 tags="fx",
             )
         self._fx_job = self.win.after(ms, self._clear_fx)
+
+    def _face_rect(self):
+        """从角色 alpha 边框估计脸部中心与半径（用于红晕/特效定位）。"""
+        box = self._bounds.get(self._last_path)
+        if not box or PILImage is None:
+            return None
+        l, t, r, b = box
+        head_w = r - l
+        head_h = (b - t) * 0.42
+        cx = (l + r) / 2
+        fy = t + head_h * 0.72
+        fr = max(8, head_w * 0.24)
+        return cx, fy, fr
 
     def bind_context(self, callback) -> None:
         """绑定右键菜单弹出。"""
@@ -196,6 +261,13 @@ class PetWindow:
             self.win.after_cancel(self._hint_job)
         if self._single_job:
             self.win.after_cancel(self._single_job)
+        if self._speech_job:
+            self.win.after_cancel(self._speech_job)
+        if self._speech_win is not None:
+            try:
+                self._speech_win.destroy()
+            except tk.TclError:
+                pass
         self.win.destroy()
 
     # ---------- 窗口行为 ----------
@@ -425,6 +497,12 @@ class PetWindow:
         if paths:
             path = paths[self._tick % len(paths)]
             self._last_path = path
+            if path not in self._bounds and PILImage is not None:
+                try:
+                    with PILImage.open(path) as im:
+                        self._bounds[path] = im.convert("RGBA").getbbox()
+                except Exception:
+                    self._bounds[path] = None
             if (
                 self._dragging
                 and not self.docked

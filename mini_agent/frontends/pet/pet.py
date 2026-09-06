@@ -88,19 +88,26 @@ class PetApp:
             return
         self.window.poke()
         delta = interactions.affection_delta(region, self.affection)
-        if delta:
+        daily = memory.get_day_affection_delta(self.session_id)
+        allowed = max(-10, min(10, daily + delta)) - daily  # 每日净变化限 ±10
+        if allowed:
             new_affection = memory.set_affection(
-                self.session_id, self.affection + delta
+                self.session_id, self.affection + allowed
             )
             self.affection = new_affection
             self.window.set_affection(new_affection)
             self.chat.refresh_state()
+            memory.add_day_affection_delta(self.session_id, allowed)
         if region == "miss":
             pass
-        elif delta > 0:
+        elif allowed > 0:
             self.window.emote("shy" if region in ("body", "legs") else "happy")
-        else:
+        elif allowed < 0:
             self.window.emote("annoyed")
+        elif delta:
+            # 今天已到 ±10 上限：不再改数值，给一句“明天再来”的反馈
+            self.window.cheer("今天的好感度变动到上限啦，明天再继续宠我喵～")
+            return
         line = interactions.pick_line(region, self.affection, self.session_id)
         self.window.cheer(line)
 
@@ -197,7 +204,7 @@ class PetApp:
         except Exception:
             icon_img = PILImage.new("RGBA", (64, 64), (214, 90, 134, 255))
         menu = pystray.Menu(
-            pystray.MenuItem("显示 cliko", self._tray_show),
+            pystray.MenuItem("显示 cliko", self._tray_show, default=True),
             pystray.MenuItem("退出", self._tray_quit),
         )
         self._tray_icon = pystray.Icon("cliko", icon_img, "cliko 桌宠", menu)

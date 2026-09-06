@@ -4,6 +4,7 @@ import os
 import sqlite3
 import time
 import uuid
+import datetime
 
 # 仓库根（mini_agent/core/memory.py 的上三级），默认数据文件仍放在项目根目录
 _PROJECT_ROOT = os.path.dirname(
@@ -56,6 +57,10 @@ def init_db() -> None:
         sess_cols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
         if "affection" not in sess_cols:
             conn.execute("ALTER TABLE sessions ADD COLUMN affection INTEGER DEFAULT 50")
+        if "aff_date" not in sess_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN aff_date TEXT DEFAULT ''")
+        if "aff_day_delta" not in sess_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN aff_day_delta INTEGER DEFAULT 0")
         # 旧库迁移：会话记忆归档进度（自动便签抽到第几条消息）
         if "memory_upto" not in sess_cols:
             conn.execute("ALTER TABLE sessions ADD COLUMN memory_upto INTEGER DEFAULT 0")
@@ -286,6 +291,34 @@ def set_affection(session_id: str, value: int) -> int:
             "UPDATE sessions SET affection = ? WHERE id = ?", (value, session_id)
         )
     return value
+
+
+def get_day_affection_delta(session_id: str) -> int:
+    """今天摸摸带来的累计好感度变化（跨天自动归零）。"""
+    ensure_session(session_id)
+    today = datetime.date.today().isoformat()
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT aff_date, aff_day_delta FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+    if not row or row["aff_date"] != today:
+        return 0
+    return int(row["aff_day_delta"] or 0)
+
+
+def add_day_affection_delta(session_id: str, delta: int) -> int:
+    """把一次摸摸的增量记入当日累计（delta 已通过 ±10 上限校验）。"""
+    ensure_session(session_id)
+    today = datetime.date.today().isoformat()
+    current = get_day_affection_delta(session_id)
+    new = current + int(delta)
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE sessions SET aff_date = ?, aff_day_delta = ? WHERE id = ?",
+            (today, new, session_id),
+        )
+    return new
 
 
 init_db()
