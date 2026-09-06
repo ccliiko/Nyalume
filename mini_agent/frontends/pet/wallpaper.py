@@ -42,6 +42,30 @@ def _current_wallpaper() -> str:
         return ""
 
 
+def _set_desktop_reg(name: str, value: str) -> None:
+    """写 Control Panel\\Desktop 样式值（WallpaperStyle/TileWallpaper）。"""
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER,
+        r"Control Panel\Desktop",
+        0,
+        winreg.KEY_SET_VALUE,
+    ) as key:
+        winreg.SetValueEx(key, name, 0, winreg.REG_SZ, str(value))
+
+
+def _clear_wallpaper_cache() -> None:
+    """删掉 Explorer 的 TranscodedWallpaper 缓存，强制它重新转码刷新。"""
+    themes = os.path.join(
+        os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Themes"
+    )
+    cache = os.path.join(themes, "TranscodedWallpaper")
+    try:
+        if os.path.isfile(cache):
+            os.remove(cache)
+    except OSError:
+        pass  # 文件被 Explorer 占用时忽略，SPI 本身也能触发刷新
+
+
 def apply_wallpaper(image_path: str) -> tuple[bool, str]:
     """应用壁纸；返回 (是否成功, 提示)。"""
     image_path = os.path.abspath(image_path)
@@ -51,6 +75,11 @@ def apply_wallpaper(image_path: str) -> tuple[bool, str]:
     cfg = load_config()
     if prev and prev != image_path:
         cfg["prev_wallpaper"] = prev
+    # 已知问题：只写 Wallpaper 路径时 Explorer 可能不重载；
+    # 标准做法是同时写样式值 + 清 TranscodedWallpaper 缓存。
+    _set_desktop_reg("TileWallpaper", "0")
+    _set_desktop_reg("WallpaperStyle", "10")  # 10 = Fill
+    _clear_wallpaper_cache()
     ok = _SystemParametersInfoW(
         SPI_SETDESKWALLPAPER, 0, image_path,
         SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
@@ -77,7 +106,9 @@ def restore_wallpaper() -> tuple[bool, str]:
     return False, "恢复失败"
 
 
-def character_wallpaper(out_path: str, width: int = 1920, height: int = 1080) -> str:
+def character_wallpaper(
+    out_path: str, width: int = 1920, height: int = 1080, unique: bool = True
+) -> str:
     """用当前皮肤的 idle 帧合成一张渐变底壁纸，返回文件路径。"""
     cfg = load_config()
     pet = get_pet(cfg.get("pet") or "neko-placeholder")
@@ -103,22 +134,27 @@ def character_wallpaper(out_path: str, width: int = 1920, height: int = 1080) ->
     )
     margin = int(width * 0.05)
     canvas.paste(char, (width - char.width - margin, height - char.height), char)
-    # 唯一文件名：Windows 对同名壁纸文件可能有缓存，不刷新
-    stamp = time.strftime("%Y%m%d_%H%M%S")
-    out = os.path.join(
-        os.path.dirname(os.path.abspath(out_path)),
-        f"{os.path.splitext(os.path.basename(out_path))[0]}_{stamp}.png",
-    )
-    canvas.convert("RGB").save(out)
-    for old in glob.glob(
-        os.path.join(
-            os.path.dirname(out),
-            f"{os.path.splitext(os.path.basename(out_path))[0]}_*.png",
+    # 桌宠菜单用唯一文件名（Windows 对同名文件有缓存）；
+    # Web 端用固定名即可（每次合成内容一致，无需清旧文件）。
+    if unique:
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        out = os.path.join(
+            os.path.dirname(os.path.abspath(out_path)),
+            f"{os.path.splitext(os.path.basename(out_path))[0]}_{stamp}.png",
         )
-    ):
-        if os.path.abspath(old) != os.path.abspath(out):
-            try:
-                os.remove(old)
-            except OSError:
-                pass
+    else:
+        out = os.path.abspath(out_path)
+    canvas.convert("RGB").save(out)
+    if unique:
+        for old in glob.glob(
+            os.path.join(
+                os.path.dirname(out),
+                f"{os.path.splitext(os.path.basename(out_path))[0]}_*.png",
+            )
+        ):
+            if os.path.abspath(old) != os.path.abspath(out):
+                try:
+                    os.remove(old)
+                except OSError:
+                    pass
     return out

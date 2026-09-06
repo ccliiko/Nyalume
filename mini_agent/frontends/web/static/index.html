@@ -254,6 +254,7 @@
     const listBox = document.getElementById("session-list");
     const chatTitle = document.getElementById("chat-title");
     const personaSelect = document.getElementById("persona-select");
+    const appEl = document.getElementById("app");
     const state = { currentId: null, busy: false, speaker: "cliko" };
     const wallBtn = document.getElementById("wall-btn");
     const wallMenu = document.getElementById("wall-menu");
@@ -266,12 +267,16 @@
     }
 
     function applyWallpaper(url) {
-      document.body.style.background = "#fff center/cover no-repeat";
-      document.body.style.backgroundImage = "url('" + url + "')";
+      const css = "#fff url('" + url + "') center/cover no-repeat fixed";
+      document.documentElement.style.background = css;
+      document.body.style.background = css;
+      appEl.style.background = css;
     }
 
     function clearWallpaperUI() {
+      document.documentElement.style.background = "";
       document.body.style.background = "";
+      appEl.style.background = "";
       state.wallUrl = null;
       localStorage.removeItem("mini_wallpaper");
     }

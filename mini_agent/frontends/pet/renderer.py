@@ -107,6 +107,7 @@ class PetWindow:
         self._last_path = ""
         self._draw_scheduled = False
         self._lift_base = {}
+        self._idle_anchor = None
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -721,20 +722,31 @@ class PetWindow:
                 if photo is None:
                     photo = tk.PhotoImage(file=path)
                     self._photos[path] = photo
-            y_off = 0
-            if self.idle_mode and not self._dragging:
-                y_off = int(math.sin(self._tick * 0.7) * 3)
             if self.docked:
                 cx, cy = photo.width() / 2, photo.height() / 2
             else:
                 cx, cy = self.w / 2, self.h / 2
             self.canvas.create_image(
-                cx, cy + y_off, image=photo, tags="pet"
+                cx, cy, image=photo, tags="pet"
             )
         else:
             self._draw_procedural(group)
+        self._apply_idle_bob()
         if self._speech_win is not None:
             self._place_speech()
+
+    def _apply_idle_bob(self) -> None:
+        """待机浮动：移动整个小窗 ±3px（画布=图片大小，挪图片会裁边缘）。"""
+        if self.idle_mode and not self.docked and not self._dragging:
+            if self._idle_anchor is None:
+                self._idle_anchor = (self.win.winfo_x(), self.win.winfo_y())
+            ax, ay = self._idle_anchor
+            off = int(math.sin(self._tick * 0.7) * 3)
+            self.win.geometry(f"+{ax}+{ay + off}")
+        elif self._idle_anchor is not None:
+            ax, ay = self._idle_anchor
+            self.win.geometry(f"+{ax}+{ay}")
+            self._idle_anchor = None
 
     # ---------- 无素材时程序画占位猫 ----------
 
