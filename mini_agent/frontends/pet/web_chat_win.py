@@ -4,6 +4,7 @@
 """
 
 import argparse
+import os
 import sys
 import threading
 
@@ -46,7 +47,12 @@ def main() -> int:
                 pass
 
     threading.Thread(target=reader, daemon=True).start()
-    webview.start()
+    repo_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    )
+    storage_path = os.path.join(repo_root, "user_pets", "cliko", ".webview")
+    # private_mode=False + 固定 storage_path：localStorage 关窗后仍保留
+    webview.start(private_mode=False, storage_path=storage_path)
     return 0
 
 

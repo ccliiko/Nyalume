@@ -5,3 +5,4 @@ python-dotenv>=1.0
 pillow>=10.0
 pystray>=0.19.5
 pywebview>=5.0
+python-multipart>=0.0.9

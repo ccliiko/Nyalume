@@ -316,7 +316,7 @@
     const chatTitle = document.getElementById("chat-title");
     const personaSelect = document.getElementById("persona-select");
     const appEl = document.getElementById("app");
-    const state = { currentId: null, busy: false, speaker: "cliko" };
+    const state = { currentId: null, busy: false, speaker: "cliko", wallMode: "" };
     const wallBtn = document.getElementById("wall-btn");
     const wallMenu = document.getElementById("wall-menu");
     const wallFile = document.getElementById("wall-file");
@@ -329,9 +329,7 @@
       const op = Number(wallOpacity.value);
       wallBg.style.opacity = op / 100;
       wallOpacityVal.textContent = op + "%";
-      localStorage.setItem("wall_opacity", String(op));
       const full = wallFull.checked;
-      localStorage.setItem("wall_full", full ? "1" : "0");
       if (full) {
         wallBg.style.top = "0";
         wallBg.style.bottom = "0";
@@ -343,15 +341,23 @@
       }
     }
 
+    function persistWall() {
+      fetch("/api/wallpaper/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: state.wallMode,
+          opacity: Number(wallOpacity.value),
+          full: wallFull.checked
+        })
+      }).catch(() => {});
+    }
+
     function loadWallSettings() {
-      const savedOp = localStorage.getItem("wall_opacity");
-      if (savedOp) wallOpacity.value = Number(savedOp);
-      const savedFull = localStorage.getItem("wall_full");
-      if (savedFull !== null) wallFull.checked = savedFull === "1";
       updateWallUI();
     }
-    wallOpacity.addEventListener("input", updateWallUI);
-    wallFull.addEventListener("change", updateWallUI);
+    wallOpacity.addEventListener("input", () => { updateWallUI(); persistWall(); });
+    wallFull.addEventListener("change", () => { updateWallUI(); persistWall(); });
 
     function esc(s) {
       const d = document.createElement("div");
@@ -372,7 +378,8 @@
       wallBg.style.opacity = "1";
       document.body.classList.remove("wall-on", "wall-partial");
       state.wallUrl = null;
-      localStorage.removeItem("mini_wallpaper");
+      state.wallMode = "";
+      persistWall();
     }
 
     async function applyCharacterWallpaper() {
@@ -382,16 +389,29 @@
         if (state.wallUrl) URL.revokeObjectURL(state.wallUrl);
         state.wallUrl = URL.createObjectURL(await res.blob());
         applyWallpaper(state.wallUrl);
-        localStorage.setItem("mini_wallpaper", "character");
+        state.wallMode = "character";
+        persistWall();
       } catch (e) {
         alert("读取角色壁纸失败：" + e.message);
       }
     }
 
     async function initWallpaper() {
-      loadWallSettings();
-      if (localStorage.getItem("mini_wallpaper") === "character") {
-        await applyCharacterWallpaper();
+      try {
+        const s = await api("/api/wallpaper/settings");
+        wallOpacity.value = s.opacity;
+        wallFull.checked = s.full;
+        if (s.mode === "character") {
+          await applyCharacterWallpaper();
+        } else if (s.mode === "custom" && s.custom_url) {
+          state.wallMode = "custom";
+          applyWallpaper(s.custom_url);
+        } else {
+          state.wallMode = "";
+          updateWallUI();
+        }
+      } catch (e) {
+        loadWallSettings();
       }
     }
 
@@ -666,13 +686,23 @@
       else if (act === "upload") wallFile.click();
       else if (act === "clear") clearWallpaperUI();
     });
-    wallFile.addEventListener("change", () => {
+    wallFile.addEventListener("change", async () => {
       const file = wallFile.files && wallFile.files[0];
       if (!file) return;
-      if (state.wallUrl) URL.revokeObjectURL(state.wallUrl);
-      state.wallUrl = URL.createObjectURL(file);
-      applyWallpaper(state.wallUrl);
-      localStorage.removeItem("mini_wallpaper"); // 上传图仅本次会话生效
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch("/api/wallpaper/custom", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "HTTP " + res.status);
+        if (state.wallUrl) URL.revokeObjectURL(state.wallUrl);
+        state.wallUrl = null;
+        state.wallMode = "custom";
+        applyWallpaper(data.url);
+        persistWall();
+      } catch (e) {
+        alert("上传壁纸失败：" + e.message);
+      }
       wallFile.value = "";
     });
     document.addEventListener("click", () => wallMenu.classList.add("hidden"));

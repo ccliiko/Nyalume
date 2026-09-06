@@ -5,16 +5,22 @@
 
 import json
 import os
+import shutil
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from mini_agent.core import memory, personas, reminders
 from mini_agent.core.agent import run_stream
 from mini_agent.frontends.pet.wallpaper import character_wallpaper
-from mini_agent.frontends.pet.pets_registry import frame_paths, get_pet, load_config
+from mini_agent.frontends.pet.pets_registry import (
+    frame_paths,
+    get_pet,
+    load_config,
+    save_config,
+)
 
 app = FastAPI(title="mini-agent")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -32,6 +38,28 @@ class PersonaIn(BaseModel):
 class ReminderIn(BaseModel):
     content: str
     cron: str
+
+
+class WallpaperIn(BaseModel):
+    mode: str = ""  # "" / character / custom
+    opacity: int = 70
+    full: bool = True
+
+
+def _wallpaper_settings() -> dict:
+    cfg = load_config()
+    custom = cfg.get("wall_custom") or ""
+    return {
+        "mode": cfg.get("wall_mode") or "",
+        "opacity": int(cfg.get("wall_opacity", 70)),
+        "full": str(cfg.get("wall_full", "1")) not in ("0", "false", "False"),
+        "custom_url": f"/api/wallpaper/file/{custom}" if custom else "",
+    }
+
+
+def _cliko_dir() -> str:
+    pet = get_pet(load_config().get("pet") or "neko-placeholder")
+    return pet.get("dir") or ""
 
 
 @app.get("/")
@@ -152,6 +180,53 @@ def current_skin_image():
     out = os.path.join(pet["dir"], "wallpaper_web.png")
     path = character_wallpaper(out, unique=False)
     return FileResponse(path, media_type="image/png")
+
+
+@app.get("/api/wallpaper/settings")
+def get_wallpaper_settings():
+    """聊天窗壁纸设置（关窗后保留，由服务端持久化）。"""
+    return _wallpaper_settings()
+
+
+@app.post("/api/wallpaper/settings")
+def save_wallpaper_settings(body: WallpaperIn):
+    cfg = load_config()
+    cfg["wall_mode"] = body.mode
+    cfg["wall_opacity"] = max(10, min(100, int(body.opacity)))
+    cfg["wall_full"] = "1" if body.full else "0"
+    save_config(cfg)
+    return {"ok": True}
+
+
+@app.post("/api/wallpaper/custom")
+async def upload_custom_wallpaper(file: UploadFile = File(...)):
+    """上传自定义聊天壁纸：文件落盘 + 记录设置，关窗重开仍保留。"""
+    base = _cliko_dir()
+    if not base:
+        raise HTTPException(status_code=404, detail="当前皮肤没有素材目录")
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp", ".bmp"):
+        raise HTTPException(status_code=400, detail="不支持的图片格式")
+    target = os.path.join(base, f"chat_wallpaper_custom{ext}")
+    with open(target, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    cfg = load_config()
+    cfg["wall_custom"] = os.path.basename(target)
+    cfg["wall_mode"] = "custom"
+    cfg["wall_opacity"] = int(cfg.get("wall_opacity", 70))
+    cfg["wall_full"] = str(cfg.get("wall_full", "1"))
+    save_config(cfg)
+    return {"ok": True, "url": f"/api/wallpaper/file/{os.path.basename(target)}"}
+
+
+@app.get("/api/wallpaper/file/{name}")
+def wallpaper_file(name: str):
+    base = _cliko_dir()
+    safe = os.path.basename(name)
+    path = os.path.join(base, safe)
+    if not base or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="壁纸文件不存在")
+    return FileResponse(path)
 
 
 if __name__ == "__main__":
