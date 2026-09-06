@@ -41,7 +41,11 @@ def start_web_server_if_needed(port: int = WEB_PORT) -> bool:
         from mini_agent.frontends.web import server as web_server
 
         config = uvicorn.Config(
-            web_server.app, host="127.0.0.1", port=port, log_level="warning"
+            web_server.app,
+            host="127.0.0.1",
+            port=port,
+            log_level="warning",
+            log_config=None,  # pythonw 无 stderr，uvicorn 默认日志配置会崩
         )
 
         def run() -> None:
