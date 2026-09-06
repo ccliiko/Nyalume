@@ -9,6 +9,8 @@ import os
 import time
 import tkinter as tk
 
+import numpy as np
+
 from . import pets_registry
 
 try:
@@ -27,6 +29,24 @@ _DOCK_EDGE = 60          # 距边缘多少像素触发趴边
 _IDLE_SECONDS = 30       # 超过多久没人理进入待机
 _HEAD_BOX = (0.16, 0.05, 0.84, 0.62)  # 立绘裁出“头”的区域（相对坐标）
 _DOCK_FOOTPRINT = 240   # 趴边素材缩放到多大的“露出”尺寸
+
+
+def _premul(im: PILImage.Image) -> PILImage.Image:
+    """RGBA 转预乘 alpha（防缩放/旋转时透明黑像素渗入边缘形成黑晕）。"""
+    a = np.asarray(im).astype(np.float32)
+    premul = a[..., :3] * (a[..., 3:4] / 255.0)
+    return PILImage.fromarray(
+        np.concatenate([premul, a[..., 3:4]], axis=2).astype(np.uint8)
+    )
+
+
+def _unpremul(im: PILImage.Image) -> PILImage.Image:
+    arr = np.asarray(im).astype(np.float32)
+    alpha = arr[..., 3:4]
+    rgb = np.clip(arr[..., :3] * 255.0 / np.maximum(alpha, 1.0), 0, 255)
+    return PILImage.fromarray(
+        np.concatenate([rgb, alpha], axis=2).astype(np.uint8)
+    )
 
 
 class PetWindow:
@@ -606,11 +626,13 @@ class PetWindow:
                 angle = max(-10.0, min(10.0, self._drag_dx * 0.05))
                 sy = 1.0 + min(0.10, abs(self._drag_dy) / 5000)
                 sx = 1.0 - min(0.08, abs(self._drag_dy) / 6000)
+                im = _premul(im)
                 im = im.rotate(angle, resample=PILImage.BILINEAR)
                 im = im.resize(
                     (max(20, int(im.width * sx)), max(20, int(im.height * sy))),
                     PILImage.LANCZOS,
                 )
+                im = _unpremul(im)
                 photo = ImageTk.PhotoImage(im, master=self.win)
                 self._drag_photo = photo
             elif self.docked and PILImage is not None and ImageTk is not None:
@@ -623,13 +645,12 @@ class PetWindow:
                             box = im.getbbox()
                             if box:
                                 im = im.crop(box)
+                            im = _premul(im)
                             im = im.resize(
-                                (
-                                    self._dock_cw or self.w,
-                                    self._dock_ch or self.h,
-                                ),
+                                (self._dock_cw or self.w, self._dock_ch or self.h),
                                 PILImage.LANCZOS,
                             )
+                            im = _unpremul(im)
                         photo = ImageTk.PhotoImage(im, master=self.win)
                         self._dock_photos[key] = photo
                 else:
