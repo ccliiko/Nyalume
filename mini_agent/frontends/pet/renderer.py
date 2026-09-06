@@ -113,6 +113,7 @@ class PetWindow:
 
     def hide(self) -> None:
         """缩到后台（托盘仍可呼出）。"""
+        self._clear_speech()
         self.win.withdraw()
 
     def show(self) -> None:
@@ -167,14 +168,30 @@ class PetWindow:
             fill="#5b3a66", font=font,
         )
         self._speech_win = speech
+        speech.geometry(f"{sw}x{sh}+0+0")
+        self._place_speech()
+        self._speech_job = self.win.after(ms, self._clear_speech)
+
+    def _place_speech(self) -> None:
+        """把气泡窗贴到宠物正上方；宠物拖动/移动后重定位跟随。"""
+        if self._speech_win is None:
+            return
+        try:
+            if not self._speech_win.winfo_exists():
+                return
+            sw = self._speech_win.winfo_width()
+            sh = self._speech_win.winfo_height()
+        except tk.TclError:
+            return
+        if sw <= 1:
+            return
         px = self.win.winfo_rootx() + self.w // 2 - sw // 2
         py = self.win.winfo_rooty() - sh - 6
         sw_screen = self.win.winfo_screenwidth()
         px = max(2, min(px, sw_screen - sw - 2))
         if py < 2:
             py = self.win.winfo_rooty() + self.h + 6  # 顶部放不下就放下方
-        speech.geometry(f"{sw}x{sh}+{px}+{py}")
-        self._speech_job = self.win.after(ms, self._clear_speech)
+        self._speech_win.geometry(f"+{px}+{py}")
 
     def _clear_speech(self) -> None:
         self._speech_job = None
@@ -591,6 +608,8 @@ class PetWindow:
             )
         else:
             self._draw_procedural(group)
+        if self._speech_win is not None:
+            self._place_speech()
 
     # ---------- 无素材时程序画占位猫 ----------
 
