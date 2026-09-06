@@ -5,11 +5,14 @@
 Tk 不能同线程共存，所以聊天窗跑在子进程里，本模块只管启动/开关它。
 """
 
+import os
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import webbrowser
 
 WEB_PORT = 8000
 
@@ -58,6 +61,9 @@ class WebChat:
         self.on_event = on_event
         self._proc = None
         self._visible = False
+        self._errlog = os.path.join(
+            tempfile.gettempdir(), "cliko_webchat_err.log"
+        )
 
     @property
     def win(self):
@@ -89,10 +95,18 @@ class WebChat:
                 args,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=open(self._errlog, "a", encoding="utf-8"),
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             self._visible = True
+            # 子进程秒退说明 WebView 起不来：退回系统默认浏览器
+            try:
+                self._proc.wait(timeout=1.8)
+            except subprocess.TimeoutExpired:
+                pass
+            if self._proc.poll() is not None:
+                webbrowser.open(f"http://127.0.0.1:{WEB_PORT}")
+                self._visible = False
         else:
             self._send("show")
             self._visible = True

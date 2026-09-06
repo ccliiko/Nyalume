@@ -96,7 +96,9 @@ class PetApp:
     def _pet_double_clicked(self) -> None:
         if self.window:
             self.window.poke()
-        self.chat.toggle()
+        if not self.chat.show():
+            if self.window:
+                self.window.hint("聊天窗打开失败，看日志再试喵", 4000)
 
     def _pet_interact(self, region: str) -> None:
         """单击不同部位：本地即时台词（好感度档位 × 部位）。"""
