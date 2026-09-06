@@ -37,6 +37,7 @@ def test_create_reminder_stays_recurring():
     rows = tools.list_reminders()
     newest = rows[0]
     assert newest["one_shot"] == 0, "create_reminder 是周期提醒，不能标记一次性"
+    tools.execute_tool("cancel_reminder", {"reminder_id": newest["id"]})
 
 
 def test_calculator_safe_math():
