@@ -81,7 +81,7 @@ def _parse_remind_request(text: str) -> tuple[int, str] | None:
     while prev != rest:
         prev = rest
         rest = re.sub(
-            r"^(?:，|,|\s|请|帮我|提醒|提醒我|叫我|让我|记得|喊我|到点|要|去|一下)*",
+            r"^(?:，|,|\s|请|帮我|提醒|提醒我|叫我|让我|记得|喊我|我|到点|要|去|一下)*",
             "",
             rest,
         )
