@@ -25,6 +25,18 @@ def test_remind_me_in_is_one_shot_not_every_minute():
     cron = rows[0]["cron"]
     assert "*/1" not in cron and cron.split()[0] != "*"
     assert cron.count(" ") == 4
+    assert rows[0]["one_shot"] == 1, "remind_me_in 必须标记为一次性"
+
+
+def test_create_reminder_stays_recurring():
+    rows_before = tools.list_reminders()
+    result = tools.execute_tool(
+        "create_reminder", {"content": "周期性测试", "cron": "0 9 * * *"}
+    )
+    assert "已设置定时提醒" in result
+    rows = tools.list_reminders()
+    newest = rows[0]
+    assert newest["one_shot"] == 0, "create_reminder 是周期提醒，不能标记一次性"
 
 
 def test_calculator_safe_math():

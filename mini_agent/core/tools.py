@@ -308,7 +308,7 @@ def _web_search(query: str, max_results: int = 5) -> str:
 )
 def _create_reminder(content: str, cron: str) -> str:
     try:
-        rid = add_reminder(content, cron, one_shot=True)
+        rid = add_reminder(content, cron, one_shot=False)
     except ValueError as e:
         return f"创建提醒失败：{e}"
     return f"已设置定时提醒（#{rid}）：{content}，cron={cron}。到点 agent 会自己动，不用你再喊我。"
@@ -343,7 +343,7 @@ def _remind_me_in(content: str, minutes: int) -> str:
         if target.second > 0 or target.microsecond > 0:
             target = target.replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
         cron = f"{target.minute} {target.hour} * * *"
-        rid = add_reminder(content, cron)
+        rid = add_reminder(content, cron, one_shot=True)
     except ValueError as e:
         return f"创建提醒失败：{e}"
     return (
