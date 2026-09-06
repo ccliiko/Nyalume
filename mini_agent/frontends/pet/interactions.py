@@ -50,3 +50,21 @@ def pick_line(region: str, affection: int, session_id: str = "") -> str:
     bank = _LINES.get(region, _LINES["miss"])
     lines = bank.get(mood_label) or bank["日常撒娇"]
     return random.choice(lines)
+
+
+def affection_delta(region: str, affection: int) -> int:
+    """摸摸对好感度的影响：低好感时越界会扣，熟了之后才加。
+
+    region: head/body/legs/miss；返回值建议 -2~+2，由调用方落库。
+    """
+    if region == "miss":
+        return 0
+    if affection < -40:      # 疏离期：没被允许就摸，反而扣
+        return -1 if region == "head" else -2
+    if affection <= 0:       # 闹别扭：摸头嘴硬但心里受用，身体腿还是越界
+        return 1 if region == "head" else -1
+    if affection <= 70:      # 日常撒娇
+        return 1 if region == "head" else 2
+    if affection <= 130:     # 心动黏人
+        return 1 if region == "head" else 2
+    return 1                 # 深爱守护：稳定加分但封顶由 set_affection 控制

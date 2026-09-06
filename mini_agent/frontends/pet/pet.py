@@ -45,6 +45,7 @@ class PetApp:
         self._scheduler = reminders.ReminderScheduler(self._on_reminder)
         self._scheduler.start()
         self._tray_icon = None
+        self._hint_shown = False
         self._cmd_q: queue.Queue = queue.Queue()
         self._spawn_pet()
         self.root.after(200, self._drain_commands)
@@ -70,6 +71,11 @@ class PetApp:
         )
         self.window.set_affection(self.affection)
         self.window.bind_context(self._popup_menu)
+        if not self._hint_shown:
+            self._hint_shown = True
+            self.root.after(
+                900, lambda: self.window.hint("👆摸我 · 💬双击聊天", 8000)
+            )
 
     def _pet_double_clicked(self) -> None:
         if self.window:
@@ -81,6 +87,20 @@ class PetApp:
         if not self.window:
             return
         self.window.poke()
+        delta = interactions.affection_delta(region, self.affection)
+        if delta:
+            new_affection = memory.set_affection(
+                self.session_id, self.affection + delta
+            )
+            self.affection = new_affection
+            self.window.set_affection(new_affection)
+            self.chat.refresh_state()
+        if region == "miss":
+            pass
+        elif delta > 0:
+            self.window.emote("shy" if region in ("body", "legs") else "happy")
+        else:
+            self.window.emote("annoyed")
         line = interactions.pick_line(region, self.affection, self.session_id)
         self.window.cheer(line)
 

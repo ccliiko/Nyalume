@@ -48,6 +48,8 @@ class PetWindow:
         self._dock_photos = {}
         self._after = None
         self._bubble_job = None
+        self._fx_job = None
+        self._hint_job = None
         self._single_job = None
         self._pending_click = None
         self.docked = False
@@ -122,6 +124,63 @@ class PetWindow:
         self._draw_bubble(str(text))
         self._bubble_job = self.win.after(_BUBBLE_MS, self._clear_bubble)
 
+    def hint(self, text: str, ms: int = 6000) -> None:
+        """头顶小图标/文字提示（不影响互动气泡）。"""
+        if self._hint_job:
+            self.win.after_cancel(self._hint_job)
+        self.canvas.delete("hint")
+        self.canvas.create_text(
+            self.w / 2, 18, text=text,
+            fill="#6b4f6e", font=("Microsoft YaHei", 10, "bold"),
+            tags="hint",
+        )
+        self._hint_job = self.win.after(ms, self._clear_hint)
+
+    def emote(self, kind: str, ms: int = 3200) -> None:
+        """动作层：在帧上叠临时效果（红晕/爱心/生气/音符等），不换帧。"""
+        if self._fx_job:
+            self.win.after_cancel(self._fx_job)
+        self.canvas.delete("fx")
+        c = self.canvas
+        w, h = self.w, self.h
+        if kind in ("happy", "shy"):
+            r = max(6, int(w * 0.055))
+            for sign in (-1, 1):
+                c.create_oval(
+                    w / 2 + sign * w * 0.20 - r,
+                    h * 0.20 - r * 0.4,
+                    w / 2 + sign * w * 0.20 + r,
+                    h * 0.20 + r,
+                    fill="#ffb3ba", outline="", tags="fx",
+                )
+        if kind in ("love", "shy"):
+            c.create_text(
+                w / 2, h * 0.04, text="♥",
+                fill="#ff5c7a",
+                font=("Segoe UI Symbol", max(10, int(w * 0.09))),
+                tags="fx",
+            )
+        if kind == "annoyed":
+            c.create_text(
+                w * 0.72, h * 0.08, text="💢",
+                font=("Segoe UI Emoji", max(10, int(w * 0.09))),
+                tags="fx",
+            )
+        if kind == "music":
+            c.create_text(
+                w * 0.78, h * 0.12, text="♪",
+                fill="#d65a86",
+                font=("Segoe UI Emoji", max(10, int(w * 0.08))),
+                tags="fx",
+            )
+        if kind == "sleepy":
+            c.create_text(
+                w * 0.74, h * 0.08, text="💤",
+                font=("Segoe UI Emoji", max(10, int(w * 0.09))),
+                tags="fx",
+            )
+        self._fx_job = self.win.after(ms, self._clear_fx)
+
     def bind_context(self, callback) -> None:
         """绑定右键菜单弹出。"""
         self.canvas.bind("<Button-3>", callback)
@@ -131,6 +190,10 @@ class PetWindow:
             self.win.after_cancel(self._after)
         if self._bubble_job:
             self.win.after_cancel(self._bubble_job)
+        if self._fx_job:
+            self.win.after_cancel(self._fx_job)
+        if self._hint_job:
+            self.win.after_cancel(self._hint_job)
         if self._single_job:
             self.win.after_cancel(self._single_job)
         self.win.destroy()
@@ -263,6 +326,7 @@ class PetWindow:
         self._dock_axis = axis
         self.canvas.config(width=cw, height=ch)
         self.win.geometry(f"{cw}x{ch}+{nx}+{ny}")
+        self.hint("👆 拖出来", 5000)
 
     def _head_size(self) -> tuple[int, int]:
         paths = pets_registry.frame_paths(self.pet, "idle")
@@ -309,6 +373,14 @@ class PetWindow:
     def _clear_bubble(self) -> None:
         self._bubble_job = None
         self.canvas.delete("bubble")
+
+    def _clear_hint(self) -> None:
+        self._hint_job = None
+        self.canvas.delete("hint")
+
+    def _clear_fx(self) -> None:
+        self._fx_job = None
+        self.canvas.delete("fx")
 
     def _draw_bubble(self, text: str) -> None:
         """在宠物头顶画一个圆角感的气泡（Canvas 矩形 + 指向下方的小尾巴）。"""

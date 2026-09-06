@@ -198,6 +198,11 @@ class ChatPanel:
         self.win.title(f"{self.speaker_name} · 桌宠对话")
         self._head_label.config(text="💬 " + self.speaker_name)
 
+    def refresh_state(self) -> None:
+        """状态面板开着时刷新（好感度/摘要/提醒变化后调用）。"""
+        if self._state_win is not None and self._state_win.winfo_exists():
+            self._render_state()
+
     # ---------- 显隐 ----------
 
     def toggle(self) -> None:
