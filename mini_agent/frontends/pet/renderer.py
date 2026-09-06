@@ -6,6 +6,7 @@
 
 import math
 import os
+import random
 import time
 import tkinter as tk
 
@@ -108,6 +109,10 @@ class PetWindow:
         self._draw_scheduled = False
         self._lift_base = {}
         self._idle_anchor = None
+        self._reminder_until = 0.0
+        self._reminder_home = None
+        self._reminder_base = None
+        self._reminder_last_move = 0.0
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -169,6 +174,23 @@ class PetWindow:
     def hint(self, text: str, ms: int = 6000) -> None:
         """头顶小图标/文字提示（不影响互动气泡）。"""
         self._show_speech(text, ms)
+
+    def start_reminder(self, text: str, ms: int = 15000) -> None:
+        """主动提醒：头顶长气泡 + 快速跳动 + 在桌面随机游荡。"""
+        self.poke()
+        self._reminder_until = time.time() + max(3000, int(ms)) / 1000.0
+        if self._reminder_home is None:
+            self._reminder_home = (self.win.winfo_x(), self.win.winfo_y())
+        self._reminder_base = None
+        self._show_speech(str(text), int(ms) + 1500)
+
+    def _cancel_reminder(self) -> None:
+        self._reminder_until = 0.0
+        if self._reminder_home is not None:
+            hx, hy = self._reminder_home
+            self.win.geometry(f"+{hx}+{hy}")
+            self._reminder_home = None
+        self._reminder_base = None
 
     def _show_speech(self, text: str, ms: int) -> None:
         """在宠物正上方的独立透明窗里画气泡，避免被角色帧遮挡。"""
@@ -381,6 +403,7 @@ class PetWindow:
                 except tk.TclError:
                     pass
                 self._dragging = True
+                self._cancel_reminder()
             if not self._moved:
                 self._moved = True
                 if self.docked:
@@ -649,7 +672,8 @@ class PetWindow:
     def _animate(self) -> None:
         self._tick += 1
         self._draw()
-        self._after = self.win.after(_ANIM_MS, self._animate)
+        interval = 130 if time.time() < self._reminder_until else _ANIM_MS
+        self._after = self.win.after(interval, self._animate)
 
     def _draw(self) -> None:
         now = time.time()
@@ -736,8 +760,31 @@ class PetWindow:
             self._place_speech()
 
     def _apply_idle_bob(self) -> None:
-        """待机浮动：移动整个小窗 ±3px（画布=图片大小，挪图片会裁边缘）。"""
-        if self.idle_mode and not self.docked and not self._dragging:
+        """待机/提醒浮动：移动整个小窗，避免画布裁边。"""
+        now = time.time()
+        reminding = now < self._reminder_until
+        if reminding and not self.docked and not self._dragging:
+            # 主动提醒：约每 1.2s 换一个随机落点，期间快速小幅度跳动
+            if (
+                self._reminder_base is None
+                or now - self._reminder_last_move > 1.2
+            ):
+                sw = self.win.winfo_screenwidth()
+                sh = self.win.winfo_screenheight()
+                x = random.randint(0, max(0, sw - self.w - 20))
+                y = random.randint(0, max(0, sh - self.h - 120))
+                self._reminder_base = (x, y)
+                self._reminder_last_move = now
+            bx, by = self._reminder_base
+            off = int(math.sin(self._tick * 1.9) * 7)
+            self.win.geometry(f"+{bx}+{by + off}")
+            self.win.lift()
+        elif not reminding and self._reminder_home is not None:
+            hx, hy = self._reminder_home
+            self.win.geometry(f"+{hx}+{hy}")
+            self._reminder_home = None
+            self._reminder_base = None
+        elif self.idle_mode and not self.docked and not self._dragging:
             if self._idle_anchor is None:
                 self._idle_anchor = (self.win.winfo_x(), self.win.winfo_y())
             ax, ay = self._idle_anchor

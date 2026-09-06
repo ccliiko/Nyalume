@@ -8,8 +8,22 @@ from mini_agent.core import memory, tools
 def test_tool_schemas_include_reminder_tools():
     names = [t["function"]["name"] for t in tools.TOOL_SCHEMAS]
     assert "create_reminder" in names
+    assert "remind_me_in" in names
     assert "cancel_reminder" in names
     assert "web_search" in names
+
+
+def test_remind_me_in_is_one_shot_not_every_minute():
+    """“X 分钟后提醒一次”必须落成固定时刻 cron，不能变成 */1 每分钟。"""
+    result = tools.execute_tool(
+        "remind_me_in", {"content": "喝水", "minutes": 1}
+    )
+    assert "已设好一次性提醒" in result
+    rows = tools.list_reminders()
+    assert rows, "提醒应已入库"
+    cron = rows[0]["cron"]
+    assert "*/1" not in cron and cron.split()[0] != "*"
+    assert cron.count(" ") == 4
 
 
 def test_calculator_safe_math():

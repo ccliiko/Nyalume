@@ -71,8 +71,7 @@ class PetApp:
             memory.save_message(self.session_id, "assistant", f"[定时提醒] {content}")
         except Exception:
             pass
-        if self.window:
-            self.window.cheer(f"[提醒] {content[:22]}")
+        self._cmd_q.put(("reminder", content))
 
     # ---------- 宠物窗口 ----------
 
@@ -263,6 +262,9 @@ class PetApp:
                 elif kind == "quit":
                     self._quit()
                     return
+                elif kind == "reminder":
+                    if self.window:
+                        self.window.start_reminder(f"🔔 提醒：{value[:42]}")
         except queue.Empty:
             pass
         self.root.after(200, self._drain_commands)

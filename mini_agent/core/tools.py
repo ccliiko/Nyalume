@@ -302,6 +302,44 @@ def _create_reminder(content: str, cron: str) -> str:
 
 
 @register(
+    "remind_me_in",
+    "创建一条“一次性、多少分钟/小时后提醒我”的主动提醒（例如：1 分钟后提醒我喝水）。"
+    "按分钟精度到点触发一次即结束，不是周期提醒。"
+    "只有用户明确说“每隔/每 X 分钟/每天”等周期需求时才用 create_reminder 的 */n cron，"
+    "绝不能把一次性提醒写成 */1 * * * *（那会变成每分钟都提醒）。",
+    {
+        "content": {
+            "type": "string",
+            "description": "提醒内容，例如 喝水 / 该休息了",
+        },
+        "minutes": {
+            "type": "integer",
+            "description": "多少分钟后提醒（正整数；1 小时=60）",
+        },
+    },
+    required=["content", "minutes"],
+)
+def _remind_me_in(content: str, minutes: int) -> str:
+    import datetime
+
+    try:
+        minutes = int(minutes)
+        if minutes < 1 or minutes > 60 * 24 * 30:
+            raise ValueError("分钟数需在 1 ~ 43200 之间")
+        target = datetime.datetime.now() + datetime.timedelta(minutes=minutes)
+        if target.second > 0 or target.microsecond > 0:
+            target = target.replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
+        cron = f"{target.minute} {target.hour} * * *"
+        rid = add_reminder(content, cron)
+    except ValueError as e:
+        return f"创建提醒失败：{e}"
+    return (
+        f"已设好一次性提醒（#{rid}）：{minutes} 分钟后提醒「{content}」"
+        f"（约 {target.strftime('%H:%M')} 触发）。到点 agent 会自己动。"
+    )
+
+
+@register(
     "list_reminders",
     "查看当前所有定时主动提醒。",
     {},
