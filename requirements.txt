@@ -4,3 +4,4 @@ uvicorn>=0.30
 python-dotenv>=1.0
 pillow>=10.0
 pystray>=0.19.5
+pywebview>=5.0
