@@ -2,6 +2,7 @@
 
 import datetime
 
+from mini_agent.core.agent import _parse_remind_request
 from mini_agent.core import reminders
 
 
@@ -51,6 +52,13 @@ def test_recurring_reminder_kept_after_fire():
     rid = reminders.add_reminder("每天喝水", "0 10 * * *", one_shot=False)
     reminders.check_due(now=datetime.datetime(2026, 9, 5, 10, 0))
     assert any(r["id"] == rid for r in reminders.list_reminders())
+
+
+def test_parse_remind_request_detects_one_shot():
+    assert _parse_remind_request("1分钟后跳一下") == (1, "跳一下")
+    assert _parse_remind_request("2小时后叫我起来复习") == (120, "起来复习")
+    assert _parse_remind_request("1分钟后提醒我喝水") == (1, "喝水")
+    assert _parse_remind_request("每天9点提醒我喝水") is None
 
 
 def test_cron_bad_expression_raises():

@@ -10,6 +10,7 @@ from .tools import TOOL_SCHEMAS, execute_tool
 MAX_TOOL_ROUNDS = 5  # 防止模型无限调工具
 _AFFECTION_RE = re.compile(r"\[affection\s*:\s*([+-]?\d+)\s*\]\s*$", re.MULTILINE)
 _TAIL_BUF = 40  # 流式输出时留出尾部缓冲，等流结束再剥好感度隐藏标记
+_TIME_RE = re.compile(r"(\d+)\s*(分钟|小时)\s*(?:后|之后|以后)?")
 
 # 记忆分层参数：L2 摘要（超出窗口的消息滚动合并）+ L3 自动归档
 SUMMARY_KEEP = 20          # 与 load_history 的窗口一致
@@ -66,6 +67,26 @@ def _build_memory_context(summary: str, notes: list[dict]) -> str:
     if not parts:
         return ""
     return "（记忆上下文，只用于回忆，不需要复述给你听：\n" + "\n".join(parts) + "\n）"
+
+
+def _parse_remind_request(text: str) -> tuple[int, str] | None:
+    """识别“X 分钟后/小时后 做某事”这类一次性延时提醒请求。"""
+    m = _TIME_RE.search(text or "")
+    if not m:
+        return None
+    value = int(m.group(1))
+    minutes = value * 60 if m.group(2) == "小时" else value
+    rest = text[m.end():]
+    prev = None
+    while prev != rest:
+        prev = rest
+        rest = re.sub(
+            r"^(?:，|,|\s|请|帮我|提醒|提醒我|叫我|让我|记得|喊我|到点|要|去|一下)*",
+            "",
+            rest,
+        )
+    content = rest.strip() or "（内容未指定）"
+    return minutes, content
 
 
 def _refresh_summaries(session_id: str) -> str:
@@ -183,9 +204,18 @@ def run_stream(session_id: str, user_text: str):
         }
     ]
     messages.extend(memory.load_history(session_id))
+    # 硬保险 1：识别出延时提醒请求时，把“必须调 remind_me_in”直接写进本轮指令
+    hint = _parse_remind_request(user_text)
+    if hint:
+        messages[0]["content"] += (
+            "\n【本条硬性要求】用户明确要求了延时提醒（X 分钟后做某事）。"
+            "你必须先调用 remind_me_in（参数 minutes 和 content）并看到返回含 #id，"
+            "再告诉用户已设好；严禁只口头说“设好啦”却不调用工具。"
+        )
 
     # 本轮工具调用产生的中间消息，不写回历史库
     tool_messages: list[dict] = []
+    called_tools: set[str] = set()
 
     try:
         for _ in range(MAX_TOOL_ROUNDS):
@@ -244,6 +274,7 @@ def run_stream(session_id: str, user_text: str):
                 )
                 for call in calls:
                     yield {"type": "tool", "name": call["function"]["name"]}
+                    called_tools.add(call["function"]["name"])
                     try:
                         fn_args = json.loads(call["function"]["arguments"] or "{}")
                     except json.JSONDecodeError:
@@ -259,14 +290,22 @@ def run_stream(session_id: str, user_text: str):
                 continue
 
             # 最终回答：剥掉好感度标记，把缓冲尾部按干净正文补齐输出后持久化
+            auto_note = ""
+            if hint and not {"remind_me_in", "create_reminder"} & called_tools:
+                # 硬保险 2：模型没真调工具却声称设好——这里自动补建并如实告知
+                minutes, content = hint
+                result = execute_tool("remind_me_in", {"content": content, "minutes": minutes})
+                auto_note = "\n（检测到刚才的提醒没有真正建上，我已自动补设：" + result + "）"
             delta, clean_text = _strip_affection_marker(full_content)
             prefix_len = len(full_content) - len(pending_tail)
             tail = clean_text[prefix_len:]
             if tail:
                 yield {"type": "text", "text": tail}
+            if auto_note:
+                yield {"type": "text", "text": auto_note}
             current = memory.get_affection(session_id)
             memory.set_affection(session_id, current + delta)
-            memory.save_message(session_id, "assistant", clean_text)
+            memory.save_message(session_id, "assistant", clean_text + auto_note)
             _maybe_auto_notes(session_id)  # L3：攒够轮数后自动归档（安静失败）
             return
 
