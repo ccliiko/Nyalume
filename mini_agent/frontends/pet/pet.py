@@ -258,7 +258,7 @@ class PetApp:
     def _drain_commands(self) -> None:
         try:
             while True:
-                kind, _ = self._cmd_q.get_nowait()
+                kind, value = self._cmd_q.get_nowait()
                 if kind == "show":
                     self._show_from_tray()
                 elif kind == "quit":

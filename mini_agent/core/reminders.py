@@ -209,10 +209,29 @@ class ReminderScheduler(threading.Thread):
         while not self._stop_event.is_set():
             try:
                 for item in check_due():
-                    self._callback(item["content"])
+                    try:
+                        self._callback(item["content"])
+                    except Exception as e:
+                        self._log_callback_error(item, e)
             except Exception:
                 pass  # 调度失败不拖垮宿主进程
             self._stop_event.wait(self._interval)
+
+    def _log_callback_error(self, item: dict, exc: Exception) -> None:
+        import os
+        import tempfile
+        import traceback
+
+        path = os.path.join(tempfile.gettempdir(), "cliko_scheduler_err.log")
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(
+                    f"[{time.strftime('%H:%M:%S')}] reminder #{item.get('id')} "
+                    f"callback error: {type(exc).__name__}: {exc}\n"
+                    + traceback.format_exc()
+                )
+        except Exception:
+            pass
 
     def stop(self) -> None:
         self._stop_event.set()
