@@ -61,6 +61,8 @@ class PetWindow:
         self._grab_active = False
         self.docked = False
         self._dock_axis = None
+        self._dock_cw = 0
+        self._dock_ch = 0
         self.idle_mode = False
         self.last_activity = time.time()
         self._moved = False
@@ -450,6 +452,7 @@ class PetWindow:
             nx, ny = max(0, min(x, sw - cw)), sh - ch
         self.docked = True
         self._dock_axis = axis
+        self._dock_cw, self._dock_ch = cw, ch
         self.canvas.config(width=cw, height=ch)
         self.win.geometry(f"{cw}x{ch}+{nx}+{ny}")
         self.hint("👆 拖出来", 5000)
@@ -612,8 +615,16 @@ class PetWindow:
                     photo = self._dock_photos.get(key)
                     if photo is None:
                         with PILImage.open(peek_path) as im:
-                            im = im.convert("RGBA").resize(
-                                (self.w, self.h), PILImage.LANCZOS
+                            im = im.convert("RGBA")
+                            box = im.getbbox()
+                            if box:
+                                im = im.crop(box)
+                            im = im.resize(
+                                (
+                                    self._dock_cw or self.w,
+                                    self._dock_ch or self.h,
+                                ),
+                                PILImage.LANCZOS,
                             )
                         photo = ImageTk.PhotoImage(im, master=self.win)
                         self._dock_photos[key] = photo
