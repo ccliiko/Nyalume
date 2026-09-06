@@ -113,6 +113,7 @@ class PetWindow:
         self._reminder_home = None
         self._reminder_base = None
         self._reminder_last_move = 0.0
+        self._ack_click = False
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -157,6 +158,7 @@ class PetWindow:
 
     def hide(self) -> None:
         """缩到后台（托盘仍可呼出）。"""
+        self._cancel_reminder()
         self._clear_speech()
         self.win.withdraw()
 
@@ -175,17 +177,18 @@ class PetWindow:
         """头顶小图标/文字提示（不影响互动气泡）。"""
         self._show_speech(text, ms)
 
-    def start_reminder(self, text: str, ms: int = 15000) -> None:
-        """主动提醒：头顶长气泡 + 快速跳动 + 在桌面随机游荡。"""
+    def start_reminder(self, text: str, ms: int | None = None) -> None:
+        """主动提醒：持续跳动+游荡+头顶气泡，直到用户点击/拖动为止。"""
         self.poke()
-        self._reminder_until = time.time() + max(3000, int(ms)) / 1000.0
+        self._reminder_until = time.time() + 86400  # 不自动结束
         if self._reminder_home is None:
             self._reminder_home = (self.win.winfo_x(), self.win.winfo_y())
         self._reminder_base = None
-        self._show_speech(str(text), int(ms) + 1500)
+        self._show_speech(str(text), 12 * 3600 * 1000)
 
     def _cancel_reminder(self) -> None:
         self._reminder_until = 0.0
+        self._clear_speech()
         if self._reminder_home is not None:
             hx, hy = self._reminder_home
             self.win.geometry(f"+{hx}+{hy}")
@@ -377,6 +380,10 @@ class PetWindow:
 
     def _on_press(self, event) -> None:
         self.poke()
+        if time.time() < self._reminder_until:
+            # 点击 = 收到提醒：停止提醒模式，本次点击不再触发摸摸
+            self._ack_click = True
+            self._cancel_reminder()
         # 松手后 0.6s 内又按下：多半是双击的第二下，取消待触发的单击摸摸
         if (
             self._single_job is not None
@@ -424,6 +431,9 @@ class PetWindow:
 
     def _on_release(self, event) -> None:
         self.poke()
+        if self._ack_click and not self._dragging:
+            self._ack_click = False
+            return
         x0, y0, _, _ = self._drag_start
         if self._grab_active:
             try:

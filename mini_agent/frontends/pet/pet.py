@@ -264,6 +264,7 @@ class PetApp:
                     return
                 elif kind == "reminder":
                     if self.window:
+                        self.window.show()  # 隐藏/趴边时先现身
                         self.window.start_reminder(f"🔔 提醒：{value[:42]}")
         except queue.Empty:
             pass
