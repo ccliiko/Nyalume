@@ -30,9 +30,12 @@ from .tools import (
     tool_paths,
 )
 
-MAX_TOOL_ROUNDS = int(os.getenv("NYALUME_TOOL_ROUNDS", "40"))
-TASK_TIMEOUT_SECONDS = 300
+MAX_TOOL_ROUNDS = int(os.getenv("NYALUME_TOOL_ROUNDS", "200"))
+TASK_TIMEOUT_SECONDS = 3600
 LLM_TIMEOUT_SECONDS = 90
+_TASK_TIMEOUT_MESSAGE = (
+    f"这次任务超过 {TASK_TIMEOUT_SECONDS // 60} 分钟，已经自动停止。可以缩小范围后再试。"
+)
 _TIME_RE = re.compile(r"(\d+)\s*(分钟|小时)\s*(?:后|之后|以后)?")
 _DAILY_AFFECTION_RE = re.compile(
     r"\[daily_affection\s*:\s*([+-]?\d+)\s*\]\s*$", re.MULTILINE
@@ -461,7 +464,7 @@ def run_stream(session_id: str, user_text: str, cancel_event=None):
         trace.error_type = "TaskTimeout"
         yield {
             "type": "error",
-            "message": "这次任务超过 5 分钟，已经自动停止。可以缩小范围后再试。",
+            "message": _TASK_TIMEOUT_MESSAGE,
             "run_id": trace.run_id,
         }
     except Exception as error:
@@ -470,7 +473,7 @@ def run_stream(session_id: str, user_text: str, cancel_event=None):
             trace.error_type = "TaskTimeout"
             yield {
                 "type": "error",
-                "message": "这次任务超过 5 分钟，已经自动停止。可以缩小范围后再试。",
+                "message": _TASK_TIMEOUT_MESSAGE,
                 "run_id": trace.run_id,
             }
             return
@@ -807,7 +810,7 @@ def _run_stream(
         trace.finish()
         yield {
             "type": "error",
-            "message": "这次任务超过 5 分钟，已经自动停止。可以缩小范围后再试。",
+            "message": _TASK_TIMEOUT_MESSAGE,
             "run_id": trace.run_id,
         }
     except Exception as e:
@@ -817,7 +820,7 @@ def _run_stream(
             trace.finish()
             yield {
                 "type": "error",
-                "message": "这次任务超过 5 分钟，已经自动停止。可以缩小范围后再试。",
+                "message": _TASK_TIMEOUT_MESSAGE,
                 "run_id": trace.run_id,
             }
             return

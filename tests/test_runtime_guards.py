@@ -63,7 +63,7 @@ def test_agent_cancel_and_task_timeout_have_terminal_states(runtime_db, monkeypa
     monkeypatch.setattr(agent, "TASK_TIMEOUT_SECONDS", 0)
     events = list(agent.run_stream("timeout-run", "开始"))
     assert events[-1]["type"] == "error"
-    assert "超过 5 分钟" in events[-1]["message"]
+    assert "已经自动停止" in events[-1]["message"]
 
 
 def test_server_isolates_run_locks_by_session_and_cancel_is_idempotent():

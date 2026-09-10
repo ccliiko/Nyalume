@@ -155,7 +155,7 @@ def test_wallpaper_engine_next_falls_back_to_recents(monkeypatch, tmp_path):
     assert result["name"] == "recent"
 
 
-def test_wallpaper_startup_reuses_last_supported_without_resync(monkeypatch, tmp_path):
+def test_wallpaper_settings_falls_back_to_cached_when_current_unsupported(monkeypatch, tmp_path):
     cached = tmp_path / "cached.jpg"
     cached.write_bytes(b"image")
     unsupported = tmp_path / "scene.pkg"
@@ -168,7 +168,6 @@ def test_wallpaper_startup_reuses_last_supported_without_resync(monkeypatch, tmp
     }
     syncs = []
     monkeypatch.setattr(server, "_we_media_path", "")
-    monkeypatch.setattr(server, "_we_startup_checked", False)
     monkeypatch.setattr(server, "_we_startup_available", False)
     monkeypatch.setattr(server, "load_config", lambda: dict(config))
     monkeypatch.setattr(server, "save_config", lambda value: config.update(value))
@@ -186,16 +185,15 @@ def test_wallpaper_startup_reuses_last_supported_without_resync(monkeypatch, tmp
     second = server._wallpaper_settings()
     assert first["mode"] == second["mode"] == "engine"
     assert first["engine_kind"] == "image"
-    assert syncs == []
+    assert syncs == [True, True]
 
 
-def test_wallpaper_first_start_syncs_current_once(monkeypatch, tmp_path):
+def test_wallpaper_settings_syncs_current_each_open(monkeypatch, tmp_path):
     current = tmp_path / "current.jpg"
     current.write_bytes(b"image")
     config = {"wall_mode": "engine", "wall_opacity": 70}
     syncs = []
     monkeypatch.setattr(server, "_we_media_path", "")
-    monkeypatch.setattr(server, "_we_startup_checked", False)
     monkeypatch.setattr(server, "_we_startup_available", False)
     monkeypatch.setattr(server, "load_config", lambda: dict(config))
     monkeypatch.setattr(server, "save_config", lambda value: config.update(value))
@@ -207,13 +205,12 @@ def test_wallpaper_first_start_syncs_current_once(monkeypatch, tmp_path):
 
     assert server._wallpaper_settings()["mode"] == "engine"
     assert server._wallpaper_settings()["mode"] == "engine"
-    assert len(syncs) == 1
+    assert len(syncs) == 2
     assert config["wall_engine_media"] == str(current.resolve())
 
 
 def test_wallpaper_startup_without_tray_falls_back_to_custom(monkeypatch):
     config = {"wall_mode": "engine", "wall_custom": "mine.jpg", "wall_opacity": 70}
-    monkeypatch.setattr(server, "_we_startup_checked", False)
     monkeypatch.setattr(server, "_we_startup_available", False)
     monkeypatch.setattr(server, "load_config", lambda: dict(config))
     monkeypatch.setattr(server, "_wallpaper_engine_tray_exe", lambda: "")

@@ -50,7 +50,6 @@ _active_runs = 0
 _pet_tap_seq = 0
 _pet_meow_seq = 0
 _we_media_path = ""
-_we_startup_checked = False
 _we_startup_available = False
 _WE_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 
@@ -619,49 +618,49 @@ def cancel_run(request_id: str):
 
 
 def _wallpaper_settings() -> dict:
-    global _we_media_path, _we_startup_checked, _we_startup_available
+    global _we_media_path, _we_startup_available
     cfg = load_config()
     custom = cfg.get("wall_custom") or ""
     requested = cfg.get("wall_mode") or ""
-    if requested == "engine" and not _we_startup_checked:
-        _we_startup_checked = True
+    engine_url = ""
+    engine_kind = ""
+
+    if requested == "engine":
         _we_startup_available = bool(_wallpaper_engine_tray_exe())
         if _we_startup_available:
+            # 每次打开聊天窗都重新同步当前 Wallpaper Engine 壁纸；
+            # 当前壁纸不是图片/MP4（或读不到）时，回退到上次关闭前缓存的那张。
+            live = ""
             try:
+                live, _selected = _wallpaper_engine_selected()
+            except HTTPException:
+                live = ""
+            cached = cfg.get("wall_engine_media") or ""
+            for candidate in (live, cached):
+                if not candidate:
+                    continue
                 try:
-                    _we_media_path, _kind = _wallpaper_engine_media(
-                        cfg.get("wall_engine_media") or ""
-                    )
+                    _we_media_path, kind = _wallpaper_engine_media(candidate)
                 except HTTPException:
-                    current, selected = _wallpaper_engine_selected()
-                    try:
-                        _we_media_path, _kind = _wallpaper_engine_media(current)
-                    except HTTPException:
-                        playlist = _wallpaper_engine_playlist(current, selected)
-                        if not playlist:
-                            raise
-                        _we_media_path, _kind = playlist[0]
+                    continue
+                if candidate == live:
                     with _WALLPAPER_CONFIG_LOCK:
                         cfg = load_config()
-                        _remember_wallpaper_engine(cfg, _we_media_path, _kind)
+                        _remember_wallpaper_engine(cfg, _we_media_path, kind)
                         cfg["wall_mode"] = "engine"
                         save_config(cfg)
-            except HTTPException:
-                pass
+                engine_url = _wallpaper_engine_url(_we_media_path)
+                engine_kind = kind
+                break
 
-    if requested == "engine" and _we_startup_available:
-        cached = cfg.get("wall_engine_media") or ""
-        try:
-            _we_media_path, kind = _wallpaper_engine_media(cached)
-            return {
-                "mode": "engine",
-                "opacity": int(cfg.get("wall_opacity", 70)),
-                "custom_url": f"/api/wallpaper/file/{custom}" if custom else "",
-                "engine_url": _wallpaper_engine_url(_we_media_path),
-                "engine_kind": kind,
-            }
-        except HTTPException:
-            pass
+    if engine_url:
+        return {
+            "mode": "engine",
+            "opacity": int(cfg.get("wall_opacity", 70)),
+            "custom_url": f"/api/wallpaper/file/{custom}" if custom else "",
+            "engine_url": engine_url,
+            "engine_kind": engine_kind,
+        }
 
     # 旧版的内置角色壁纸已移除；旧配置优先回退到用户自己的壁纸。
     fallback = "custom" if custom and requested != "none" else ""

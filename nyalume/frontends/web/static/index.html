@@ -905,6 +905,25 @@
     .live-media .chat-img { margin: 2px 0; }
     .tool-feed { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
     .tool-feed.hidden { display: none; }
+    .exec-item { margin: 4px 0; font-size: 12px; color: #6b7280; }
+    .exec-summary { list-style: none; cursor: pointer; user-select: none; color: #6b7280; }
+    .exec-summary::-webkit-details-marker { display: none; }
+    .exec-summary::before { content: "▸ "; color: #9aa0a8; }
+    .exec-item[open] > .exec-summary::before { content: "▾ "; }
+    .exec-summary.running {
+      background: linear-gradient(90deg, #6b7280 0%, #6b7280 40%, #dfe4ec 50%, #6b7280 60%, #6b7280 100%);
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      animation: exec-shimmer 2s linear infinite;
+    }
+    @keyframes exec-shimmer {
+      0% { background-position: -100% 0; }
+      100% { background-position: 100% 0; }
+    }
+    .exec-item-name { display: inline-block; max-width: min(640px, 100%); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .exec-item-body { margin: 4px 0 2px 14px; padding: 6px 9px; border-left: 2px solid #e5e8ee; color: #3f4856; background: rgba(247, 248, 251, .6); font: 12px/1.5 Consolas, "SFMono-Regular", monospace; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto; }
     .tool-card {
       width: min(700px, 100%);
       overflow: hidden;
@@ -4492,6 +4511,59 @@
       };
       const toolCards = [];
       const toolGroups = [];
+      const execItems = [];
+      const execLabel = (name) => {
+        if (name === "run_code") return "正在执行命令喵～";
+        if (name === "file_write") return "正在写文件喵～";
+        if (name === "file_mkdir") return "正在创建文件夹喵～";
+        if (name === "file_move") return "正在移动文件喵～";
+        if (name === "file_delete") return "正在删除文件喵～";
+        if (["file_read", "file_list", "search_files"].includes(name)) return "正在读取文件喵～";
+        if (["add_documents", "search_docs", "search_memory"].includes(name)) return "正在检索资料喵～";
+        if (["save_note", "delete_note"].includes(name)) return "正在记便签喵～";
+        if (["create_reminder", "remind_me_in", "cancel_reminder"].includes(name)) return "正在设定提醒喵～";
+        if (name.startsWith("web_") || name.startsWith("browser_")) return "正在联网操作喵～";
+        return "正在执行操作喵～";
+      };
+      const startExecItem = (ev) => {
+        const item = document.createElement("details");
+        item.className = "exec-item";
+        const summary = document.createElement("summary");
+        summary.className = "exec-summary running";
+        const nameEl = document.createElement("span");
+        nameEl.className = "exec-item-name";
+        const label = execLabel(ev.name || "");
+        nameEl.textContent = label;
+        nameEl.title = label;
+        summary.appendChild(nameEl);
+        const bodyEl = document.createElement("div");
+        bodyEl.className = "exec-item-body";
+        bodyEl.textContent = "努力中喵…";
+        item.append(summary, bodyEl);
+        body.appendChild(item);
+        execItems.push({
+          name: ev.name,
+          desc: String(ev.desc || ev.name || ""),
+          node: item,
+          summary,
+          nameEl,
+          bodyEl,
+          done: false,
+        });
+        scrollActiveIntoView();
+      };
+      const finishExecItem = (ev) => {
+        const it = execItems.find((x) => !x.done && x.name === ev.name)
+          || execItems.find((x) => !x.done);
+        if (!it) return;
+        it.done = true;
+        it.summary.classList.remove("running");
+        it.nameEl.textContent = "✓ " + (it.desc || execLabel(it.name));
+        it.nameEl.title = it.desc || "";
+        it.bodyEl.textContent = [it.desc, (ev.result || ev.summary || "搞定啦喵～")]
+          .filter(Boolean).join("\n\n");
+        scrollActiveIntoView();
+      };
       const toolGroup = (name) => {
         if (name === "run_code") return ["command", "运行命令"];
         if (["file_write", "file_mkdir", "file_move", "file_delete", "set_workspace", "file_set_root"].includes(name)) {
@@ -4641,6 +4713,8 @@
       activeRequestId = requestId;
       setSendIcon("run");
       let finalText = "";
+      let curTextBlock = null;
+      let segmentText = "";
       let lastMsgId = 0;
       let sawTool = false;
       let sawReason = false;
@@ -4679,14 +4753,25 @@
                 if (lastUser) lastUser.dataset.msgid = ev.message_id || "";
               } else if (ev.type === "text") {
                 finalText += ev.text;
-                richInto(body, finalText);
+                if (!curTextBlock) {
+                  curTextBlock = document.createElement("div");
+                  curTextBlock.className = "reply-seg";
+                  body.appendChild(curTextBlock);
+                  segmentText = "";
+                }
+                segmentText += ev.text;
+                richInto(curTextBlock, segmentText);
                 if (livePanel.isConnected) livePanel.remove();
                 activeLivePanel = null;
               } else if (ev.type === "tool") {
                 sawTool = true;
                 startToolCard(ev);
+                startExecItem(ev);
+                curTextBlock = null;
+                segmentText = "";
               } else if (ev.type === "tool_result") {
                 finishToolCard(ev);
+                finishExecItem(ev);
                 await new Promise((resolve) => requestAnimationFrame(resolve));
               } else if (ev.type === "media") {
                 for (const p of (ev.paths || [])) {
@@ -4782,6 +4867,7 @@
         } else {
           stoppedStatusEl = null;
           if (livePanel.isConnected) livePanel.remove();
+          execItems.forEach((x) => x.node.remove());
           activeLivePanel = null;
           log.classList.remove("log-thinking");
           setSendIcon("idle");
