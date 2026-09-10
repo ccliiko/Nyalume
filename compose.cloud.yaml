@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nyalume
+      POSTGRES_USER: nyalume
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请先设置 POSTGRES_PASSWORD}
+    volumes:
+      - nyalume_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nyalume -d nyalume"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: cloud_service/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://nyalume:${POSTGRES_PASSWORD}@postgres:5432/nyalume
+      NYALUME_TOKEN_SECRET: ${NYALUME_TOKEN_SECRET:?请先设置 NYALUME_TOKEN_SECRET}
+      NYALUME_CORS_ORIGINS: ${NYALUME_CORS_ORIGINS:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-1}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-0}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  nyalume_pgdata:

@@ -2,8 +2,8 @@
 
 import datetime
 
-from mini_agent.core.agent import _parse_remind_request
-from mini_agent.core import reminders
+from nyalume.core.agent import _parse_remind_request
+from nyalume.core import reminders
 
 
 def test_cron_daily_at_nine():

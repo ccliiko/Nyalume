@@ -2,7 +2,7 @@
 
 import uvicorn
 
-from mini_agent.frontends.web.server import app
+from nyalume.frontends.web.server import app
 
 
 if __name__ == "__main__":

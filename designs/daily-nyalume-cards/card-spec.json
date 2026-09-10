@@ -1,0 +1,19 @@
+{
+  "collection": "TODAY'S NYALUME",
+  "canvas": [1024, 1536],
+  "textSafeArea": { "top": 0.15, "bottom": 0.15 },
+  "goldReservedForPaidCards": true,
+  "cards": [
+    { "profile": "quiet", "score": "0–9", "finish": "matte" },
+    { "profile": "dreamy", "score": "10–19", "finish": "satin" },
+    { "profile": "slow", "score": "20–29", "finish": "pearl" },
+    { "profile": "focused", "score": "30–39", "finish": "mica" },
+    { "profile": "everyday", "score": "40–49", "finish": "opal" },
+    { "profile": "sunny", "score": "50–59", "finish": "prism" },
+    { "profile": "caring", "score": "60–69", "finish": "aurora" },
+    { "profile": "creative", "score": "70–79", "finish": "stardust" },
+    { "profile": "reliable", "score": "80–88", "finish": "linear" },
+    { "profile": "lucky", "score": "89–99", "finish": "holo" },
+    { "profile": "perfect", "score": "100", "finish": "crystal" }
+  ]
+}

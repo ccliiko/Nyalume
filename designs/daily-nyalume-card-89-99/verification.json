@@ -1,0 +1,79 @@
+{
+  "blender": "4.5.13 LTS",
+  "language": "zh_HANS",
+  "interface_translation": true,
+  "render_engine": "CYCLES",
+  "device": "GPU",
+  "images": {
+    "subject": {
+      "size": [
+        1024,
+        1536
+      ],
+      "channels": 4,
+      "packed": true
+    },
+    "text": {
+      "size": [
+        1024,
+        1536
+      ],
+      "channels": 4,
+      "packed": true
+    },
+    "background": {
+      "size": [
+        1024,
+        1536
+      ],
+      "channels": 4,
+      "packed": true
+    },
+    "lineart": {
+      "size": [
+        1024,
+        1536
+      ],
+      "channels": 4,
+      "packed": true
+    }
+  },
+  "planes": {
+    "主体平面 · 完整视差合成": {
+      "rotation_degrees": [
+        90.0,
+        0.0,
+        0.0
+      ],
+      "mode": "OBJECT"
+    },
+    "文字平面 · Alpha PNG": {
+      "rotation_degrees": [
+        90.0,
+        0.0,
+        0.0
+      ],
+      "mode": "OBJECT"
+    },
+    "背景平面 · 已在主体材质合成": {
+      "rotation_degrees": [
+        90.0,
+        0.0,
+        0.0
+      ],
+      "mode": "OBJECT"
+    }
+  },
+  "parameters": {
+    "主体缩放": 1.16,
+    "主体深度": 0.28,
+    "背景深度": -0.2
+  },
+  "frames": [
+    1,
+    25,
+    49,
+    73,
+    96
+  ]
+}

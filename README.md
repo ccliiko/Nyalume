@@ -1,9 +1,9 @@
-# mini-agent：基于 LLM API 的个人 AI 助手（学习项目）
+# Nyalume：基于 LLM API 的个人 AI 助手（学习项目）
 
 参考 [HKUDS/nanobot](https://github.com/HKUDS/nanobot) 的设计思路，从零实现的最小版
 个人 AI Agent：支持多轮对话、会话记忆、工具调用（函数调用），提供命令行和网页两种入口。
 
-> 本项目是学习/简历项目，代码全部自己写。目标：能讲清楚
+> 本项目是学习项目，代码全部自己写。目标：能讲清楚
 > "消息进来 → 加载记忆 → 模型决策 → 调工具 → 回写记忆" 这条链路。
 
 ## 功能
@@ -16,24 +16,28 @@
 - 工具调用：当前时间 / 安全计算器 / 带标签的便签存取（可按标签筛选）/
   网页搜索（必应 RSS，免密钥，国内可直接访问）/
   定时提醒（标准 5 段 cron 表达式，按内容落库持久化）
+- 本地资料检索：导入文档后按段落保存到 SQLite；每轮自动用 FTS5 + BM25
+  召回最多 3 段相关原文并标注来源，不需要向量数据库或额外 API
 - 定时主动提醒：聊一句“每天 9 点提醒我喝水”就变成一条 cron 提醒；
   CLI / 桌宠由后台线程、Web 由前端轮询，到点主动弹出——
   **agent 会自己动**，不用你发消息它也会开口
-- 人设可切换（默认 cliko）：`cliko`（猫娘）/ `assistant`（标准助手）；
+- 人设可切换（默认 Nyalume）：`nyalume`（猫娘）/ `assistant`（标准助手）；
   Web 顶栏下拉、CLI `/persona`、桌宠右键都能切
-- 温度状态机：带人设的角色把好感度/信赖度作为会话状态存 SQLite，
-  每轮由模型输出隐藏标记、服务端校验并持久化、展示前剥离；
-  分 5 段温度（疏离/闹别扭/日常撒娇/心动黏人/深爱守护），只改语气不改能力
+- 日常模式：每段会话保存独立好感度，只进行纯聊天；模型不接收工具定义，
+  工具入口也会二次拒绝，因此不能读写文件、运行命令、联网搜索或设置提醒
+- 今日 Nyalume：每天 0:00 刷新一次 0~100 分抽取，覆盖 11 种表达人格；
+  结果以内嵌卡片展示立绘和祝福，不打断任务，当天重复点击只查看同一结果。
+  人格只改变回复风格，不降低事实准确性、工具纪律或安全标准
 - 入口：CLI（命令行） + Web（FastAPI 单页，支持多会话：新建 / 切换 / 删除 / 历史回显）
-  + 桌宠（透明置顶小窗、气泡对话、好感度切表情、右键换皮肤）
+  + 桌宠（透明置顶小窗、气泡对话、互动表情、右键换皮肤）
   （桌宠任务完成会头顶冒出彩蛋台词，默认「任务完成喵！」，皮肤 manifest 可配）
 - 桌宠交互增强：拖到屏幕边缘自动“趴边只露头”；超过 30 秒没人理且
   不趴边时进入待机（idle 多帧下沉循环）；点“挂后台”收进系统托盘，
   随时从托盘呼出或退出；右键可把角色皮肤合成桌面壁纸 / 自定义壁纸 / 恢复
 - 桌宠互动：拖拽时有“被拎起来”的拉伸/倾斜动画；单击按头/身/腿分区
-  弹出互动台词（本地即时、好感度档位 × 部位，双击才打开对话，避免误触）
-- 摸摸反馈回路：摸头/摸身/摸腿会按当前好感度微调数值（低好感时越界会扣，
-  熟了才加分）；互动同时叠加“动作层”（红晕/爱心/💢/💤 等临时效果），
+  弹出互动台词（本地即时、按部位变化，双击才打开对话，避免误触）；
+  摸摸不积累或改变关系数值
+- 摸摸反馈会叠加“动作层”（红晕/爱心/💤 等临时效果），
   并支持头顶小图标提示（首次提示“摸我/双击聊天”、趴边提示“拖出来”）
 - Web 增强：记忆/状态仪表盘（L2 摘要、L3 便签、定时提醒，可页内取消）；
   聊天背景壁纸支持“角色皮肤”或本地上传（记住选择，不依赖后端存储）
@@ -64,7 +68,7 @@ python server.py
 ```
 
 两个入口都只是根目录薄封装，等价于：
-`python -m mini_agent.frontends.cli` / `python -m mini_agent.frontends.web.server`
+`python -m nyalume.frontends.cli` / `python -m nyalume.frontends.web.server`
 
 桌宠：
 
@@ -72,7 +76,7 @@ python server.py
 python pet.py          # 无控制台双击 start_pet.bat
 ```
 
-桌宠内置一只程序绘制的占位猫；右键可换皮肤。外置皮肤放 `user_pets/`，
+桌宠默认使用 Nyalume；右键可换自定义皮肤。皮肤放 `user_pets/`，
 格式与版权说明见 `user_pets/README.md`（该目录已 gitignore，不随仓库分发）。
 
 ## 测试
@@ -82,38 +86,65 @@ pip install -r requirements-dev.txt
 python -m pytest tests -q
 ```
 
+## 当前发行范围
+
+当前版本是纯本地单用户版，不提供注册、登录、云同步和打赏。对话、记忆、卡片、
+壁纸设置与模型 API Key 都保存在用户电脑上；中央账号服务代码仅供后续开发，不参与启动。
+
 测试不依赖 API Key，也不碰真实 `agent.db`（conftest 会把 `MEMORY_DB`
 指到临时文件）；覆盖 cron 解析、提醒去重、计算器安全、便签/会话/摘要/
-好感度持久化、人设注册表等核心逻辑。
+每日 Nyalume 唯一性、人设注册表等核心逻辑。
+
+## 本地运行追踪（Trace）
+
+每轮对话会在同一个 SQLite 数据库中保存 `agent_traces` 记录，无需额外服务。
+聊天事件中的 `run_id` 可关联该次运行；记录包含会话 ID、总耗时、主循环模型调用次数
+（`spans` 中的 `llm` 条目）、工具名称与耗时、审批等待和最终状态。
+
+```bash
+python -m nyalume.core.tracing --limit 10
+python -m nyalume.core.tracing --session pet --limit 5
+```
+
+状态包含 `completed`、`error`、`cancelled`、`max_rounds`；进程突然退出时可能留下
+`running`。`completed` 表示程序正常结束，不代表任务答案正确。工具的 `returned`
+表示正常返回（包括工具返回错误字符串），异常才标记 `error`。
+耗时是本地经过时间，模型流包含消费者等待时间，审批等待单独计时。
+记录不保存对话正文、工具参数、结果正文或密钥；暂不统计 token 和费用，
+摘要与长期便签维护调用暂未独立计时。
+记录暂不自动清理，长期使用时需自行管理数据库大小。
 
 ## 角色素材生成管线（可选）
 
-cliko 表情帧的本地 ComfyUI 出图管线（提示词/工作流/脚本）见
-[tools/cliko_pipeline/README.md](tools/cliko_pipeline/README.md)。
+Nyalume 表情帧的本地 ComfyUI 出图管线（提示词/工作流/脚本）见
+[tools/nyalume_pipeline/README.md](tools/nyalume_pipeline/README.md)。
 生成的 PNG 素材只落在 gitignore 的 `user_pets/`，仓库只分发管线代码与提示词。
 
 ## 配置（.env）
 
 ```ini
+LLM_PROVIDER=deepseek
 LLM_API_KEY=你的key
-LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_MODEL=deepseek-chat
-PERSONA=cliko       # cliko=猫娘（默认）/ assistant=标准助手
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-v4-pro
+PERSONA=nyalume       # nyalume=猫娘（默认）/ assistant=标准助手
 ```
 
-如果你的 key 来自其他 OpenAI 兼容平台（硅基流动、OpenRouter 等），只改
-`LLM_BASE_URL` 和 `LLM_MODEL` 即可。
+设置页可直接选择 DeepSeek、OpenAI、OpenRouter、硅基流动或自定义兼容接口；
+预设会自动填写 `LLM_BASE_URL` 与推荐模型，API Key 仍填写对应供应商签发的 Key。
 
 ## 目录结构
 
 ```text
-mini_agent/                项目包
+nyalume/                     项目包
 ├── core/                  内核层：与具体前端无关
 │   ├── agent.py           Agent 编排（多轮/工具循环/流式/记忆分层）
 │   ├── llm.py             模型接入（OpenAI 兼容，流式/非流式）
+│   ├── vision.py          图片理解模型接入
 │   ├── memory.py          三层记忆 + 会话管理（SQLite）
 │   ├── reminders.py       定时主动提醒（cron 解析/落库/后台调度）
-│   ├── personas.py        人设注册表（cliko/助手 + 温度状态注入）
+│   ├── personas.py        人设注册表（nyalume/标准助手）
+│   ├── daily_nyalume.py     每日抽取、11 种风格与祝福记录
 │   └── tools.py           工具注册表（时间/计算器/便签/搜索/提醒）
 └── frontends/             前端层：只消费内核的 run_stream 事件
     ├── cli.py             命令行（流式打字机）
@@ -121,10 +152,11 @@ mini_agent/                项目包
     │   ├── server.py      会话/消息 REST + SSE 聊天接口
     │   └── static/index.html
     └── pet/               桌宠前端（第四前端）
-        ├── pet.py         主程序（皮肤菜单/心情联动）
+        ├── pet.py         主程序（皮肤菜单/触摸互动）
         ├── renderer.py    透明小窗 + 帧动画（无素材时程序画占位猫）
-        ├── chat_panel.py  气泡对话（线程消费 run_stream）
-        └── pets_registry.py  皮肤注册表（manifest/好感度分档）
+        ├── web_chat.py    气泡对话（线程消费 run_stream）
+        └── web_chat_win.py 独立聊天窗口
+        └── pets_registry.py  皮肤注册表（manifest/动画帧）
 cli.py / server.py / pet.py  仓库根启动入口（薄封装）
 start_pet.bat              双击启动桌宠（pythonw 无控制台）
 user_pets/                 用户自备皮肤（gitignore，仅本地演示）
@@ -135,7 +167,7 @@ agent.db                   SQLite 数据（默认放在仓库根，可用 MEMORY
 只消费 `agent.run_stream` 产出的事件，
 所以 CLI / Web / 桌宠不会互相重复业务逻辑。
 
-## 面试时可以讲的设计点
+## 说明
 
 1. 为什么记忆只保留最近 N 条：控制 token 成本
 2. 工具调用的循环是怎么终止的：最大轮数 + finish_reason
@@ -143,17 +175,16 @@ agent.db                   SQLite 数据（默认放在仓库根，可用 MEMORY
 4. 模型层用 OpenAI 兼容接口，换模型只改配置，不换代码
 5. 便签带 tag 列 + 工具描述引导：用户说“算完记下来”时直接保存完整算式与结果，
    并在回复中复述已保存内容，不反问用户
-6. cliko 的好感度不是模型“嘴上说说”：模型每轮输出隐藏标记 `[affection:+N]`，
-   服务端校验范围、写 SQLite、展示前剥离——状态归程序管，人设归模型演；
-   分 5 段温度让“表达随状态变化”，但工具调用等能力不受影响
+6. “今日 Nyalume”由日期主键保证每天只有一份结果：0~99 每 10 分一档，
+   100 分单独成档；抽取结果存 SQLite，并同步追加到根目录的可读祝福记录。
+   每档的执行规则单独定义，但只控制措辞，不允许削弱正确性和工具纪律
 7. 工具用注册表管理：新增工具 = 一次 `@register` 注册（名字/描述/参数声明），
    模型可见的 schema 自动生成，不存在“描述和实现两处维护”的漂移；
    执行时按名字查表分发，缺参、未知工具、网络异常都转成字符串返回，
    由模型自行解释，不中断对话
 8. 流式不是“最后一屏渲染”：`llm.chat_stream` 逐块产出正文/工具增量，
    Agent 在流上把同一 index 的 tool_calls 碎片拼回完整参数再执行；
-   cliko 的好感度隐藏标记靠“末尾 40 字符缓冲、流结束后剥离再补发”处理，
-   既有打字机效果，又不会把内部状态流给前端
+   正文块到达即转发，工具结果则作为独立事件逐项呈现
 9. 记忆分三层而不是一味加长上下文：窗口只放最近 20 条控 token；
    被挤出的旧消息按批（攒够 6 条）交给模型滚成摘要，下轮以 system 上下文注入；
    长期记忆是带标签的便签，每攒够 8 轮让模型输出 JSON 归档，服务端解析、
@@ -165,13 +196,11 @@ agent.db                   SQLite 数据（默认放在仓库根，可用 MEMORY
 11. 代码按“内核 / 前端”分层：`core/` 不 import 任何前端，所有入口只消费
     `run_stream` 的统一事件（text/tool/error）；因此新增工具或记忆功能
     不会改动任何界面，加一个新前端（桌宠）也只等于多写一个事件消费者
-12. 桌宠皮肤是“纯资源”：manifest 里的帧图按好感度五档分组
-    （distant/grumpy/neutral/happy/love + working），渲染器只做映射；
-    内置占位猫由 Canvas 程序绘制、零版权负担，第三方素材只进
-    gitignore 的 user_pets/，仓库本身不含任何角色图片
-13. 人设也是注册表而不是 if-else：每个角色 = id + prompt + 是否启用
-    “温度状态”；切换只写一份 persona_config.json，解析优先级为
-    运行时配置 > PERSONA 环境变量 > 默认 cliko，所以 Web/CLI/桌宠
+12. 桌宠皮肤是“纯资源”：manifest 里的 idle/working/情绪帧由渲染器按场景选取；
+    素材只进 gitignore 的 user_pets/，仓库本身不分发角色图片
+13. 人设也是注册表而不是 if-else：每个角色 = id + prompt；
+    今日人格作为独立风格层追加。切换只写一份 persona_config.json，解析优先级为
+    运行时配置 > PERSONA 环境变量 > 默认 Nyalume，所以 Web/CLI/桌宠
     三个入口共用同一份选择，互不冲突
 14. “主动提醒”不是前端各写一套定时器：cron 解析、去重、持久化都在
     reminders.py；到期判定 check_due 同分钟只触发一次（last_fired 落库），

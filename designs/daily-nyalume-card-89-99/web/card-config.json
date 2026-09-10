@@ -1,0 +1,30 @@
+{
+  "title": "幸运 Nyalume",
+  "subtitle": "今日 NYALUME · 稀有签",
+  "technique": "星愿相逢",
+  "tagline": "好运将至，愿你所行皆有回响",
+  "edition": "89–99 / 100",
+  "collection": "DAILY FORTUNE COLLECTION",
+  "description": "今日 Nyalume 的高分幸运人格概念卡。",
+  "font": "C:/Windows/Fonts/NotoSerifSC-VF.ttf",
+  "assets": {
+    "subject": "./assets/subject.png",
+    "background": "./assets/background.png",
+    "text": "./assets/text.png",
+    "lineart": "./assets/lineart.png",
+    "model": "./assets/card.glb"
+  },
+  "parameters": {
+    "subjectScale": 1.16,
+    "subjectDepth": 0.28,
+    "backgroundDepth": -0.2,
+    "foil": 0.6
+  },
+  "safeArea": {
+    "scale": 1.08,
+    "offset": [
+      -0.03,
+      -0.055
+    ]
+  }
+}

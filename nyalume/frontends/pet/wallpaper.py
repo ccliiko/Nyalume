@@ -1,0 +1,212 @@
+"""桌面壁纸：把 nyalume 皮肤合成壁纸 / 自定义图片壁纸 / 恢复原壁纸。
+
+只做“设置当前用户壁纸”这一件事；可逆操作：设置前把原壁纸路径
+存进 pet_config.json，恢复时读回。
+"""
+
+import ctypes
+import os
+import winreg
+
+from PIL import Image, ImageDraw
+
+from .pets_registry import frame_paths, get_pet, load_config, save_config
+
+SPI_SETDESKWALLPAPER = 20
+SPIF_UPDATEINIFILE = 0x01
+SPIF_SENDCHANGE = 0x02
+
+_SystemParametersInfoW = ctypes.windll.user32.SystemParametersInfoW
+_SystemParametersInfoW.argtypes = [
+    ctypes.c_uint,
+    ctypes.c_uint,
+    ctypes.c_wchar_p,
+    ctypes.c_uint,
+]
+_SystemParametersInfoW.restype = ctypes.c_int
+
+_CLSID_DesktopWallpaper = (
+    ctypes.c_ubyte * 16
+)(
+    0xC2, 0xCF, 0x31, 0x10, 0x0E, 0x46, 0xC1, 0x4F,
+    0xB9, 0xD0, 0x8A, 0x1C, 0x0C, 0x9C, 0xC4, 0xBD,
+)
+_IID_IDesktopWallpaper = (
+    ctypes.c_ubyte * 16
+)(
+    0xA9, 0x56, 0xB2, 0xB9, 0x55, 0x8B, 0x14, 0x4E,
+    0x9A, 0x89, 0x01, 0x99, 0xBB, 0xB6, 0xF9, 0x3B,
+)
+
+
+def _current_wallpaper() -> str:
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Control Panel\Desktop",
+            0,
+            winreg.KEY_READ,
+        ) as key:
+            value, _ = winreg.QueryValueEx(key, "WallPaper")
+            return value or ""
+    except OSError:
+        return ""
+
+
+def _set_desktop_reg(name: str, value: str) -> None:
+    """写 Control Panel\\Desktop 样式值（WallpaperStyle/TileWallpaper）。"""
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER,
+        r"Control Panel\Desktop",
+        0,
+        winreg.KEY_SET_VALUE,
+    ) as key:
+        winreg.SetValueEx(key, name, 0, winreg.REG_SZ, str(value))
+
+
+def _clear_wallpaper_cache() -> None:
+    """删掉 Explorer 的 TranscodedWallpaper 缓存，强制它重新转码刷新。"""
+    themes = os.path.join(
+        os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Themes"
+    )
+    cache = os.path.join(themes, "TranscodedWallpaper")
+    try:
+        if os.path.isfile(cache):
+            os.remove(cache)
+    except OSError:
+        pass  # 文件被 Explorer 占用时忽略，SPI 本身也能触发刷新
+
+
+def _apply_via_desktop_wallpaper(image_path: str) -> bool:
+    """Windows 8+ 官方 IDesktopWallpaper COM：逐显示器 SetWallpaper。"""
+    ole32 = ctypes.windll.ole32
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    ole32.CoCreateInstance.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong,
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+    ]
+    ole32.CoCreateInstance.restype = ctypes.c_long
+    ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+    ole32.CoInitializeEx(None, 0x0)  # COINIT_APARTMENTTHREADED
+    ppv = ctypes.c_void_p()
+    hr = ole32.CoCreateInstance(
+        ctypes.byref(_CLSID_DesktopWallpaper),
+        None,
+        0x17,  # CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER | CLSCTX_INPROC_HANDLER
+        ctypes.byref(_IID_IDesktopWallpaper),
+        ctypes.byref(ppv),
+    )
+    if hr != 0 or not ppv.value:
+        return False
+    vtbl = ctypes.cast(
+        ppv, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))
+    ).contents
+    hres = ctypes.c_long
+    set_wallpaper = ctypes.WINFUNCTYPE(
+        hres, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p
+    )(vtbl[3])
+    get_count = ctypes.WINFUNCTYPE(
+        hres, ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint)
+    )(vtbl[6])
+    get_path = ctypes.WINFUNCTYPE(
+        hres, ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_wchar_p)
+    )(vtbl[7])
+    count = ctypes.c_uint(0)
+    if get_count(ppv, ctypes.byref(count)) != 0 or count.value == 0:
+        return set_wallpaper(ppv, "", image_path) == 0
+    ok = True
+    for i in range(count.value):
+        monitor = ctypes.c_wchar_p()
+        if get_path(ppv, i, ctypes.byref(monitor)) != 0:
+            ok = False
+            continue
+        if set_wallpaper(ppv, monitor.value or "", image_path) != 0:
+            ok = False
+        ole32.CoTaskMemFree(monitor)
+    return ok
+
+
+def apply_wallpaper(image_path: str) -> tuple[bool, str]:
+    """应用壁纸；返回 (是否成功, 提示)。"""
+    image_path = os.path.abspath(image_path)
+    if not os.path.isfile(image_path):
+        return False, "壁纸文件不存在"
+    # 部分 Windows 11 版本对 SPI 设置 PNG 不刷新，BMP 最稳：自动转一份同名的 .bmp
+    if os.path.splitext(image_path)[1].lower() != ".bmp":
+        bmp_path = os.path.splitext(image_path)[0] + ".bmp"
+        try:
+            Image.open(image_path).convert("RGB").save(bmp_path)
+            image_path = bmp_path
+        except OSError:
+            return False, "壁纸图片无法读取"
+    prev = _current_wallpaper()
+    cfg = load_config()
+    if prev and prev != image_path:
+        cfg["prev_wallpaper"] = prev
+    # 已知问题：只写 Wallpaper 路径时 Explorer 可能不重载；
+    # 标准做法是同时写样式值 + 清 TranscodedWallpaper 缓存。
+    _set_desktop_reg("TileWallpaper", "0")
+    _set_desktop_reg("WallpaperStyle", "10")  # 10 = Fill
+    _clear_wallpaper_cache()
+    spi_ok = _SystemParametersInfoW(
+        SPI_SETDESKWALLPAPER, 0, image_path,
+        SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
+    )
+    # SPI 成功≠桌面刷新（部分 Win11 不重载）；官方 COM 再走一遍兜底刷新
+    com_ok = _apply_via_desktop_wallpaper(image_path)
+    ok = spi_ok or com_ok
+    if ok:
+        save_config(cfg)
+        return True, "壁纸已应用"
+    return False, "系统拒绝了壁纸修改（可能需要管理员权限）"
+
+
+def restore_wallpaper() -> tuple[bool, str]:
+    cfg = load_config()
+    prev = cfg.get("prev_wallpaper") or ""
+    if not prev or not os.path.isfile(prev):
+        return False, "没有可恢复的原壁纸"
+    ok = _SystemParametersInfoW(
+        SPI_SETDESKWALLPAPER, 0, prev,
+        SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
+    )
+    if ok:
+        cfg.pop("prev_wallpaper", None)
+        save_config(cfg)
+        return True, "已恢复原壁纸"
+    return False, "恢复失败"
+
+
+def character_wallpaper(
+    out_path: str, width: int = 1920, height: int = 1080, unique: bool = False
+) -> str:
+    """用当前皮肤的 idle 帧合成一张渐变底壁纸，返回文件路径。"""
+    cfg = load_config()
+    pet = get_pet(cfg.get("pet") or "nyalume")
+    paths = frame_paths(pet, "idle")
+    if not paths:
+        paths = frame_paths(pet, "neutral")
+    if not paths:
+        raise FileNotFoundError("当前皮肤没有可用帧")
+
+    canvas = Image.new("RGBA", (width, height))
+    draw = ImageDraw.Draw(canvas)
+    top = (76, 58, 120)
+    bottom = (216, 134, 168)
+    for y in range(height):
+        t = y / max(1, height - 1)
+        color = tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3))
+        draw.line([(0, y), (width, y)], fill=color + (255,))
+
+    char = Image.open(paths[0]).convert("RGBA")
+    target_h = int(height * 0.78)
+    char = char.resize(
+        (int(char.width * target_h / char.height), target_h), Image.LANCZOS
+    )
+    margin = int(width * 0.05)
+    canvas.paste(char, (width - char.width - margin, height - char.height), char)
+    # 固定文件名（配合 apply_wallpaper 的清缓存刷新，同名也能换图），
+    # 不做自动删除——旧文件被删会让注册表/恢复逻辑指向不存在的文件。
+    out = os.path.abspath(out_path)
+    canvas.convert("RGB").save(out)
+    return out
