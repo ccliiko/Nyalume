@@ -19,6 +19,11 @@ workspace/
 backups/
 skills/
 .u2net/
+downloads/
+
+# 软著申请材料：含身份证号等个人信息，且为生成产物，不入库
+软著申请材料/
+源代码文档.txt
 
 # 本地工具链大二进制（Blender 等），仓库不分发
 designs/**/tools/

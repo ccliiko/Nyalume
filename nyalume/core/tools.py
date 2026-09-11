@@ -175,7 +175,7 @@ def _hook_call_fuse(name: str, arguments: dict, result=None):
     hook["total"] = hook.get("total", 0) + 1
     if get_setting("disc_call_fuse", "1") == "0":
         return None
-    limit = int(os.getenv("NYALUME_TOOL_CALL_LIMIT", "40"))
+    limit = int(os.getenv("NYALUME_TOOL_CALL_LIMIT", "200"))
     if hook["total"] > limit:
         return (
             f"纪律闸门：本轮工具调用已达上限（{limit} 次），已熔断停止。"
