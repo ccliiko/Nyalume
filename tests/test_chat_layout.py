@@ -391,14 +391,16 @@ def test_model_menu_follows_provider_and_empty_chat_deletes_quietly(chat_page):
     page.evaluate("window.confirmMessages = []; window.confirm = m => { if (m) confirmMessages.push(m); return false; }")
     empty = page.locator(".session-item", has_text="新对话")
     empty.hover()
-    empty.get_by_title("删除会话").click()
+    empty.get_by_title("会话与工作目录").click()
+    empty.get_by_role("button", name="删除会话", exact=True).click()
     page.wait_for_timeout(50)
     assert page.evaluate("confirmMessages") == []
     assert any("/api/sessions/empty" in item for item in deletes)
 
     filled = page.locator(".session-item", has_text="答辩准备")
     filled.hover()
-    filled.get_by_title("删除会话").click()
+    filled.get_by_title("会话与工作目录").click()
+    filled.get_by_role("button", name="删除会话", exact=True).click()
     assert "小记忆" in page.evaluate("confirmMessages[0]")
     assert not any("/api/sessions/demo" in item for item in deletes)
     assert not errors

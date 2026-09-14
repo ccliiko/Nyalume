@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -41,7 +42,29 @@ from nyalume.frontends.pet.pets_registry import (
     save_config,
 )
 
-app = FastAPI(title="Nyalume")
+
+def _auto_backup_on_start() -> None:
+    """每次服务启动自动留一份记忆快照（保留最近 20 份）。"""
+    try:
+        path = memory.backup_db()
+        backups = sorted(memory.list_backups(), key=lambda b: b["ts"], reverse=True)
+        for old in backups[20:]:
+            try:
+                os.remove(os.path.join(memory.BACKUP_DIR, old["name"]))
+            except OSError:
+                pass
+        print("auto backup:", os.path.basename(path))
+    except Exception:
+        pass
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    _auto_backup_on_start()
+    yield
+
+
+app = FastAPI(title="Nyalume", lifespan=lifespan)
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 _IMG_EXTS = _IMAGE_EXTS | {".mp4", ".webm", ".mov"}
@@ -1320,22 +1343,6 @@ def open_backup_dir():
     os.makedirs(memory.BACKUP_DIR, exist_ok=True)
     os.startfile(memory.BACKUP_DIR)  # noqa: 单机本地应用，用户主动点击才调用
     return {"ok": True}
-
-
-@app.on_event("startup")
-def _auto_backup_on_start():
-    """每次服务启动自动留一份记忆快照（保留最近 20 份）。"""
-    try:
-        path = memory.backup_db()
-        backups = sorted(memory.list_backups(), key=lambda b: b["ts"], reverse=True)
-        for old in backups[20:]:
-            try:
-                os.remove(os.path.join(memory.BACKUP_DIR, old["name"]))
-            except OSError:
-                pass
-        print("auto backup:", os.path.basename(path))
-    except Exception:
-        pass
 
 
 @app.get("/api/projects")

@@ -106,7 +106,6 @@ class PetWindow:
         self._dock_photos = {}
         self._after = None
         self._bubble_job = None
-        self._fx_job = None
         self._tap_jobs = []
         self._tap_offset = 0
         self._hint_job = None
@@ -358,72 +357,6 @@ class PetWindow:
             self._speech_win = None
             self._speech_font = None
 
-    def emote(self, kind: str, ms: int = 3200) -> None:
-        """动作层：在帧上叠临时效果（红晕/爱心/生气/音符等），不换帧。"""
-        if self._fx_job:
-            self.win.after_cancel(self._fx_job)
-        self.canvas.delete("fx")
-        if self.docked:
-            return
-        c = self.canvas
-        w, h = self.w, self.h
-        rect = self._face_rect()
-        if rect is None:
-            return
-        cx, fy, fr = rect
-        if kind == "love":
-            hy = max(4, fy - fr * 1.6)
-            c.create_text(
-                cx, hy, text="♥",
-                fill="#ff5c7a",
-                font=("Segoe UI Symbol", max(9, int(fr * 0.7))),
-                tags="fx",
-            )
-        if kind == "annoyed":
-            c.create_text(
-                min(w - 14, cx + fr * 1.6), max(4, fy - fr * 1.3), text="💢",
-                font=("Segoe UI Emoji", max(9, int(fr * 0.65))),
-                tags="fx",
-            )
-        if kind == "music":
-            c.create_text(
-                min(w - 14, cx + fr * 1.7), max(4, fy - fr * 1.4), text="♪",
-                fill="#d65a86",
-                font=("Segoe UI Emoji", max(9, int(fr * 0.6))),
-                tags="fx",
-            )
-        if kind == "sleepy":
-            c.create_text(
-                min(w - 14, cx + fr * 1.7), max(4, fy - fr * 1.2), text="💤",
-                font=("Segoe UI Emoji", max(9, int(fr * 0.65))),
-                tags="fx",
-            )
-        self._fx_job = self.win.after(ms, self._clear_fx)
-
-    def _face_rect(self):
-        """脸部中心与半径（红晕/爱心/气泡特效定位）。
-
-        皮肤 manifest 可配 face: {cx, cy, fr}（相对画布的归一化值），
-        没有配置时退回按 alpha 边框粗略估计。
-        """
-        fb = self.pet.get("face") or {}
-        if fb:
-            return (
-                float(fb.get("cx", 0.5)) * self.w,
-                float(fb.get("cy", 0.3)) * self.h,
-                max(8, float(fb.get("fr", 0.06)) * self.w),
-            )
-        box = self._bounds.get(self._last_path)
-        if not box or PILImage is None:
-            return None
-        l, t, r, b = box
-        char_w = r - l
-        char_h = b - t
-        cx = (l + r) / 2
-        fy = t + char_h * 0.30
-        fr = max(8, char_w * 0.10)
-        return cx, fy, fr
-
     def bind_context(self, callback) -> None:
         """绑定右键菜单弹出。"""
         self.canvas.bind("<Button-3>", callback)
@@ -433,8 +366,6 @@ class PetWindow:
             self.win.after_cancel(self._after)
         if self._bubble_job:
             self.win.after_cancel(self._bubble_job)
-        if self._fx_job:
-            self.win.after_cancel(self._fx_job)
         for job in self._tap_jobs:
             try:
                 self.win.after_cancel(job)
@@ -738,10 +669,6 @@ class PetWindow:
     def _clear_hint(self) -> None:
         self._hint_job = None
         self.canvas.delete("hint")
-
-    def _clear_fx(self) -> None:
-        self._fx_job = None
-        self.canvas.delete("fx")
 
     def _draw_bubble(self, text: str) -> None:
         """在宠物头顶画一个圆角感的气泡（Canvas 矩形 + 指向下方的小尾巴）。"""

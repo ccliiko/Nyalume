@@ -36,9 +36,8 @@
   随时从托盘呼出或退出；右键可把角色皮肤合成桌面壁纸 / 自定义壁纸 / 恢复
 - 桌宠互动：拖拽时有“被拎起来”的拉伸/倾斜动画；单击按头/身/腿分区
   弹出互动台词（本地即时、按部位变化，双击才打开对话，避免误触）；
-  摸摸不积累或改变关系数值
-- 摸摸反馈会叠加“动作层”（红晕/爱心/💤 等临时效果），
-  并支持头顶小图标提示（首次提示“摸我/双击聊天”、趴边提示“拖出来”）
+  摸摸不积累或改变关系数值；头顶小图标会提示
+  “摸我/双击聊天”和趴边时的“拖出来”
 - Web 增强：记忆/状态仪表盘（L2 摘要、L3 便签、定时提醒，可页内取消）；
   聊天背景壁纸支持“角色皮肤”或本地上传（记住选择，不依赖后端存储）
 - 桌宠聊天框内置「📊 状态」面板：同 Web 一样查看摘要/便签/提醒
@@ -46,12 +45,21 @@
 
 ## 快速开始
 
-```bash
-cd nanobot
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-pip install -r requirements.txt
-copy .env.example .env        # 然后编辑 .env 填入你的 API Key
+### Windows 便携版（推荐）
+
+只想使用桌宠时，可从 [GitHub Releases](https://github.com/ccliiko/Nyalume/releases/latest)
+下载 Windows x64 压缩包。解压整个 `Nyalume` 文件夹后双击
+`Nyalume.exe`，无需安装 Python；首次启动在设置中填写 API 服务商、
+API Key 和模型。
+
+### 从源码运行
+
+```powershell
+cd Nyalume
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env    # 然后编辑 .env 填入你的 API Key
 ```
 
 命令行聊天：
@@ -82,7 +90,7 @@ python pet.py          # 无控制台双击 start_pet.bat
 ## 测试
 
 ```bash
-pip install -r requirements-dev.txt
+python -m pip install -r requirements.txt -r requirements-dev.txt
 python -m pytest tests -q
 ```
 
