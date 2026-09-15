@@ -21,7 +21,7 @@
 
 帧文件是相对 manifest 的 PNG/GIF（Tk 可读格式），缺省分组会回退到 idle。
 注意：不要把你没有授权分发的素材（游戏/动画角色的官方或二创图）
-提交进仓库；user_pets/ 已被 gitignore，只适合本地演示用。
+提交进仓库或官方发行包；user_pets/ 已被 gitignore，分发素材必须另行完成授权审核。
 """
 
 import json

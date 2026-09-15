@@ -421,6 +421,7 @@ _DISK_WRITE_TOOLS = {
     "file_mkdir",
     "file_move",
     "file_delete",
+    "pdf_edit",
     "file_set_root",
     "set_workspace",
     "web_download",
@@ -890,6 +891,7 @@ def describe_tool(name: str, arguments: dict) -> str:
         "file_mkdir": f"创建目录 {args.get('path')}",
         "file_move": f"移动 {args.get('src')} → {args.get('dst')}",
         "file_delete": f"删除 {args.get('path')}",
+        "pdf_edit": f"编辑 PDF → {args.get('output')}",
         "file_list": f"列目录 {args.get('path') or '.'}",
         "file_read": f"读文件 {args.get('path')}",
         "file_set_root": f"切换操作根 {args.get('path')}",
@@ -961,14 +963,18 @@ def approval_needed(name: str, arguments: dict) -> tuple[bool, str]:
         return True, f"只读模式下请求执行：{desc}"
     if name in ("web_download", "set_workspace"):
         return True, f"涉及联网或改动工作根：{desc}"
-    for key in ("path", "src", "dst", "cwd"):
-        value = arguments.get(key)
-        if not value:
-            continue
-        try:
-            _path_in_workspace(str(value))
-        except ValueError:
-            return True, f"越出当前授权根：{desc}"
+    path_values = [
+        arguments.get(key)
+        for key in ("path", "src", "dst", "cwd", "output")
+    ]
+    file_values = arguments.get("files") or []
+    path_values.extend([file_values] if isinstance(file_values, str) else file_values)
+    for value in path_values:
+        if value:
+            try:
+                _path_in_workspace(str(value))
+            except ValueError:
+                return True, f"越出当前授权根：{desc}"
     return False, ""
 
 
@@ -1137,6 +1143,14 @@ def tool_paths(name: str, arguments: dict) -> list[str]:
     values: list[str] = []
     if name == "file_move":
         values = [str(args.get("src") or ""), str(args.get("dst") or "")]
+    elif name == "pdf_edit":
+        file_values = args.get("files") or []
+        if isinstance(file_values, str):
+            file_values = [file_values]
+        values = [
+            *(str(value) for value in file_values),
+            str(args.get("output") or ""),
+        ]
     elif name in {"file_read", "file_write", "file_mkdir", "file_delete", "file_list"}:
         values = [str(args.get("path") or "")]
     elif name == "run_code":
@@ -1498,6 +1512,157 @@ def _file_delete(path: str) -> str:
         return f"已删除空目录 {_display(target)}"
     except (ValueError, OSError) as e:
         return f"删除失败：{e}"
+
+
+def _pdf_page_numbers(value: str, total: int) -> list[int]:
+    """把 1-based 页码（1-3,5）转成去重后的 0-based 列表。"""
+    pages: list[int] = []
+    for part in (value or "").replace(" ", "").split(","):
+        if not part:
+            continue
+        if "-" in part:
+            bounds = part.split("-", 1)
+            if len(bounds) != 2 or not all(item.isdigit() for item in bounds):
+                raise ValueError(f"页码格式不正确：{part}")
+            start, end = (int(item) for item in bounds)
+            if start > end:
+                raise ValueError(f"页码范围应从小到大：{part}")
+            numbers = range(start, end + 1)
+        elif part.isdigit():
+            numbers = [int(part)]
+        else:
+            raise ValueError(f"页码格式不正确：{part}")
+        for number in numbers:
+            if number < 1 or number > total:
+                raise ValueError(f"页码 {number} 超出范围（共 {total} 页）")
+            index = number - 1
+            if index not in pages:
+                pages.append(index)
+    if not pages:
+        raise ValueError("请提供页码，例如 1-3,5")
+    return pages
+
+
+@register(
+    "pdf_edit",
+    "对工作目录/项目内的 PDF 做页面级编辑：合并多个 PDF、抽取指定页、删除指定页，"
+    "或旋转指定页。页码从 1 开始，支持 1-3,5；始终写入新的 output，不修改源文件。"
+    "本工具不能改写页面中的现有文字，也不能给扫描件做 OCR。",
+    {
+        "operation": {
+            "type": "string",
+            "enum": ["merge", "extract", "delete", "rotate"],
+            "description": "操作：merge 合并 / extract 抽页 / delete 删页 / rotate 旋转",
+        },
+        "files": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "源 PDF 路径列表；合并按列表顺序，其余操作只传一个文件",
+        },
+        "output": {
+            "type": "string",
+            "description": "新 PDF 的相对路径，例如 output/整理后.pdf；不能与源文件同名",
+        },
+        "pages": {
+            "type": "string",
+            "description": "抽页/删页必填；旋转可留空表示全部页，例如 1-3,5",
+        },
+        "degrees": {
+            "type": "integer",
+            "enum": [90, 180, 270],
+            "description": "rotate 的顺时针角度：90、180 或 270",
+        },
+    },
+    required=["operation", "files", "output"],
+)
+def _pdf_edit(
+    operation: str,
+    files: list[str],
+    output: str,
+    pages: str = "",
+    degrees: int = 90,
+) -> str:
+    from pypdf import PdfReader, PdfWriter
+
+    operation = (operation or "").strip().lower()
+    if operation not in {"merge", "extract", "delete", "rotate"}:
+        return "PDF 编辑失败：operation 只能是 merge / extract / delete / rotate"
+    if isinstance(files, str):
+        files = [files]
+    if not files:
+        return "PDF 编辑失败：至少需要一个源 PDF"
+    if operation == "merge" and len(files) < 2:
+        return "PDF 编辑失败：合并至少需要两个 PDF"
+    if operation != "merge" and len(files) != 1:
+        return f"PDF 编辑失败：{operation} 只接受一个源 PDF"
+
+    try:
+        sources = [_path_in_workspace(path) for path in files]
+        target = _path_in_workspace(output)
+        if os.path.splitext(target)[1].lower() != ".pdf":
+            raise ValueError("输出文件必须使用 .pdf 扩展名")
+        for source in sources:
+            if (
+                os.path.splitext(source)[1].lower() != ".pdf"
+                or not os.path.isfile(source)
+            ):
+                raise ValueError(f"源 PDF 不存在：{_display(source)}")
+        if any(
+            os.path.abspath(source) == os.path.abspath(target)
+            for source in sources
+        ):
+            raise ValueError("output 不能与源文件相同")
+        if os.path.exists(target):
+            raise ValueError(f"输出已存在，请换一个文件名：{_display(target)}")
+
+        readers = [PdfReader(source) for source in sources]
+        writer = PdfWriter()
+        if operation == "merge":
+            for reader in readers:
+                for page in reader.pages:
+                    writer.add_page(page)
+        else:
+            reader = readers[0]
+            total = len(reader.pages)
+            if operation == "extract":
+                selected = _pdf_page_numbers(pages, total)
+                for index in selected:
+                    writer.add_page(reader.pages[index])
+            elif operation == "delete":
+                selected = set(_pdf_page_numbers(pages, total))
+                if len(selected) == total:
+                    raise ValueError("不能删除全部页面")
+                for index, page in enumerate(reader.pages):
+                    if index not in selected:
+                        writer.add_page(page)
+            else:
+                if degrees not in (90, 180, 270):
+                    raise ValueError("旋转角度只能是 90、180 或 270")
+                selected = (
+                    set(_pdf_page_numbers(pages, total))
+                    if pages
+                    else set(range(total))
+                )
+                for index, page in enumerate(reader.pages):
+                    if index in selected:
+                        page.rotate(degrees)
+                    writer.add_page(page)
+
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        temporary = target + ".nyalume-" + uuid.uuid4().hex[:8] + ".tmp"
+        try:
+            with open(temporary, "wb") as fh:
+                writer.write(fh)
+            os.replace(temporary, target)
+        finally:
+            if os.path.exists(temporary):
+                os.remove(temporary)
+    except (OSError, ValueError) as exc:
+        return f"PDF 编辑失败：{exc}"
+    except Exception as exc:
+        return f"PDF 编辑失败：{type(exc).__name__}: {exc}"
+
+    return f"PDF 已生成：{_display(target)}（{len(writer.pages)} 页）"
 
 
 # ---------- 受限执行器：像 Codex 一样能跑代码，但限制在项目/工作目录内 ----------

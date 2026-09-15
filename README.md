@@ -1,10 +1,10 @@
-# Nyalume：基于 LLM API 的个人 AI 助手（学习项目）
+# Nyalume：会干活的本地 AI 桌宠
 
-参考 [HKUDS/nanobot](https://github.com/HKUDS/nanobot) 的设计思路，从零实现的最小版
-个人 AI Agent：支持多轮对话、会话记忆、工具调用（函数调用），提供命令行和网页两种入口。
+Nyalume 是面向 Windows 的本地优先个人 AI Agent：以桌宠、网页和命令行三种入口
+提供多轮对话、长期记忆、项目文件操作、代码执行、网页工具和主动提醒。
 
-> 本项目是学习项目，代码全部自己写。目标：能讲清楚
-> "消息进来 → 加载记忆 → 模型决策 → 调工具 → 回写记忆" 这条链路。
+Agent 编排参考 [HKUDS/nanobot](https://github.com/HKUDS/nanobot) 的设计思路，
+核心链路为“消息进入 → 加载记忆 → 模型决策 → 工具执行 → 回写记忆”。
 
 ## 功能
 
@@ -14,8 +14,10 @@
   （被挤出窗口的旧消息按批合并进 SQLite 摘要并注入上下文）→ L3 长期便签
   （攒够轮数后自动归档值得记住的内容，按内容去重，checkpoint 记录进度）
 - 工具调用：当前时间 / 安全计算器 / 带标签的便签存取（可按标签筛选）/
-  网页搜索（必应 RSS，免密钥，国内可直接访问）/
+  项目文件读写与代码执行 / 网页搜索（必应 RSS，免密钥，国内可直接访问）/
   定时提醒（标准 5 段 cron 表达式，按内容落库持久化）
+- PDF 页面编辑：不改动源文件即可合并、抽取、删除或旋转页面；
+  页内文字改写和扫描件 OCR 暂不支持
 - 本地资料检索：导入文档后按段落保存到 SQLite；每轮自动用 FTS5 + BM25
   召回最多 3 段相关原文并标注来源，不需要向量数据库或额外 API
 - 定时主动提醒：聊一句“每天 9 点提醒我喝水”就变成一条 cron 提醒；
@@ -96,12 +98,25 @@ python -m pytest tests -q
 
 ## 当前发行范围
 
-当前版本是纯本地单用户版，不提供注册、登录、云同步和打赏。对话、记忆、卡片、
-壁纸设置与模型 API Key 都保存在用户电脑上；中央账号服务代码仅供后续开发，不参与启动。
+当前公开版本是纯本地单用户版，不提供注册、登录和云同步。对话、记忆、卡片、
+壁纸设置与模型 API Key 都保存在用户电脑上；`cloud_service/` 是独立部署组件，
+默认不参与桌面版启动。
 
 测试不依赖 API Key，也不碰真实 `agent.db`（conftest 会把 `MEMORY_DB`
 指到临时文件）；覆盖 cron 解析、提醒去重、计算器安全、便签/会话/摘要/
 每日 Nyalume 唯一性、人设注册表等核心逻辑。
+
+## 许可、隐私与素材
+
+Nyalume 是**源码可见的商业软件，不是开源软件**。个人非商业评估以
+[LICENSE](LICENSE) 为准；官方发行版的安装和使用同时受 [EULA](EULA.md) 约束。
+
+- 本地数据、API 调用和删除方式：[PRIVACY.md](PRIVACY.md)
+- Python 依赖与外部服务声明：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+- 角色图片、生成模型和商业发行状态：[ASSET_PROVENANCE.md](ASSET_PROVENANCE.md)
+
+当前 Nyalume 角色帧与每日卡片的旧生成链许可记录不完整，**不得直接用于付费发行**。
+仓库中的新工作流已切换到许可清晰的模型，但商业包仍需用新工作流从文字设定重新生成素材。
 
 ## 本地运行追踪（Trace）
 
@@ -167,7 +182,7 @@ nyalume/                     项目包
         └── pets_registry.py  皮肤注册表（manifest/动画帧）
 cli.py / server.py / pet.py  仓库根启动入口（薄封装）
 start_pet.bat              双击启动桌宠（pythonw 无控制台）
-user_pets/                 用户自备皮肤（gitignore，仅本地演示）
+user_pets/                 用户自备皮肤（gitignore，不随源码仓库分发）
 agent.db                   SQLite 数据（默认放在仓库根，可用 MEMORY_DB 覆盖）
 ```
 

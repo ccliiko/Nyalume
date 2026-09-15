@@ -46,6 +46,9 @@ finally {
 }
 
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "README.txt") -Destination $distDir
+foreach ($notice in @("LICENSE", "EULA.md", "PRIVACY.md", "THIRD_PARTY_NOTICES.md", "ASSET_PROVENANCE.md")) {
+    Copy-Item -LiteralPath (Join-Path $projectRoot $notice) -Destination $distDir
+}
 Compress-Archive -LiteralPath $distDir -DestinationPath $zipPath -CompressionLevel Optimal
 
 $zip = Get-Item -LiteralPath $zipPath

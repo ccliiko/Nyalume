@@ -15,6 +15,7 @@ def test_tool_schemas_include_reminder_tools():
     assert "cancel_reminder" in names
     assert "delete_note" in names
     assert "web_search" in names
+    assert "pdf_edit" in names
 
 
 def test_web_search_prefers_the_complete_title_and_drops_unrelated_baike(monkeypatch):
@@ -151,6 +152,104 @@ def test_scanned_pdf_without_text_layer_is_skipped(tmp_path):
     result = tools.execute_tool("add_documents", {"path": str(pdf_path)})
     assert "导入失败" in result
     assert "扫描版" in result
+
+
+def test_pdf_edit_page_operations(tmp_path, monkeypatch):
+    """PDF 工具能合并、抽页、删页和旋转，且不覆盖已有文件。"""
+    from pypdf import PdfReader, PdfWriter
+
+    monkeypatch.setenv("AGENT_WORKSPACE", str(tmp_path))
+    tools.set_permission_mode("workspace")
+    first = PdfWriter()
+    first.add_blank_page(width=100, height=200)
+    first.add_blank_page(width=120, height=200)
+    with open(tmp_path / "a.pdf", "wb") as fh:
+        first.write(fh)
+    second = PdfWriter()
+    second.add_blank_page(width=300, height=200)
+    with open(tmp_path / "b.pdf", "wb") as fh:
+        second.write(fh)
+
+    merged = tools.execute_tool(
+        "pdf_edit",
+        {
+            "operation": "merge",
+            "files": ["a.pdf", "b.pdf"],
+            "output": "out/merged.pdf",
+        },
+    )
+    assert "3 页" in merged
+    assert len(PdfReader(tmp_path / "out" / "merged.pdf").pages) == 3
+
+    extracted = tools.execute_tool(
+        "pdf_edit",
+        {
+            "operation": "extract",
+            "files": ["out/merged.pdf"],
+            "output": "out/extracted.pdf",
+            "pages": "3,1",
+        },
+    )
+    assert "2 页" in extracted
+    extracted_pages = PdfReader(tmp_path / "out" / "extracted.pdf").pages
+    assert [float(page.mediabox.width) for page in extracted_pages] == [300.0, 100.0]
+
+    deleted = tools.execute_tool(
+        "pdf_edit",
+        {
+            "operation": "delete",
+            "files": ["out/merged.pdf"],
+            "output": "out/deleted.pdf",
+            "pages": "2",
+        },
+    )
+    assert "2 页" in deleted
+
+    rotated = tools.execute_tool(
+        "pdf_edit",
+        {
+            "operation": "rotate",
+            "files": ["a.pdf"],
+            "output": "out/rotated.pdf",
+            "pages": "1",
+            "degrees": 90,
+        },
+    )
+    assert "2 页" in rotated
+    rotated_pages = PdfReader(tmp_path / "out" / "rotated.pdf").pages
+    assert rotated_pages[0].rotation == 90
+    assert rotated_pages[1].rotation == 0
+
+    exists = tools.execute_tool(
+        "pdf_edit",
+        {
+            "operation": "merge",
+            "files": ["a.pdf", "b.pdf"],
+            "output": "out/merged.pdf",
+        },
+    )
+    assert "输出已存在" in exists
+
+
+def test_pdf_edit_obeys_permissions_and_exposes_paths(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_WORKSPACE", str(tmp_path))
+    tools.set_permission_mode("read_only")
+    args = {
+        "operation": "rotate",
+        "files": ["a.pdf"],
+        "output": "out.pdf",
+    }
+    assert "只读" in tools.execute_tool("pdf_edit", args)
+    tools.set_permission_mode("workspace")
+    assert tools.tool_paths("pdf_edit", args) == [
+        str(tmp_path / "a.pdf"),
+        str(tmp_path / "out.pdf"),
+    ]
+    outside = tmp_path.parent / "outside.pdf"
+    need, reason = tools.approval_needed(
+        "pdf_edit", {**args, "output": str(outside)}
+    )
+    assert need is True and "越出" in reason
 
 
 def test_workspace_file_tools_roundtrip(tmp_path):

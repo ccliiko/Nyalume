@@ -1,16 +1,21 @@
 # Nyalume 桌宠表情帧流水线
 
-把“同一个人设生成多个表情帧”做成可复现的本地 ComfyUI 管线。
+把“同一个原创人设生成多个表情帧”做成可复现的本地 ComfyUI 管线。
 生成的工作流与提示词都在本目录（tracked）；生成的图片素材只写进
-gitignore 的 `user_pets/`，不进仓库。
+gitignore 的 `user_pets/`，不进源码仓库。
+
+> 商业发行注意：2026-09-15 之前的素材使用过许可记录不完整的 StarSea pastel v5、
+> z3 画风 LoRA 和鬼针草 LoRA，不能直接进入付费发行包。当前默认工作流已改用
+> 许可明确允许商业使用的 Animagine XL 4.0 Opt，并移除全部 LoRA；旧图片仍须重新生成。
+> 完整结论见根目录 `ASSET_PROVENANCE.md`。
 
 ## 文件
 
-- `prompts/q_BA_prompt.txt`：v5-1 定稿提示词（站姿立绘、银白侧马尾、
+- `prompts/q_BA_prompt.txt`：商业重生成提示词（站姿立绘、银白侧马尾、
   橘子发饰、粉白哥特裙、纯白丝袜、左腿腿环、深蓝平涂底，所有权重 ≤1.5）
-- `workflows/q_BA_workflow_api.json`：double_lora_BA API 工作流
-  （StarSea checkpoint → z3画风 0.4 → 鬼针草-Illustrious NoobAI 0.8 →
-  cfg8/dpmpp_2m/karras → 脸/手 FaceDetailer → SaveImage）
+- `workflows/q_BA_workflow_api.json`：商业素材候选 API 工作流
+  （Animagine XL 4.0 Opt → cfg5/Euler a/28 steps → 脸/手 FaceDetailer → SaveImage，
+  不加载第三方 LoRA）
 - `make_moods.py`：按表情词生成 6 份表情工作流
   （distant/grumpy/neutral/happy/love/working）
 - `comfy_submit.py`：把 API 工作流 POST 到 127.0.0.1:8188 队列尾
@@ -22,8 +27,10 @@ gitignore 的 `user_pets/`，不进仓库。
 
 1. 本机 ComfyUI（aki 整合包）正在运行，API 端口 8188；
 2. 模型就位：
-   - checkpoint：`绘星海_清新风格 StarSea_pastel _v5.safetensors`
-   - LoRA：`z3画风_illv0.1.safetensors`、`鬼针草-Illustriou_NoobAI_1.0.safetensors`
+   - checkpoint：`animagine-xl-4.0-opt.safetensors`
+   - 上游与许可证：<https://huggingface.co/cagliostrolab/animagine-xl-4.0>
+     （CreativeML Open RAIL++-M，模型卡明确允许商业使用）
+   - 不使用第三方 LoRA
    - ultralytics：`bbox/face_yolov8m.pt`、`bbox/hand_yolov8s.pt`
 3. Python 依赖（项目 .venv）：
    `pip install pillow numpy scipy`
@@ -57,7 +64,9 @@ python tools/nyalume_pipeline/pet_skin_cut.py \
 - 表情词只在 `looking at viewer, ` 之后插入，姿势/服装/头发标签不动，
   保证 6 帧共用同一构图种子（默认 2026097002）。
 
-## 版权说明
+## 版权与溯源
 
-角色与提示词均为本项目的原创产出；生成的 PNG 属于本地演示素材，
-放在 `user_pets/`（gitignore），随仓库分发的只有文字/代码管线。
+角色概念和提示词由本项目维护，但模型许可不会自动保证输出不侵犯第三方权利。
+商业版必须从文字设定重新生成，不使用旧图片作参考，并保存模型文件 SHA256、
+许可证副本、完整工作流、seed 和人工修改记录。生成的 PNG 放在 `user_pets/`
+（gitignore）；是否进入发行包由根目录 `ASSET_PROVENANCE.md` 的状态决定。

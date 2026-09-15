@@ -1,4 +1,4 @@
-Nyalume Q 版待机帧（double_lora_BA v5：站姿立绘、小橘子发饰、权重≤1.5）
+Nyalume Q 版待机帧（Animagine XL 4.0 Opt：原创角色、无 LoRA、权重≤1.5）
 尺寸：1024x1024（方形）
 
 正向：
@@ -9,14 +9,14 @@ soft cel shading, clean line art, thin black outlines, flat soft colors, cute mo
 deep blue chroma key background, solid blue backdrop,
 no gradient, no shading, no shadow, no props, empty background,
 
-1girl, solo, small body, large head, short stature,
+1girl, solo, original character, young adult, safe, small body, large head, short stature,
 full body, standing upright, straight standing pose,
 both feet on the ground, front view, looking at viewer,
 (right leg slightly bent at knee:1.2), legs together, natural pose,
 (silver hair:1.5), pure silver-white hair, white hair, very long hair,
 side ponytail, single side ponytail, hair over shoulder,
 no blue tint in hair, bright silver-white hair,
-loli, petite, cute face,
+petite, cute face,
 (pure white and pink gothic lolita dress:1.5), white gothic lolita dress,
 mostly white fabric, white off-shoulder dress,
 pink frills, pink lace trim, pink ribbons, pink bows,
@@ -37,7 +37,7 @@ three legs, extra legs, mutated legs, contorted pose, lying, lying down,
 reclining, sitting on object, prone, on the ground,
 giant orange, large orange object, orange fruit on body, orange object,
 props, floor objects, heterochromia, brown hair, two leg garters,
-adult, muscular, tall,
+child, underage, muscular, tall,
 (blue hair:1.5), blue-tinted hair, blue hair highlights, blue hair color,
 blue reflections in hair, ambient blue light on character,
 (blue dress:1.5), navy dress, dark blue dress, blue clothing,

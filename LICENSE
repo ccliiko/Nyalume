@@ -1,0 +1,48 @@
+Nyalume Proprietary Source License 1.0
+
+Copyright (c) 2026 ccliiko. All rights reserved.
+
+Nyalume is source-available commercial software, not open-source software.
+
+1. Personal evaluation license
+
+You may view this source code, run an unmodified copy, and make private
+modifications solely for your own personal, non-commercial evaluation.
+
+2. Restrictions
+
+Without prior written permission from the copyright holder, you may not:
+
+- sell, sublicense, redistribute, or publicly host the software or a modified
+  version of it;
+- use the source code, original characters, artwork, name, or branding in a
+  commercial product or service;
+- remove or alter copyright, license, or attribution notices; or
+- represent a modified version as an official Nyalume release.
+
+3. Commercial and distributed releases
+
+Official binary releases and paid licenses are governed by the accompanying
+End User License Agreement (EULA.md) and the terms shown at purchase. Any
+other commercial use requires a separate written license from the copyright
+holder.
+
+4. Third-party material
+
+This license does not replace or limit the licenses of third-party software,
+services, models, or user-supplied assets. See THIRD_PARTY_NOTICES.md and
+ASSET_PROVENANCE.md. Where a third-party license grants rights that conflict
+with this license, that third-party license controls for that component only.
+
+5. No trademark or patent license
+
+No right to use the Nyalume name, logo, character identity, or other brand
+features is granted. No patent license is granted except as required by law.
+
+6. Disclaimer
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE, TITLE, AND NON-INFRINGEMENT. TO THE MAXIMUM EXTENT PERMITTED BY LAW,
+THE COPYRIGHT HOLDER IS NOT LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY
+ARISING FROM THE SOFTWARE OR ITS USE.

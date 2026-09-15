@@ -14,7 +14,7 @@ REPO_ROOT = ROOT.parents[1]  # tools/nyalume_pipeline -> tools -> 仓库根
 BASE = ROOT / "workflows" / "q_BA_workflow_api.json"
 OUT = REPO_ROOT / "user_pets" / "nyalume" / "art" / "moods"
 
-SEED = 2026097002  # 与 v5-1 同一姿势种子，保证构图一致
+SEED = 2026097002  # 商业素材重生成的固定构图种子
 DARK_BG = (
     "(flat solid dark royal blue background:1.5), dark solid blue chroma key backdrop, "
     "uniform deep blue background, no gradient, no vignette, no shading, no shadow"
