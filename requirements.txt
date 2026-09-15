@@ -8,6 +8,7 @@ pystray>=0.19.5
 pywebview>=5.0
 python-multipart>=0.0.9
 pypdf>=6.0
+pypdfium2>=5.0,<6
 python-docx>=1.1
 openpyxl>=3.1
 python-pptx>=1.0

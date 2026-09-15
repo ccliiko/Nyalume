@@ -16,6 +16,8 @@ def test_tool_schemas_include_reminder_tools():
     assert "delete_note" in names
     assert "web_search" in names
     assert "pdf_edit" in names
+    assert "pdf_ocr" in names
+    assert "office_edit" in names
 
 
 def test_web_search_prefers_the_complete_title_and_drops_unrelated_baike(monkeypatch):
@@ -250,6 +252,92 @@ def test_pdf_edit_obeys_permissions_and_exposes_paths(tmp_path, monkeypatch):
         "pdf_edit", {**args, "output": str(outside)}
     )
     assert need is True and "越出" in reason
+
+
+def test_office_edit_common_operations(tmp_path, monkeypatch):
+    from docx import Document
+    from openpyxl import Workbook, load_workbook
+    from pptx import Presentation
+
+    monkeypatch.setenv("AGENT_WORKSPACE", str(tmp_path))
+    tools.set_permission_mode("workspace")
+
+    document = Document()
+    paragraph = document.add_paragraph()
+    paragraph.add_run("旧标")
+    paragraph.add_run("题")
+    document.save(tmp_path / "source.docx")
+    result = tools.execute_tool(
+        "office_edit",
+        {
+            "operation": "docx_replace",
+            "path": "source.docx",
+            "output": "edited.docx",
+            "find": "旧标题",
+            "replace": "新标题",
+        },
+    )
+    assert "修改 1 处" in result
+    assert Document(tmp_path / "edited.docx").paragraphs[0].text == "新标题"
+
+    workbook = Workbook()
+    workbook.save(tmp_path / "source.xlsx")
+    result = tools.execute_tool(
+        "office_edit",
+        {
+            "operation": "xlsx_set",
+            "path": "source.xlsx",
+            "output": "edited.xlsx",
+            "changes": {"Sheet!A1": "项目", "B2": 100},
+        },
+    )
+    assert "修改 2 处" in result
+    edited_workbook = load_workbook(tmp_path / "edited.xlsx", data_only=False)
+    try:
+        assert edited_workbook["Sheet"]["A1"].value == "项目"
+        assert edited_workbook["Sheet"]["B2"].value == 100
+    finally:
+        edited_workbook.close()
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[1])
+    slide.shapes.title.text = "旧标题"
+    presentation.save(tmp_path / "source.pptx")
+    result = tools.execute_tool(
+        "office_edit",
+        {
+            "operation": "pptx_replace",
+            "path": "source.pptx",
+            "output": "edited.pptx",
+            "find": "旧标题",
+            "replace": "新标题",
+        },
+    )
+    assert "修改 1 处" in result
+    assert Presentation(tmp_path / "edited.pptx").slides[0].shapes.title.text == "新标题"
+
+
+def test_pdf_ocr_scanned_page_and_approval(tmp_path, monkeypatch):
+    from pypdf import PdfWriter
+
+    monkeypatch.setenv("AGENT_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(tools, "vision_configured", lambda: True)
+    monkeypatch.setattr(tools, "_vision_describe", lambda _path, _question: "识别结果")
+    tools.set_permission_mode("workspace")
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    with open(tmp_path / "scan.pdf", "wb") as fh:
+        writer.write(fh)
+
+    args = {"path": "scan.pdf", "output": "scan.md"}
+    need, reason = tools.approval_needed("pdf_ocr", args)
+    assert need is True and "视觉模型" in reason
+    assert tools.approval_rememberable("pdf_ocr") is False
+    result = tools.execute_tool("pdf_ocr", args)
+    assert "1 页使用视觉 OCR" in result
+    assert "## 第 1 页\n\n识别结果" in (tmp_path / "scan.md").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_workspace_file_tools_roundtrip(tmp_path):

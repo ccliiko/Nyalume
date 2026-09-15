@@ -422,6 +422,8 @@ _DISK_WRITE_TOOLS = {
     "file_move",
     "file_delete",
     "pdf_edit",
+    "pdf_ocr",
+    "office_edit",
     "file_set_root",
     "set_workspace",
     "web_download",
@@ -892,6 +894,8 @@ def describe_tool(name: str, arguments: dict) -> str:
         "file_move": f"移动 {args.get('src')} → {args.get('dst')}",
         "file_delete": f"删除 {args.get('path')}",
         "pdf_edit": f"编辑 PDF → {args.get('output')}",
+        "pdf_ocr": f"识别 PDF 文字 {args.get('path')} → {args.get('output')}",
+        "office_edit": f"编辑 Office 文档 {args.get('path')} → {args.get('output')}",
         "file_list": f"列目录 {args.get('path') or '.'}",
         "file_read": f"读文件 {args.get('path')}",
         "file_set_root": f"切换操作根 {args.get('path')}",
@@ -928,6 +932,8 @@ def approval_needed(name: str, arguments: dict) -> tuple[bool, str]:
     label = str((arguments or {}).get("label") or "")
     if name == "skill_install_url":
         return True, "将从网上下载并安装新的 Skill，每次都要确认：" + describe_tool(name, arguments)
+    if name == "pdf_ocr":
+        return True, "扫描页可能发送给已配置的视觉模型，每次都要确认：" + describe_tool(name, arguments)
     if name == "browser_click" and re.search(
         r"下单|购买|支付|付款|转账|发送|发布|删除|注销|退款|订阅|开通|"
         r"确认|确定|提交|保存|上传|登录|注册|"
@@ -980,7 +986,12 @@ def approval_needed(name: str, arguments: dict) -> tuple[bool, str]:
 
 def approval_rememberable(tool_name: str) -> bool:
     """网页交互可能改变外部状态，不能用“同意并记住”永久绕过审批。"""
-    return tool_name not in {"browser_click", "browser_fill", "skill_install_url"}
+    return tool_name not in {
+        "browser_click",
+        "browser_fill",
+        "pdf_ocr",
+        "skill_install_url",
+    }
 
 
 def set_session_context(session_id: str) -> None:
@@ -1151,6 +1162,8 @@ def tool_paths(name: str, arguments: dict) -> list[str]:
             *(str(value) for value in file_values),
             str(args.get("output") or ""),
         ]
+    elif name in {"pdf_ocr", "office_edit"}:
+        values = [str(args.get("path") or ""), str(args.get("output") or "")]
     elif name in {"file_read", "file_write", "file_mkdir", "file_delete", "file_list"}:
         values = [str(args.get("path") or "")]
     elif name == "run_code":
@@ -1663,6 +1676,282 @@ def _pdf_edit(
         return f"PDF 编辑失败：{type(exc).__name__}: {exc}"
 
     return f"PDF 已生成：{_display(target)}（{len(writer.pages)} 页）"
+
+
+def _replace_in_runs(runs, old: str, new: str) -> int:
+    """跨相邻文本 run 替换，尽量保留首尾 run 的原格式。"""
+    combined = "".join(run.text for run in runs)
+    search_end = len(combined)
+    count = 0
+    while True:
+        start = combined.rfind(old, 0, search_end)
+        if start < 0:
+            return count
+        end = start + len(old)
+        offset = 0
+        first = last = None
+        first_offset = last_offset = 0
+        for index, run in enumerate(runs):
+            run_end = offset + len(run.text)
+            if first is None and start < run_end:
+                first, first_offset = index, start - offset
+            if first is not None and end <= run_end:
+                last, last_offset = index, end - offset
+                break
+            offset = run_end
+        if first is None or last is None:
+            return count
+        prefix = runs[first].text[:first_offset]
+        suffix = runs[last].text[last_offset:]
+        if first == last:
+            runs[first].text = prefix + new + suffix
+        else:
+            runs[first].text = prefix + new
+            for index in range(first + 1, last):
+                runs[index].text = ""
+            runs[last].text = suffix
+        count += 1
+        search_end = start
+        combined = "".join(run.text for run in runs)
+
+
+@register(
+    "office_edit",
+    "编辑工作目录/项目内的 Office 文档并另存新文件。docx_replace 和 pptx_replace "
+    "用于精确替换文字；xlsx_set 按 Sheet!A1 写入单元格。保留原文件，不能处理旧版 "
+    ".doc/.xls/.ppt。",
+    {
+        "operation": {
+            "type": "string",
+            "enum": ["docx_replace", "pptx_replace", "xlsx_set"],
+            "description": "Word/PPT 文字替换，或 Excel 单元格写入",
+        },
+        "path": {"type": "string", "description": "源 Office 文档路径"},
+        "output": {"type": "string", "description": "新文档路径，扩展名须与源文件相同"},
+        "find": {"type": "string", "description": "Word/PPT 中要查找的精确文字"},
+        "replace": {"type": "string", "description": "Word/PPT 的替换文字，可为空"},
+        "changes": {
+            "type": "object",
+            "description": "Excel 修改，例如 {\"Sheet1!A1\": \"项目\", \"B2\": 100}",
+        },
+    },
+    required=["operation", "path", "output"],
+)
+def _office_edit(
+    operation: str,
+    path: str,
+    output: str,
+    find: str = "",
+    replace: str = "",
+    changes: dict | None = None,
+) -> str:
+    operation = (operation or "").strip().lower()
+    extensions = {
+        "docx_replace": ".docx",
+        "pptx_replace": ".pptx",
+        "xlsx_set": ".xlsx",
+    }
+    if operation not in extensions:
+        return "Office 编辑失败：operation 只能是 docx_replace / pptx_replace / xlsx_set"
+    try:
+        source = _path_in_workspace(path)
+        target = _path_in_workspace(output)
+        extension = extensions[operation]
+        if not os.path.isfile(source) or os.path.splitext(source)[1].lower() != extension:
+            raise ValueError(f"源文件不存在或不是 {extension}：{_display(source)}")
+        if os.path.splitext(target)[1].lower() != extension:
+            raise ValueError(f"输出文件必须使用 {extension} 扩展名")
+        if os.path.abspath(source) == os.path.abspath(target):
+            raise ValueError("output 不能与源文件相同")
+        if os.path.exists(target):
+            raise ValueError(f"输出已存在，请换一个文件名：{_display(target)}")
+        if operation.endswith("_replace") and not find:
+            raise ValueError("请提供非空的 find")
+        if operation == "xlsx_set" and not isinstance(changes, dict):
+            raise ValueError("请用 changes 提供至少一个单元格修改")
+
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        temporary = target + ".nyalume-" + uuid.uuid4().hex[:8] + ".tmp"
+        count = 0
+        try:
+            if operation == "docx_replace":
+                from docx import Document
+
+                document = Document(source)
+                paragraphs = list(document.paragraphs)
+                for table in document.tables:
+                    for row in table.rows:
+                        for cell in row.cells:
+                            paragraphs.extend(cell.paragraphs)
+                count = sum(
+                    _replace_in_runs(paragraph.runs, find, replace)
+                    for paragraph in paragraphs
+                )
+                if count:
+                    document.save(temporary)
+            elif operation == "pptx_replace":
+                from pptx import Presentation
+
+                presentation = Presentation(source)
+                paragraphs = []
+                for slide in presentation.slides:
+                    for shape in slide.shapes:
+                        if getattr(shape, "has_text_frame", False):
+                            paragraphs.extend(shape.text_frame.paragraphs)
+                        if getattr(shape, "has_table", False):
+                            for row in shape.table.rows:
+                                for cell in row.cells:
+                                    paragraphs.extend(cell.text_frame.paragraphs)
+                count = sum(
+                    _replace_in_runs(paragraph.runs, find, replace)
+                    for paragraph in paragraphs
+                )
+                if count:
+                    presentation.save(temporary)
+            else:
+                from openpyxl import load_workbook
+
+                if not changes:
+                    raise ValueError("请用 changes 提供至少一个单元格修改")
+                workbook = load_workbook(source)
+                try:
+                    for address, value in changes.items():
+                        if not isinstance(address, str):
+                            raise ValueError("changes 的键必须是 Sheet!A1 或 A1 形式的文本")
+                        if not isinstance(value, (str, int, float, bool, type(None))):
+                            raise ValueError(f"单元格 {address} 的值必须是文本、数字、布尔值或 null")
+                        if "!" in address:
+                            sheet_name, cell_address = address.rsplit("!", 1)
+                        else:
+                            sheet_name, cell_address = workbook.active.title, address
+                        if sheet_name not in workbook.sheetnames:
+                            raise ValueError(f"工作表不存在：{sheet_name}")
+                        if not re.fullmatch(r"[A-Za-z]{1,3}[1-9]\d*", cell_address):
+                            raise ValueError(f"单元格地址不正确：{address}")
+                        workbook[sheet_name][cell_address] = value
+                        count += 1
+                    workbook.save(temporary)
+                finally:
+                    workbook.close()
+            if not count:
+                return f"没有找到「{find}」，未生成文件"
+            os.replace(temporary, target)
+        finally:
+            if os.path.exists(temporary):
+                os.remove(temporary)
+    except (OSError, ValueError) as exc:
+        return f"Office 编辑失败：{exc}"
+    except Exception as exc:
+        return f"Office 编辑失败：{type(exc).__name__}: {exc}"
+
+    return f"Office 文档已生成：{_display(target)}（修改 {count} 处）"
+
+
+@register(
+    "pdf_ocr",
+    "把 PDF 文字识别为 Markdown 或纯文本。已有文字层的页面直接提取；扫描页会渲染成图片，"
+    "并发送给用户已配置的视觉模型识别，因此每次都要审批。一次最多 10 页；OCR 结果可能"
+    "有误，重要内容必须人工复核。",
+    {
+        "path": {"type": "string", "description": "源 PDF 路径"},
+        "output": {"type": "string", "description": "输出 .md 或 .txt 路径"},
+        "pages": {
+            "type": "string",
+            "description": "可选页码，例如 1-3,5；留空表示全文（但不能超过 10 页）",
+        },
+    },
+    required=["path", "output"],
+)
+def _pdf_ocr(path: str, output: str, pages: str = "") -> str:
+    from pypdf import PdfReader
+
+    try:
+        source = _path_in_workspace(path)
+        target = _path_in_workspace(output)
+        if not os.path.isfile(source) or os.path.splitext(source)[1].lower() != ".pdf":
+            raise ValueError(f"源 PDF 不存在：{_display(source)}")
+        if os.path.splitext(target)[1].lower() not in {".md", ".txt"}:
+            raise ValueError("输出文件必须使用 .md 或 .txt 扩展名")
+        if os.path.exists(target):
+            raise ValueError(f"输出已存在，请换一个文件名：{_display(target)}")
+
+        reader = PdfReader(source)
+        total = len(reader.pages)
+        if total < 1:
+            raise ValueError("PDF 没有页面")
+        selected = _pdf_page_numbers(pages, total) if pages else list(range(total))
+        if len(selected) > 10:
+            raise ValueError(f"一次最多识别 10 页；当前选择了 {len(selected)} 页，请用 pages 分批")
+
+        extracted: dict[int, str] = {}
+        scanned: list[int] = []
+        for index in selected:
+            _check_run_control()
+            try:
+                text = (reader.pages[index].extract_text() or "").strip()
+            except Exception:
+                text = ""
+            if len(re.sub(r"\s+", "", text)) >= 20:
+                extracted[index] = text
+            else:
+                scanned.append(index)
+        if scanned and not vision_configured():
+            raise ValueError("检测到扫描页，但尚未配置可看图的视觉模型")
+
+        temporary_dir = os.path.join(
+            _base_root(), ".nyalume", "tmp", "ocr-" + uuid.uuid4().hex[:8]
+        )
+        if scanned:
+            import pypdfium2 as pdfium
+
+            os.makedirs(temporary_dir, exist_ok=True)
+            pdf = None
+            try:
+                pdf = pdfium.PdfDocument(source)
+                for index in scanned:
+                    _check_run_control()
+                    page = pdf[index]
+                    bitmap = page.render(scale=2)
+                    image_path = os.path.join(temporary_dir, f"page-{index + 1}.png")
+                    try:
+                        bitmap.to_pil().save(image_path, format="PNG")
+                    finally:
+                        bitmap.close()
+                        page.close()
+                    text = _vision_describe(
+                        image_path,
+                        "你是 OCR 工具。只逐字转写页面中实际可见的文字，保留段落和列表结构；"
+                        "不要解释、概括或补写。无法辨认的位置写 [无法辨认]。",
+                    ).strip()
+                    if text.startswith(
+                        ("看图失败", "Nyalume 还不能", "图片不存在", "（视觉模型没有")
+                    ):
+                        raise ValueError(f"第 {index + 1} 页识别失败：{text}")
+                    extracted[index] = text
+            finally:
+                if pdf is not None:
+                    pdf.close()
+                shutil.rmtree(temporary_dir, ignore_errors=True)
+
+        markdown = os.path.splitext(target)[1].lower() == ".md"
+        chunks = []
+        for index in selected:
+            heading = f"## 第 {index + 1} 页" if markdown else f"===== 第 {index + 1} 页 ====="
+            chunks.append(f"{heading}\n\n{extracted.get(index, '')}".rstrip())
+        body = "\n\n".join(chunks) + "\n"
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        _record_undo("write", target)
+    except (OSError, ValueError) as exc:
+        return f"PDF OCR 失败：{exc}"
+    except Exception as exc:
+        return f"PDF OCR 失败：{type(exc).__name__}: {exc}"
+
+    return (
+        f"PDF 文字已保存：{_display(target)}（{len(selected)} 页，"
+        f"其中 {len(scanned)} 页使用视觉 OCR；请人工复核重要内容）"
+    )
 
 
 # ---------- 受限执行器：像 Codex 一样能跑代码，但限制在项目/工作目录内 ----------

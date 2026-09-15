@@ -16,9 +16,10 @@ Nyalume 自有代码受根目录 [LICENSE](LICENSE) 约束。下列第三方组�
 | pywebview | 桌面 WebView 窗口 | BSD-3-Clause | <https://github.com/r0x0r/pywebview> |
 | python-multipart | 文件上传解析 | Apache-2.0 | <https://github.com/Kludex/python-multipart> |
 | pypdf | PDF 文本读取与页面编辑 | BSD-3-Clause | <https://github.com/py-pdf/pypdf> |
-| python-docx | Word 文档读取 | MIT | <https://github.com/python-openxml/python-docx> |
-| openpyxl | Excel 文档读取 | MIT | <https://foss.heptapod.net/openpyxl/openpyxl> |
-| python-pptx | PowerPoint 文档读取 | MIT | <https://github.com/scanny/python-pptx> |
+| pypdfium2 / PDFium | 扫描 PDF 页面渲染 | Apache-2.0 或 BSD-3-Clause；PDFium 及其传递组件许可证随 wheel 和发行包提供 | <https://github.com/pypdfium2-team/pypdfium2> |
+| python-docx | Word 文档读取与编辑 | MIT | <https://github.com/python-openxml/python-docx> |
+| openpyxl | Excel 文档读取与编辑 | MIT | <https://foss.heptapod.net/openpyxl/openpyxl> |
+| python-pptx | PowerPoint 文档读取与编辑 | MIT | <https://github.com/scanny/python-pptx> |
 | pywin32 | Windows 系统接口 | PSF-2.0 | <https://github.com/mhammond/pywin32> |
 | tkinterdnd2 | 文件拖放 | MIT | <https://github.com/Eliav2/tkinterdnd2> |
 | Playwright Python | 网页自动化 | Apache-2.0 | <https://github.com/microsoft/playwright-python> |

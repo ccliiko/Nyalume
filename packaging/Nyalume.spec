@@ -31,7 +31,7 @@ datas.extend((str(PET_DIR / name), "user_pets/nyalume") for name in sorted(pet_f
 
 binaries = []
 hiddenimports = []
-for package in ("webview", "tkinterdnd2"):
+for package in ("webview", "tkinterdnd2", "pypdfium2", "pypdfium2_raw"):
     package_datas, package_binaries, package_imports = collect_all(package)
     datas.extend(package_datas)
     binaries.extend(package_binaries)
