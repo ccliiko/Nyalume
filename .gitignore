@@ -9,21 +9,16 @@ agent.db
 *.db
 *.db-wal
 *.db-shm
-nyalume_blessings.md
 build/
 dist/
 release/
 
-# 本地运行数据：可能含个人隐私（聊天记录/导入文档/本地路径），不入库
+# 本地运行数据：程序在仓库旁生成的会话、备份与下载内容，不入库
 workspace/
 backups/
 skills/
 .u2net/
 downloads/
-
-# 软著申请材料：含身份证号等个人信息，且为生成产物，不入库
-软著申请材料/
-源代码文档.txt
 
 # 本地工具链大二进制（Blender 等），仓库不分发
 designs/**/tools/
@@ -44,6 +39,3 @@ dist/
 
 # 个人文档（教程、调试记录、设计笔记）只留本地，不公开发布
 /docs/
-
-# 自拍照片（用户数据，不入库）
-人物/
