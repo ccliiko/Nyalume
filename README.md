@@ -59,9 +59,9 @@ Agent 编排参考 [HKUDS/nanobot](https://github.com/HKUDS/nanobot) 的设计�
 若 [GitHub Releases](https://github.com/ccliiko/Nyalume/releases) 提供与你要使用的版本对应的
 Windows x64 压缩包，可下载并解压整个 `Nyalume` 文件夹后双击
 `Nyalume.exe`，无需安装 Python；首次启动在设置中填写 API 服务商、
-API Key 和模型。3D 启动与操作见程序包根目录的 `Windows-便携版与3D桌宠教程.md`（源文档只留本地，不入库）；
-第三方模型和舞蹈需用户自行取得，本仓库与公开程序包不附带。
-0.3.0 的个人素材构建仅保存在制作者本机，不作为 GitHub 公共下载包。
+API Key 和模型。3D 启动与操作见程序包根目录的 `Windows-便携版与3D桌宠教程.md`。
+第三方模型和舞蹈需用户自行取得，本仓库与公开程序包不附带；
+带模型与动作的个人素材构建只供本机个人使用，不作为 GitHub 公共下载包发布。
 
 ### 从源码运行
 
