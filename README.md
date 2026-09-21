@@ -59,7 +59,7 @@ Agent 编排参考 [HKUDS/nanobot](https://github.com/HKUDS/nanobot) 的设计�
 若 [GitHub Releases](https://github.com/ccliiko/Nyalume/releases) 提供与你要使用的版本对应的
 Windows x64 压缩包，可下载并解压整个 `Nyalume` 文件夹后双击
 `Nyalume.exe`，无需安装 Python；首次启动在设置中填写 API 服务商、
-API Key 和模型。3D 启动与操作见程序包根目录的 `Windows-便携版与3D桌宠教程.md`。
+API Key 和模型。3D 启动与操作见程序包根目录的 `3D桌宠说明.md`。
 第三方模型和舞蹈需用户自行取得，本仓库与公开程序包不附带；
 带模型与动作的个人素材构建只供本机个人使用，不作为 GitHub 公共下载包发布。
 
@@ -116,9 +116,8 @@ python -m nyalume.frontends.pet.pet3d.pet3d_win --model <模型目录或.pmx> [-
 
 不带 `--model` 就用上次记住的模型文件夹（首次启动会给提示怎么设）。仓库根的
 `启动桌宠3D-管理员.cmd` 是同一入口的提权版：反作弊游戏是高完整性进程，
-不提权收不到鼠标，游戏内互动无效；它要的模型/动作路径写在 `tools/pet3d_admin.py`
-顶部的 `ARGS` 里。3D 模型与动作都需自行取得，仓库不分发；操作说明见发行包里的
-`3D桌宠使用说明v0.3.1.md` 与 `Windows-便携版与3D桌宠教程.md`。
+不提权收不到鼠标，游戏内互动无效。3D 模型与动作都需自行取得，仓库不分发；
+操作说明见发行包里的 `3D桌宠说明.md`。
 
 ## 测试
 
@@ -143,9 +142,8 @@ Nyalume 是**源码可见的商业软件，不是开源软件**。个人非商�
 [LICENSE](LICENSE) 为准；官方发行版的安装和使用同时受 [EULA](EULA.md) 约束。
 
 - 本地数据、API 调用和删除方式：[PRIVACY.md](PRIVACY.md)
-- Python 依赖与外部服务声明：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
-- 角色图片、生成模型和商业发行状态：[ASSET_PROVENANCE.md](ASSET_PROVENANCE.md)
-- 3D 模型、动作及宣传展示边界：[3D_ASSET_NOTICE.md](3D_ASSET_NOTICE.md)
+- Python 依赖、外部服务与 3D 素材边界：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+- 角色图片、生成模型和商业发行状态（内部记录，不随发行包分发）：[ASSET_PROVENANCE.md](ASSET_PROVENANCE.md)
 
 当前 Nyalume 角色帧与每日卡片的旧生成链许可记录不完整，**不得直接用于付费发行**。
 仓库中的新工作流已切换到许可清晰的模型，但商业包仍需用新工作流从文字设定重新生成素材。

@@ -30,8 +30,9 @@ holder.
 4. Third-party material
 
 This license does not replace or limit the licenses of third-party software,
-services, models, or user-supplied assets. See THIRD_PARTY_NOTICES.md and
-ASSET_PROVENANCE.md. Where a third-party license grants rights that conflict
+services, models, or user-supplied assets. See THIRD_PARTY_NOTICES.md for the
+shipped notices; ASSET_PROVENANCE.md is a repository-only compliance record and
+is not included in distributed builds. Where a third-party license grants rights that conflict
 with this license, that third-party license controls for that component only.
 
 5. No trademark or patent license

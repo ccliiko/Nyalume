@@ -28,6 +28,10 @@ function Remove-ProjectItem([string]$Path) {
         throw "拒绝清理项目目录之外的路径：$fullPath"
     }
     if (Test-Path -LiteralPath $fullPath) {
+        # -Force 不会删掉只读文件（打包进来的 numpy .pyd 就是只读的，重打包时会报
+        # "Access to the path ... is denied"），所以先把只读属性摘掉
+        Get-ChildItem -LiteralPath $fullPath -Recurse -Force -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.Attributes = $_.Attributes -band (-bnot [IO.FileAttributes]::ReadOnly) }
         Remove-Item -LiteralPath $fullPath -Recurse -Force
     }
 }
@@ -56,12 +60,13 @@ finally {
 }
 
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "README.txt") -Destination $distDir
-foreach ($notice in @("LICENSE", "EULA.md", "PRIVACY.md", "THIRD_PARTY_NOTICES.md", "ASSET_PROVENANCE.md", "3D_ASSET_NOTICE.md")) {
+# 声明类：第三方组件/服务/素材合成一份（THIRD_PARTY_NOTICES.md）。
+# ASSET_PROVENANCE.md 是内部合规记录，只留在源码仓库，不进发行包。
+foreach ($notice in @("LICENSE", "EULA.md", "PRIVACY.md", "THIRD_PARTY_NOTICES.md")) {
     Copy-Item -LiteralPath (Join-Path $projectRoot $notice) -Destination $distDir
 }
-Copy-Item -LiteralPath (Join-Path $projectRoot "docs\Windows-便携版与3D桌宠教程.md") -Destination $distDir
-# 前缀匹配：文档名带版本后缀（3D桌宠使用说明v0.2.0.md）也不会漏
-Copy-Item -Path (Join-Path $projectRoot "docs\3D桌宠使用说明*.md") -Destination $distDir
+# 3D 桌宠文档：说明 + 教程合成一份（docs\3D桌宠说明.md），不再按版本后缀改名
+Copy-Item -LiteralPath (Join-Path $projectRoot "docs\3D桌宠说明.md") -Destination $distDir
 
 # cmd.exe 只认 CRLF：仓库里的 .cmd 若是 LF（编辑器/补丁工具写出来的），双击就会
 # 把每一行拆错（报 '65001' is not recognized 之类）。拷贝时统一成 CRLF、不带 BOM。
@@ -97,7 +102,7 @@ if ($WithModels) {
     }
     if (-not $picked) { throw "没找到含 .pmx/.vmd 的子目录：$ModelSource" }
     Write-Output ("Bundled models: " + ($picked -join ", "))
-    Copy-Item -LiteralPath (Join-Path $projectRoot "3D_ASSET_NOTICE.md") -Destination (Join-Path $bundleDir "素材声明-必读.md")
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot "素材声明-必读.md") -Destination (Join-Path $bundleDir "素材声明-必读.md")
 }
 Set-Content -LiteralPath (Join-Path $distDir "VERSION.txt") -Value $Version -Encoding ascii
 Copy-Item -LiteralPath $distDir -Destination $releaseDir -Recurse
