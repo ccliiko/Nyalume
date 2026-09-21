@@ -57,8 +57,7 @@ foreach ($notice in @("LICENSE", "EULA.md", "PRIVACY.md", "THIRD_PARTY_NOTICES.m
     Copy-Item -LiteralPath (Join-Path $projectRoot $notice) -Destination $distDir
 }
 Copy-Item -LiteralPath (Join-Path $projectRoot "docs\Windows-便携版与3D桌宠教程.md") -Destination $distDir
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "launch_pet3d.cmd") -Destination (Join-Path $distDir "启动3D桌宠.cmd")
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "launch_pet3d.cmd") -Destination (Join-Path $distDir "启动3D桌宠-管理员.cmd")
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "launch_pet3d.vbs") -Destination (Join-Path $distDir "启动3D桌宠.vbs")
 Set-Content -LiteralPath (Join-Path $distDir "VERSION.txt") -Value $Version -Encoding ascii
 Copy-Item -LiteralPath $distDir -Destination $releaseDir -Recurse
 Compress-Archive -LiteralPath $releaseDir -DestinationPath $zipPath -CompressionLevel Optimal
