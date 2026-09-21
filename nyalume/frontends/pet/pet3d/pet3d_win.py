@@ -1502,7 +1502,8 @@ class _NativeApi:
             items.append({"id": "page:models", "label": f"换模型 ▸（{now_model}）"})
         items += [
             # 两边的箭头既是提示（左右半边可以点），也顺便说明这行是分半的
-            {"id": "style", "label": "← 换风格 →"},
+            # 箭头由页面画在这行的最左/最右（贴字时点右箭头左半边会往左切），标签只给文字
+            {"id": "style", "label": "换风格"},
             {"id": "autofps", "label": "全屏游戏自动降帧：" + ("开" if self._auto_fps else "关")},
             {"id": "quiet", "label": "手动安静：" + ("开" if self._quiet else "关")},
             {"id": "page:talk", "label": "主动搭话 ▸（" + proactive.TALK_LABELS[self._talk_mode] + "）"},

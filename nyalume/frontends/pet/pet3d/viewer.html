@@ -1201,7 +1201,14 @@ window.__menu = function (items) {
   // 菜单宽度按最长的一条量出来（"全屏游戏自动降帧：开"这种长标签以前会被切掉）
   const meas = document.createElement('canvas').getContext('2d');
   meas.font = font;
-  const textW = Math.max(...items.map((it) => meas.measureText(it.label).width));
+  // "换风格"那行的箭头要顶到行的两头（贴着文字时，点右箭头左半边其实落在行左半边
+  // → 往左切，很难点准，用户实测反馈）。所以那行要多留两个箭头 + 间距的宽度。
+  const arrowW = Math.ceil(Math.max(meas.measureText('←').width, meas.measureText('→').width));
+  const textW = Math.max(
+    ...items.map(
+      (it) => meas.measureText(it.label).width + (it.id === 'style' ? arrowW * 2 + 40 : 0),
+    ),
+  );
   const width = Math.max(300, Math.ceil(textW) + 34 + pad * 2);
   const height2 = items.length * rowH + pad * 2;
   const canvas = document.createElement('canvas');
@@ -1218,7 +1225,17 @@ window.__menu = function (items) {
   g.font = font;
   g.textBaseline = 'middle';
   g.fillStyle = '#c8386f';
-  items.forEach((item, i) => g.fillText(item.label, 34, pad + rowH * i + rowH / 2));
+  items.forEach((item, i) => {
+    const y = pad + rowH * i + rowH / 2;
+    if (item.id === 'style') {
+      // 一个最左、一个最右：点哪半边就换哪边，箭头位置和结果对得上
+      g.fillText('←', 34, y);
+      g.fillText(item.label, 34 + arrowW + 20, y);
+      g.fillText('→', width - 34 - arrowW, y);
+      return;
+    }
+    g.fillText(item.label, 34, y);
+  });
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   if (!menuSprite) {
