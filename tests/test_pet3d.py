@@ -633,3 +633,31 @@ def test_import_model_file_uses_that_pmx(monkeypatch, tmp_path):
 
     assert restarted["model"] == str(pmx)
     assert saved["models_dir"] == str(tmp_path)
+
+
+def test_chat_handoff_does_not_close_new_child():
+    """从菜单打开聊天窗口是"交接"：桌宠退出时不能去 close 刚起来的聊天窗子进程。
+
+    真机后果：close() 会对还在初始化 WebView2 的子进程发 quit + wait/kill，
+    表现为聊天窗闪一下就消失（子进程 err 日志里是 0x80004004 E_ABORT）。
+    """
+
+    class FakeChat:
+        def __init__(self):
+            self.closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    api = pet3d_win._NativeApi.__new__(pet3d_win._NativeApi)
+    api._chat = FakeChat()
+    api._chat_handoff = True
+    api.close_chat_on_exit()
+    assert api._chat.closed == 0, "交接出去的聊天窗被桌宠关掉了"
+
+    api._chat_handoff = False  # 没交接的情况照旧收尾
+    api.close_chat_on_exit()
+    assert api._chat.closed == 1
+
+    api._chat = None
+    api.close_chat_on_exit()  # 没开过聊天窗也不能炸

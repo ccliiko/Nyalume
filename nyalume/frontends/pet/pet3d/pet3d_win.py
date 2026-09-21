@@ -600,6 +600,8 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
                         elif item_id == "chat":
                             # 打开聊天窗后把桌宠收掉：两个窗口同时开着会互相压，
                             # 用户要的是"聊天窗接管"，要看她再点启动脚本即可
+                            # 交接：这只进程马上退出，别把刚起来的聊天窗关掉
+                            api._chat_handoff = True
                             api.open_chat()
                             api._pending = {"kind": "menu_close"}
                             api._display_hwnd = 0
@@ -1217,6 +1219,7 @@ class _NativeApi:
         self._talk_mode = mode if mode in proactive.TALK_MODES else "normal"
         self._chat = None
         self._chat_opening = False
+        self._chat_handoff = False
         # 上次选的风格档；没存过就用"游戏味·浓郁"(2)：环境光低、有轮廓光，
         # 模型不容易像"柔和"那档那样被加法光洗得发灰。
         _style = cfg.get("style", 2)
@@ -1725,6 +1728,16 @@ class _NativeApi:
                 self._chat_opening = False
 
         threading.Thread(target=show, daemon=True).start()
+
+    def close_chat_on_exit(self) -> None:
+        """进程退出时的收尾。
+
+        菜单里的"打开聊天窗口"是**交接**：桌宠这只进程马上退出，聊天窗是刚起来的
+        独立子进程。这时绝不能 close 它——`close()` 会发 `quit` 并 wait/kill，
+        而子进程还在建 WebView2，实测直接 `0x80004004 E_ABORT`，窗口闪一下就没。
+        """
+        if self._chat is not None and not self._chat_handoff:
+            self._chat.close()
 
     def _find_motion(self, name: str) -> int | None:
         if not name:
@@ -2761,8 +2774,7 @@ def main() -> int:
     try:
         webview.start()
     finally:
-        if api._chat is not None:
-            api._chat.close()
+        api.close_chat_on_exit()
     return 0
 
 
