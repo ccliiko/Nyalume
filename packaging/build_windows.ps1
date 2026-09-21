@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$Version = "0.3.0",
+    [string]$Version = "0.3.1",
     [switch]$PersonalAssets,
     # 带模型/动作的个人版：把 -ModelSource 下含 .pmx 或 .vmd 的子目录一起打进包
     [switch]$WithModels,
