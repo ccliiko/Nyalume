@@ -42,5 +42,8 @@ nyalume/frontends/pet/pet3d/node_modules/
 user_models/
 dist/
 
+# 个人文档（教程、调试记录、设计笔记）只留本地，不公开发布
+/docs/
+
 # 自拍照片（用户数据，不入库）
 人物/
