@@ -5,8 +5,9 @@ Nyalume 0.3.0 Windows 便携版
 1. 解压整个 Nyalume 文件夹，不要只拖出 Nyalume.exe。
 2. 双击 Nyalume.exe，点击桌宠打开聊天窗口。
 3. 首次使用时，在设置中填写自己的 API 服务商、API Key 和模型。
-4. 3D 桌宠使用“启动3D桌宠.cmd”，需要自备 PMX 模型目录；完整步骤见
-   Windows-便携版与3D桌宠教程.md。
+4. 3D 桌宠使用“启动3D桌宠.cmd”：把自备的 PMX 模型放进本目录下的 models\（每个
+   模型一个子目录），VMD 动作放进 motions\，双击即用，不需要在界面里选目录。
+   完整步骤见 Windows-便携版与3D桌宠教程.md。
 
 说明
 - 适用于 Windows 10/11 x64，聊天窗口依赖系统 WebView2（多数系统已内置）。

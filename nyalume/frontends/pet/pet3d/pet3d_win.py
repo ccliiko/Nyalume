@@ -13,10 +13,13 @@ ammo.wasm.js，动作默认播本目录 motions/idle.vmd（自制、无版权）
 MMDLoader，别升级）。
 
 用法：
-    python -m nyalume.frontends.pet.pet3d.pet3d_win --model "D:\\download\\模型\\锁瞑"
+    python -m nyalume.frontends.pet.pet3d.pet3d_win
     python -m nyalume.frontends.pet.pet3d.pet3d_win --model <目录或.pmx> --debug
-    python -m nyalume.frontends.pet.pet3d.pet3d_win --model <模型> --vmd D:\\motions
+    python -m nyalume.frontends.pet.pet3d.pet3d_win --model <模型> --vmd <动作目录>
     python -m nyalume.frontends.pet.pet3d.pet3d_win --model <模型> --vmd none --no-physics
+
+不带 --model 时用程序根下的固定目录：`models\\` 放模型（每个一个子目录，也可以
+直接放 .pmx），`motions\\` 放 .vmd。放进去了再启动，不用点任何选择框。
 """
 
 from __future__ import annotations
@@ -50,6 +53,35 @@ THREE_ENTRY = os.path.join(
     VIEWER_DIR, "node_modules", "three", "build", "three.module.js"
 )
 DEFAULT_VMD = os.path.join(VIEWER_DIR, "motions", "idle.vmd")
+
+
+def _app_root() -> str:
+    """程序根目录：冻结后是 exe 所在目录（旁边就是 models/），源码跑是仓库根。"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    # __file__ = <根>/nyalume/frontends/pet/pet3d/pet3d_win.py：往上剥到 <根>
+    path = os.path.abspath(__file__)
+    for _ in range(5):
+        path = os.path.dirname(path)
+    return path
+
+
+def default_model_root() -> str:
+    """固定的模型目录：<程序根>\\models（每个模型一个子目录，也可以直接放 .pmx）。"""
+    return os.path.join(_app_root(), "models")
+
+
+def default_motion_root() -> str:
+    """固定的动作目录：<程序根>\\motions（.vmd 放里面，子目录会被递归找）。
+
+    没有它时退回 <程序根>\\models\\motions——0.3.0 的含模型包把动作放在那儿，
+    留着这条免得老包一升级就没有动作库了。
+    """
+    root = _app_root()
+    for cand in (os.path.join(root, "motions"), os.path.join(root, "models", "motions")):
+        if os.path.isdir(cand):
+            return cand
+    return ""
 
 _user32 = ctypes.windll.user32
 _user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
@@ -537,9 +569,12 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
                             return False
                         elif item_id.startswith("open:"):
                             who = item_id.split(":", 1)[1]
+                            # "打开模型目录"打开的是固定的模型根（放模型的地方），
+                            # 不是当前这只模型的子目录——用户要往里丢新模型
+                            model_root = default_model_root()
                             target = {
                                 "motions": vmd_root,
-                                "model": api._model_dir,
+                                "model": model_root if os.path.isdir(model_root) else api._model_dir,
                                 "state": _STATE_DIR,
                             }.get(who, "")
                             if target and os.path.isdir(target):
@@ -917,6 +952,32 @@ def _first_model_in(root: str) -> str:
     except OSError:
         return ""
     return ""
+
+
+def _is_inside(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath(
+            [os.path.abspath(path), os.path.abspath(root)]
+        ) == os.path.abspath(root)
+    except ValueError:  # 不同盘符
+        return False
+
+
+def _pick_default_model(cfg: dict) -> str:
+    """不带 --model 时开哪只：固定目录里的优先，其次上次记住的那只。
+
+    上次那只还在 `models\\` 里就接着用它——不然换过模型之后每次重启都跳回第一只。
+    """
+    root = default_model_root()
+    last = str(cfg.get("last_model") or "")
+    if last and os.path.exists(last) and _is_inside(last, root):
+        return last
+    found = _first_model_in(root)
+    if found:
+        return found
+    if last and os.path.exists(last):
+        return last
+    return _first_model_in(str(cfg.get("models_dir") or ""))
 
 
 def _remember_dirs(model_dir: str, vmd_root: str, pmx: str = "") -> None:
@@ -1427,9 +1488,7 @@ class _NativeApi:
             return [
                 {"id": "page:root", "label": "← 返回"},
                 {"id": "pick:model_file", "label": "导入模型（选 .pmx 文件）…"},
-                {"id": "pick:models", "label": "导入模型文件夹…"},
                 {"id": "pick:motion_file", "label": "导入动作（选 .vmd 文件）…"},
-                {"id": "pick:motions", "label": "导入动作文件夹…"},
                 {"id": "ik", "label": "脚部 IK：" + ("开" if self._ik else "关")},
                 {"id": "open:motions", "label": "打开动作目录"},
                 {"id": "open:model", "label": "打开模型目录"},
@@ -1690,7 +1749,7 @@ class _NativeApi:
         return self.restart_with(model=self._models[index][1])
 
     def pick_folder(self, kind: str) -> None:
-        """菜单里选模型/动作文件夹：弹系统对话框，选完存盘并重启生效。"""
+        """菜单里导入单个 .pmx / .vmd：弹系统对话框，选完重启生效。"""
         threading.Thread(target=self._pick_folder_worker, args=(kind,), daemon=True).start()
 
     def _pick_folder_worker(self, kind: str) -> None:
@@ -1713,10 +1772,10 @@ class _NativeApi:
                     title="导入动作：选 .vmd 文件",
                     filetypes=[("MMD 动作", "*.vmd"), ("所有文件", "*.*")],
                 ) or ""
-            elif kind == "models":
-                path = filedialog.askdirectory(title="导入模型文件夹（每个模型一个子目录）") or ""
             else:
-                path = filedialog.askdirectory(title="导入动作文件夹（里面放 .vmd）") or ""
+                root.destroy()
+                _log(f"未知的导入类型：{kind}")
+                return
             root.destroy()
         except Exception as e:
             _log(f"打开导入对话框失败 {type(e).__name__}: {e}")
@@ -1727,19 +1786,8 @@ class _NativeApi:
             _save_settings(models_dir=os.path.dirname(path))
             _log(f"导入模型文件 {path}")
             self.restart_with(model=path)
-        elif kind == "motion_file":
-            _log(f"导入动作文件 {path}")
-            self.restart_with(vmd=path)
-        elif kind == "models":
-            target = _first_model_in(path)
-            if not target:
-                _log(f"选模型文件夹：{path} 里没有 .pmx")
-                self._pending = {"kind": "say", "text": "这里没有找到模型"}
-                return
-            _save_settings(models_dir=path)
-            self.restart_with(model=target)
         else:
-            _save_settings(motions_dir=path)
+            _log(f"导入动作文件 {path}")
             self.restart_with(vmd=path)
 
     def restart_with(self, model: str = "", vmd: str = "") -> bool:
@@ -2045,7 +2093,7 @@ def _iter_vmd(root: str):
 def _scan_models(model_dir: str) -> list[tuple[str, str]]:
     """当前模型 + 它旁边（同一个父目录）的其它模型目录 → [(显示名, 目录)]。
 
-    这样"把另一个模型目录丢进 assets/ 就能在右键菜单里换"。
+    这样"把另一个模型目录丢进 models/ 就能在右键菜单里换"。
     """
     model_dir = os.path.abspath(model_dir)
     parent = os.path.dirname(model_dir)
@@ -2569,7 +2617,9 @@ def _single_instance() -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Nyalume 3D 桌宠窗口")
-    parser.add_argument("--model", default="", help="模型目录或 .pmx 文件；不写就用上次记住的模型文件夹")
+    parser.add_argument(
+        "--model", default="", help="模型目录或 .pmx 文件；不写就用程序根 models/ 里的第一个模型"
+    )
     parser.add_argument("--size", default="440x660", help="窗口尺寸，如 440x660")
     parser.add_argument("--scale", type=float, default=1.0, help="模型缩放")
     parser.add_argument(
@@ -2579,7 +2629,7 @@ def main() -> int:
     parser.add_argument(
         "--vmd",
         default="",
-        help="动作文件或目录；不写就用上次记住的动作文件夹（没有则只播自带 idle）",
+        help="动作文件或目录；不写就用程序根 motions/（没有则只播自带 idle）",
     )
     parser.add_argument("--no-physics", action="store_true", help="关掉骨骼物理")
     parser.add_argument(
@@ -2592,24 +2642,21 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # 不带参数启动：用上次记住的目录（菜单里选过就记住了）
+    # 不带参数启动：优先用程序根下的固定目录（放进 models/ 就能跑，不需要任何选择框），
+    # 那里空着才退回上次记住的目录。
     cfg = _load_settings()
     if not args.model:
-        last = str(cfg.get("last_model") or "")
-        # 上次那只还在就直接开她（菜单"导入模型"记的是具体的 .pmx 文件）
-        if last and (os.path.isdir(last) or os.path.isfile(last)):
-            args.model = last
-        else:
-            args.model = _first_model_in(str(cfg.get("models_dir") or ""))
+        args.model = _pick_default_model(cfg)
         if not args.model:
             _message_box(
-                "还没有模型目录。\n\n"
-                "· 把模型文件夹拖到「启动3D桌宠.cmd」上跑一次，之后就会记住；\n"
-                "· 或者右键桌宠 → 配置目录 → 导入模型…"
+                "还没有模型。\n\n"
+                "把模型文件夹放进这个目录，再启动一次就行：\n"
+                f"{default_model_root()}\n\n"
+                "（每个模型一个子目录，例如 models\\锁瞑\\xxx.pmx）"
             )
             return 2
     if not args.vmd:
-        args.vmd = str(cfg.get("motions_dir") or "") or DEFAULT_VMD
+        args.vmd = default_motion_root() or str(cfg.get("motions_dir") or "") or DEFAULT_VMD
 
     if args.admin and _elevate_if_needed():
         return 0
@@ -2619,7 +2666,7 @@ def main() -> int:
         # 别让用户对着"没反应"发呆：直说已经有一只了，以及怎么换掉它
         _message_box("已经有一个桌宠在运行了。\n\n"
                      "· 她在桌面右下角；看不到就右键菜单 → 退出，再启动这次。\n"
-                     "· 要换模型/动作：右键她 → 换模型，或配置目录 → 选择模型文件夹…")
+                     "· 要换模型/动作：右键她 → 换模型 / 动作。")
         return 0
 
     if not os.path.isfile(THREE_ENTRY):

@@ -76,22 +76,27 @@ Copy-CmdLauncher (Join-Path $PSScriptRoot "launch_pet3d.cmd") (Join-Path $distDi
 
 if ($WithModels) {
     # 只带"有模型或有动作"的子目录：没有 .pmx/.vmd 的目录（纯贴图、半成品）打进去只是白占空间
-    # 目录名用 ASCII：cmd 启动脚本要按这个路径找模型/动作，中文在 .cmd 里会被代码页搞坏
+    # 布局跟不带模型的包一致：模型进 models\、动作进 motions\（程序按这两个固定目录找）。
+    # 目录名保持 ASCII：中文名在 .cmd / 代码页那边容易出问题。
     $bundleDir = Join-Path $distDir "models"
+    $motionsDir = Join-Path $distDir "motions"
     New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
     $picked = @()
     foreach ($dir in Get-ChildItem -LiteralPath $ModelSource -Directory) {
         $hit = Get-ChildItem -LiteralPath $dir.FullName -Recurse -File -Include *.pmx, *.vmd -ErrorAction SilentlyContinue |
             Select-Object -First 1
         if (-not $hit) { continue }
-        $target = if ($dir.Name -eq "动作配布") { "motions" } else { $dir.Name }
-        Copy-Item -LiteralPath $dir.FullName -Destination (Join-Path $bundleDir $target) -Recurse
-        $picked += $target
+        if ($dir.Name -eq "动作配布") {
+            New-Item -ItemType Directory -Force -Path $motionsDir | Out-Null
+            Copy-Item -LiteralPath $dir.FullName -Destination $motionsDir -Recurse
+            $picked += "motions"
+        } else {
+            Copy-Item -LiteralPath $dir.FullName -Destination (Join-Path $bundleDir $dir.Name) -Recurse
+            $picked += $dir.Name
+        }
     }
     if (-not $picked) { throw "没找到含 .pmx/.vmd 的子目录：$ModelSource" }
     Write-Output ("Bundled models: " + ($picked -join ", "))
-    Copy-CmdLauncher (Join-Path $PSScriptRoot "launch_pet3d_bundled.cmd") (Join-Path $distDir "启动3D桌宠（含模型）.cmd")
-    Copy-CmdLauncher (Join-Path $PSScriptRoot "launch_pet3d_bundled.cmd") (Join-Path $distDir "启动3D桌宠（含模型）-admin.cmd")
     Copy-Item -LiteralPath (Join-Path $projectRoot "3D_ASSET_NOTICE.md") -Destination (Join-Path $bundleDir "素材声明-必读.md")
 }
 Set-Content -LiteralPath (Join-Path $distDir "VERSION.txt") -Value $Version -Encoding ascii

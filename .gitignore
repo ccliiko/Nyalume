@@ -37,5 +37,9 @@ nyalume/frontends/pet/pet3d/node_modules/
 user_models/
 dist/
 
+# 3D 桌宠的固定素材目录：模型放 models/、动作放 motions/（用户自备，不入库）
+/models/
+/motions/
+
 # 个人文档（教程、调试记录、设计笔记）只留本地，不公开发布
 /docs/

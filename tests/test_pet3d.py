@@ -557,15 +557,58 @@ def test_restart_with_rewrites_model_flag(monkeypatch):
     assert argv[argv.index("--vmd") + 1] == "动作目录"
 
 def test_menu_config_has_import_entries():
-    """配置页要有"导入模型/动作（选文件）"这两条，标签也不再是"选择文件夹"。"""
+    """配置页只留"导入单个文件"两条；模型/动作目录位置固定，不再有选文件夹的入口。"""
     api = pet3d_win._NativeApi.__new__(pet3d_win._NativeApi)  # 配置页只用到这两个字段
     api._menu_page = "config"
     api._ik = True
     items = {it["id"]: it["label"] for it in api.menu_items()}
     assert items["pick:model_file"].startswith("导入模型")
     assert items["pick:motion_file"].startswith("导入动作")
-    assert items["pick:models"].startswith("导入模型文件夹")
-    assert items["pick:motions"].startswith("导入动作文件夹")
+    assert "pick:models" not in items
+    assert "pick:motions" not in items
+    assert not any("文件夹" in label for label in items.values())
+
+
+def test_default_roots_are_fixed_dirs_in_app_root(tmp_path, monkeypatch):
+    """不带参数启动时找的是程序根下的 models/ 与 motions/，不是"上次记住的目录"。"""
+    monkeypatch.setattr(pet3d_win, "_app_root", lambda: str(tmp_path))
+    assert pet3d_win.default_model_root() == str(tmp_path / "models")
+    assert pet3d_win.default_motion_root() == ""  # 都没有时给空串，调用方退回别的来源
+
+    (tmp_path / "motions").mkdir()
+    assert pet3d_win.default_motion_root() == str(tmp_path / "motions")
+
+
+def test_default_motion_root_falls_back_to_models_motions(tmp_path, monkeypatch):
+    """0.3.0 含模型包把动作放在 models\\motions：没有 motions\\ 时要用它，不然动作库突然空掉。"""
+    monkeypatch.setattr(pet3d_win, "_app_root", lambda: str(tmp_path))
+    (tmp_path / "models" / "motions").mkdir(parents=True)
+    assert pet3d_win.default_motion_root() == str(tmp_path / "models" / "motions")
+    (tmp_path / "motions").mkdir()  # 两个都在：优先用根下那个
+    assert pet3d_win.default_motion_root() == str(tmp_path / "motions")
+
+
+def test_pick_default_model_prefers_remembered_inside_fixed_root(tmp_path, monkeypatch):
+    """固定目录里上次用的那只还在就接着开它；不在固定目录里（老配置）才退回第一只。"""
+    monkeypatch.setattr(pet3d_win, "_app_root", lambda: str(tmp_path))
+    for name in ("A模型", "B模型"):
+        (tmp_path / "models" / name).mkdir(parents=True)
+        (tmp_path / "models" / name / "main.pmx").write_bytes(b"PMX ")
+
+    # 没记忆：排序第一只
+    assert pet3d_win._pick_default_model({}) == str(tmp_path / "models" / "A模型")
+    # 上次用的是 B（还带具体 .pmx）：不能跳回 A
+    remembered = str(tmp_path / "models" / "B模型" / "main.pmx")
+    assert pet3d_win._pick_default_model({"last_model": remembered}) == remembered
+    # 固定目录空着时，退回老配置里记的目录
+    empty_app = tmp_path / "空程序根"
+    (empty_app / "models").mkdir(parents=True)
+    monkeypatch.setattr(pet3d_win, "_app_root", lambda: str(empty_app))
+    other = tmp_path / "别处" / "C模型"
+    other.mkdir(parents=True)
+    (other / "main.pmx").write_bytes(b"PMX ")
+    assert pet3d_win._pick_default_model({"last_model": str(other)}) == str(other)
+    assert pet3d_win._pick_default_model({}) == ""  # 什么都没有：交给调用方弹提示窗
 
 
 def test_import_model_file_uses_that_pmx(monkeypatch, tmp_path):
