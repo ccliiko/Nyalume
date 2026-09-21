@@ -89,7 +89,7 @@ python server.py
 两个入口都只是根目录薄封装，等价于：
 `python -m nyalume.frontends.cli` / `python -m nyalume.frontends.web.server`
 
-桌宠：
+桌宠（2D）：
 
 ```bash
 python pet.py          # 无控制台双击 start_pet.bat
@@ -97,6 +97,28 @@ python pet.py          # 无控制台双击 start_pet.bat
 
 桌宠默认使用 Nyalume；右键可换自定义皮肤。皮肤放 `user_pets/`，
 格式与版权说明见 `user_pets/README.md`（该目录已 gitignore，不随仓库分发）。
+
+桌宠（3D）：加载你自己准备的 PMX 模型与 VMD 动作，透明置顶、可拖拽缩放、
+视线跟随、跳舞、主动搭话。前端依赖要先装一次（只装 three@0.171.0；
+0.172 起官方已移除 MMDLoader，别升级）：
+
+```powershell
+cd nyalume\frontends\pet\pet3d
+npm i
+cd ..\..\..\..
+```
+
+然后：
+
+```bash
+python -m nyalume.frontends.pet.pet3d.pet3d_win --model <模型目录或.pmx> [--vmd <动作目录>]
+```
+
+不带 `--model` 就用上次记住的模型文件夹（首次启动会给提示怎么设）。仓库根的
+`启动桌宠3D-管理员.cmd` 是同一入口的提权版：反作弊游戏是高完整性进程，
+不提权收不到鼠标，游戏内互动无效；它要的模型/动作路径写在 `tools/pet3d_admin.py`
+顶部的 `ARGS` 里。3D 模型与动作都需自行取得，仓库不分发；操作说明见发行包里的
+`3D桌宠使用说明v0.3.0.md` 与 `Windows-便携版与3D桌宠教程.md`。
 
 ## 测试
 
@@ -187,13 +209,23 @@ nyalume/                     项目包
     │   ├── server.py      会话/消息 REST + SSE 聊天接口
     │   └── static/index.html
     └── pet/               桌宠前端（第四前端）
-        ├── pet.py         主程序（皮肤菜单/触摸互动）
-        ├── renderer.py    透明小窗 + 帧动画（无素材时程序画占位猫）
-        ├── web_chat.py    气泡对话（线程消费 run_stream）
-        └── web_chat_win.py 独立聊天窗口
-        └── pets_registry.py  皮肤注册表（manifest/动画帧）
+        ├── pet.py           主程序（皮肤菜单/触摸互动）
+        ├── renderer.py      透明小窗 + 帧动画（无素材时程序画占位猫）
+        ├── interactions.py  按部位分区的互动台词
+        ├── wallpaper.py     角色皮肤合成桌面壁纸
+        ├── pets_registry.py 皮肤注册表（manifest/动画帧）
+        ├── web_chat.py      气泡对话（线程消费 run_stream）
+        ├── web_chat_win.py  独立聊天窗口
+        └── pet3d/           3D 桌宠（第五前端：pywebview 子进程 + three.js MMDLoader）
+            ├── pet3d_win.py      透明分层窗、推帧、鼠标轮询、本地回环接口
+            ├── viewer.html       MMDLoader + 光照/滤镜/物理/右键菜单
+            ├── proactive.py      主动搭话与心情体力
+            └── motions/idle.vmd  自制待机动作（不含第三方素材）
 cli.py / server.py / pet.py  仓库根启动入口（薄封装）
-start_pet.bat              双击启动桌宠（pythonw 无控制台）
+run_pet.pyw                无控制台入口（start_pet.bat 用它；冻结后兼任 --pet3d 等子角色）
+start_pet.bat              双击启动 2D 桌宠（pythonw 无控制台）
+启动桌宠3D-管理员.cmd      提权启动 3D 桌宠（游戏内互动需要）
+tools/                     开发脚本（待机动作生成、PMX 探针、3D 打包、出图管线）
 user_pets/                 用户自备皮肤（gitignore，不随源码仓库分发）
 agent.db                   SQLite 数据（默认放在仓库根，可用 MEMORY_DB 覆盖）
 ```
