@@ -1,6 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import json
+import os
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all
@@ -9,6 +11,9 @@ from PyInstaller.utils.hooks import collect_all
 ROOT = Path(SPECPATH).parent
 STATIC_DIR = ROOT / "nyalume" / "frontends" / "web" / "static"
 PET_DIR = ROOT / "user_pets" / "nyalume"
+PET3D_DIR = ROOT / "nyalume" / "frontends" / "pet" / "pet3d"
+sys.path.insert(0, str(ROOT))
+from tools.make_pet3d_package import collect_three_files
 
 
 def tree_data(source, destination):
@@ -22,12 +27,21 @@ def tree_data(source, destination):
 
 datas = tree_data(STATIC_DIR, "nyalume/frontends/web/static")
 
-manifest_path = PET_DIR / "manifest.json"
-manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-pet_files = {"manifest.json"}
-for frames in manifest["frames"].values():
-    pet_files.update(frames)
-datas.extend((str(PET_DIR / name), "user_pets/nyalume") for name in sorted(pet_files))
+if os.environ.get("NYALUME_BUNDLE_PERSONAL_ASSETS") == "1":
+    manifest_path = PET_DIR / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    pet_files = {"manifest.json"}
+    for frames in manifest["frames"].values():
+        pet_files.update(frames)
+    datas.extend((str(PET_DIR / name), "user_pets/nyalume") for name in sorted(pet_files))
+
+datas.extend(tree_data(PET3D_DIR / "motions", "nyalume/frontends/pet/pet3d/motions"))
+datas.append((str(PET3D_DIR / "viewer.html"), "nyalume/frontends/pet/pet3d"))
+three_dir = PET3D_DIR / "node_modules" / "three"
+for path in collect_three_files():
+    rel = Path(path).relative_to(three_dir)
+    datas.append((path, str(Path("nyalume/frontends/pet/pet3d/node_modules/three") / rel.parent)))
+datas.append((str(three_dir / "LICENSE"), "nyalume/frontends/pet/pet3d/node_modules/three"))
 
 binaries = []
 hiddenimports = []

@@ -1,5 +1,7 @@
 # Nyalume：会干活的本地 AI 桌宠
 
+当前源码版本：**0.2.0**。
+
 Nyalume 是面向 Windows 的本地优先个人 AI Agent：以桌宠、网页和命令行三种入口
 提供多轮对话、长期记忆、项目文件操作、代码执行、网页工具和主动提醒。
 
@@ -46,15 +48,20 @@ Agent 编排参考 [HKUDS/nanobot](https://github.com/HKUDS/nanobot) 的设计�
   聊天背景壁纸支持“角色皮肤”或本地上传（记住选择，不依赖后端存储）
 - 桌宠聊天框内置「📊 状态」面板：同 Web 一样查看摘要/便签/提醒
   （提醒可点 [取消]），顶部可直接挂后台
+- 3D 桌宠：加载用户自备的 PMX 模型与 VMD 动作，支持按部位互动、拖拽、
+  视线跟随、舞蹈、表情、主动搭话；聊天 agent 可用 `pet_status` 读取状态、
+  用 `pet_perform` 指挥舞蹈、表情和气泡
 
 ## 快速开始
 
 ### Windows 便携版（推荐）
 
-只想使用桌宠时，可从 [GitHub Releases](https://github.com/ccliiko/Nyalume/releases/latest)
-下载 Windows x64 压缩包。解压整个 `Nyalume` 文件夹后双击
+若 [GitHub Releases](https://github.com/ccliiko/Nyalume/releases) 提供与你要使用的版本对应的
+Windows x64 压缩包，可下载并解压整个 `Nyalume` 文件夹后双击
 `Nyalume.exe`，无需安装 Python；首次启动在设置中填写 API 服务商、
-API Key 和模型。
+API Key 和模型。3D 启动与操作见 [Windows 便携版与 3D 桌宠教程](docs/Windows-便携版与3D桌宠教程.md)；
+第三方模型和舞蹈需用户自行取得，本仓库与公开程序包不附带。
+0.2.0 的个人素材构建仅保存在制作者本机，不作为 GitHub 公共下载包。
 
 ### 从源码运行
 
@@ -116,9 +123,12 @@ Nyalume 是**源码可见的商业软件，不是开源软件**。个人非商�
 - 本地数据、API 调用和删除方式：[PRIVACY.md](PRIVACY.md)
 - Python 依赖与外部服务声明：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 - 角色图片、生成模型和商业发行状态：[ASSET_PROVENANCE.md](ASSET_PROVENANCE.md)
+- 3D 模型、动作及宣传展示边界：[3D_ASSET_NOTICE.md](3D_ASSET_NOTICE.md)
 
 当前 Nyalume 角色帧与每日卡片的旧生成链许可记录不完整，**不得直接用于付费发行**。
 仓库中的新工作流已切换到许可清晰的模型，但商业包仍需用新工作流从文字设定重新生成素材。
+游戏角色模型、非商用或禁止二配的 VMD 动作不得因为出现在本机 3D 桌宠中就进入
+公开 EXE 或产品宣发；署名和免责声明不能代替相应权利人的授权。
 
 ## 本地运行追踪（Trace）
 

@@ -269,6 +269,74 @@ def _get_current_time() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+# ---------- 3D 桌宠：让 agent 读取状态并执行可见反馈 ----------
+
+
+def _pet_request(path: str, payload: dict | None = None) -> dict:
+    endpoint = os.path.join(os.path.expanduser("~"), ".nyalume", "pet3d_endpoint.json")
+    try:
+        with open(endpoint, encoding="utf-8") as f:
+            port = int(json.load(f)["port"])
+        if not 1 <= port <= 65535:
+            raise ValueError("端口无效")
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}{path}",
+            data=body,
+            headers={"Content-Type": "application/json"} if body is not None else {},
+        )
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            return json.load(resp)
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return {"ok": False, "error": "3D 桌宠未运行或控制口不可用"}
+
+
+@register(
+    "pet_status",
+    "查看当前 3D 桌宠的模型、心情、动作和可用舞蹈。用户问桌宠在做什么、能跳哪些舞，"
+    "或准备让桌宠执行动作时先调用。只返回本地概况，不传窗口或媒体标题。",
+    {},
+)
+def _pet_status() -> str:
+    data = _pet_request("/pet_state")
+    if not data.get("ok"):
+        return data.get("error", "桌宠状态不可用")
+    return json.dumps({
+        "模型": data.get("model", ""),
+        "心情": data.get("feeling", ""),
+        "当前动作": data.get("playing", ""),
+        "可用舞蹈": data.get("motions", []),
+        "安静模式": data.get("effective_quiet", False),
+    }, ensure_ascii=False)
+
+
+@register(
+    "pet_perform",
+    "让正在运行的 3D 桌宠用动作或表情回应用户。用户要求跳舞、停下、做表情、"
+    "在头顶说短句时调用；任务完成时也可用一次简短表情反馈。"
+    "不要为了普通聊天反复调用；舞蹈名称先用 pet_status 查看。",
+    {
+        "action": {"type": "string", "enum": ["dance", "idle", "face", "say"],
+                   "description": "跳舞、回待机、表情或头顶气泡"},
+        "value": {"type": "string", "description": "舞蹈名、表情名或气泡文字；idle 留空"},
+    },
+    required=["action"],
+)
+def _pet_perform(action: str, value: str = "") -> str:
+    action = str(action or "").strip().lower()
+    if action not in ("dance", "idle", "face", "say"):
+        return "桌宠动作无效；可选 dance / idle / face / say"
+    value = str(value or "").strip()[:60]
+    if action != "idle" and not value:
+        return "请填写舞蹈名、表情名或气泡文字"
+    key = {"dance": "name", "face": "emotion", "say": "text"}.get(action)
+    payload = {"action": action}
+    if key:
+        payload[key] = value
+    data = _pet_request("/pet", payload)
+    return (f"桌宠已执行 {action}" + (f"：{value}" if value else "")) if data.get("ok") else data.get("error", "桌宠指令失败")
+
+
 # ---------- 工具 2：安全计算器 ----------
 
 

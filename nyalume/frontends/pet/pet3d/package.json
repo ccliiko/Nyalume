@@ -1,0 +1,8 @@
+{
+  "name": "nyalume-pet3d",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "three": "0.171.0"
+  }
+}

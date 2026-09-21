@@ -1,0 +1,9 @@
+@echo off
+chcp 65001 >nul
+cd /d "%~dp0"
+if not exist .venv python -m venv .venv
+".venv\Scripts\python.exe" -m pip install -U pip
+".venv\Scripts\python.exe" -m pip install -r requirements.txt
+echo.
+echo 装好了，以后用 启动桌宠.cmd 直接开。
+pause

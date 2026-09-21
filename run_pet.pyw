@@ -14,6 +14,12 @@ def _run_frozen_child() -> bool:
         return False
 
     role = sys.argv[1]
+    if role == "--pet3d":
+        del sys.argv[1]
+        from nyalume.frontends.pet.pet3d.pet3d_win import main as pet3d_main
+
+        pet3d_main()
+        return True
     if role == "--web-chat-window":
         del sys.argv[1]
         from nyalume.frontends.pet.web_chat_win import main as web_chat_main

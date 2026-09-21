@@ -1,6 +1,6 @@
 # Nyalume 第三方软件与服务声明
 
-更新日期：2026 年 9 月 15 日
+更新日期：2026 年 9 月 21 日
 
 Nyalume 自有代码受根目录 [LICENSE](LICENSE) 约束。下列第三方组件保留各自权利，使用和再分发以其许可证原文为准。本清单覆盖 `requirements.txt`、`cloud_service/requirements.txt` 及 Windows 打包工具中直接声明的依赖；发布者应在每次构建后按实际锁定版本复核传递依赖。
 
@@ -25,6 +25,8 @@ Nyalume 自有代码受根目录 [LICENSE](LICENSE) 约束。下列第三方组�
 | Playwright Python | 网页自动化 | Apache-2.0 | <https://github.com/microsoft/playwright-python> |
 | psycopg / psycopg-binary | 可选 PostgreSQL 云同步 | LGPL-3.0-only | <https://github.com/psycopg/psycopg> |
 | PyInstaller | Windows 打包工具 | GPL-2.0-or-later，含允许分发非自由程序的 bootloader 例外 | <https://github.com/pyinstaller/pyinstaller> |
+| Three.js 0.171.0 | 3D 模型、动画与透明画面渲染 | MIT；许可证副本随 3D 运行文件提供 | <https://github.com/mrdoob/three.js> |
+| ammo.js / Bullet Physics | 3D 布料与骨骼物理 | ammo.js 文件标注 zlib；适用的上游许可应随发行文件保留 | <https://github.com/kripken/ammo.js> |
 
 常见传递依赖包括 Starlette、Pydantic、AnyIO、HTTPX、HTTP Core、h11、Jiter、Certifi、Click、Typing Extensions、Websockets 等；它们不会因此变为 Nyalume 自有代码。准确版本以具体发行包的构建环境为准。
 

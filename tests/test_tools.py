@@ -18,6 +18,25 @@ def test_tool_schemas_include_reminder_tools():
     assert "pdf_edit" in names
     assert "pdf_ocr" in names
     assert "office_edit" in names
+    assert "pet_status" in names
+    assert "pet_perform" in names
+
+
+def test_pet_tools_use_local_state_without_exposing_window_title(monkeypatch):
+    calls = []
+
+    def fake_pet_request(path, payload=None):
+        calls.append((path, payload))
+        if path == "/pet_state":
+            return {"ok": True, "model": "MikuQ", "feeling": "开心", "playing": "待机",
+                    "motions": ["IRIS OUT"], "desktop": {"title": "私人文件.txt"}}
+        return {"ok": True}
+
+    monkeypatch.setattr(tools, "_pet_request", fake_pet_request)
+    status = tools._pet_status()
+    assert "MikuQ" in status and "私人文件.txt" not in status
+    assert "已执行 dance" in tools._pet_perform("dance", "IRIS OUT")
+    assert calls[-1] == ("/pet", {"action": "dance", "name": "IRIS OUT"})
 
 
 def test_web_search_prefers_the_complete_title_and_drops_unrelated_baike(monkeypatch):

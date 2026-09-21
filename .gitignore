@@ -36,3 +36,11 @@ user_pets/*
 !user_pets/README.md
 pet_config.json
 persona_config.json
+
+# 3D 桌宠：three.js 依赖本地 npm 安装，模型文件（游戏素材）一律不入库
+nyalume/frontends/pet/pet3d/node_modules/
+user_models/
+dist/
+
+# 自拍照片（用户数据，不入库）
+人物/

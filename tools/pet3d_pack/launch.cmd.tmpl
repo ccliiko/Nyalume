@@ -1,0 +1,7 @@
+@echo off
+chcp 65001 >nul
+cd /d "%~dp0"
+set MODEL={model}
+set VMD=nyalume\frontends\pet\pet3d\motions
+"%~dp0.venv\Scripts\pythonw.exe" -m nyalume.frontends.pet.pet3d.pet3d_win --model "%MODEL%" --vmd "%VMD%"
+if errorlevel 1 pause
