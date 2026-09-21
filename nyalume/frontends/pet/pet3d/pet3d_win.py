@@ -78,6 +78,10 @@ _user32.IsWindowVisible.argtypes = [wintypes.HWND]
 _user32.IsWindowVisible.restype = wintypes.BOOL
 _user32.IsWindow.argtypes = [wintypes.HWND]
 _user32.IsWindow.restype = wintypes.BOOL
+_user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+_user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+_user32.DestroyWindow.argtypes = [wintypes.HWND]
+_user32.PostThreadMessageW.argtypes = [ctypes.c_ulong, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM]
 _user32.PostThreadMessageW.argtypes = [wintypes.DWORD, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM]
 _user32.PostThreadMessageW.restype = wintypes.BOOL
 _GWL_EXSTYLE = -20
@@ -177,9 +181,16 @@ class _Msg(ctypes.Structure):
     ]
 
 
+# 参数写成 c_void_p，不要用 POINTER(_Msg)：这个模块会被加载两份（__main__ + 包路径，
+# 第二次由 proactive 里的相对 import 触发），两份各有一个同名 _Msg 类。用类指针做
+# argtypes 时，另一份传进来的实例会被 ctypes 判成"类型不对"直接抛 ArgumentError ——
+# 表现就是消息循环线程猝死、分层窗口被销毁（"桌宠每 60 秒掉一次"）。c_void_p 不做类型校验。
 _user32.GetMessageW.argtypes = [
-    ctypes.POINTER(_Msg), wintypes.HWND, ctypes.c_uint, ctypes.c_uint
+    ctypes.c_void_p, wintypes.HWND, ctypes.c_uint, ctypes.c_uint
 ]
+_user32.GetMessageW.restype = wintypes.BOOL
+_user32.TranslateMessage.argtypes = [ctypes.c_void_p]
+_user32.DispatchMessageW.argtypes = [ctypes.c_void_p]
 
 
 class _BitmapInfoHeader(ctypes.Structure):
@@ -214,7 +225,7 @@ class _BlendFunction(ctypes.Structure):
 _user32.UpdateLayeredWindow.argtypes = [
     wintypes.HWND, wintypes.HDC, ctypes.POINTER(wintypes.POINT),
     ctypes.POINTER(wintypes.SIZE), wintypes.HDC, ctypes.POINTER(wintypes.POINT),
-    ctypes.c_ulong, ctypes.POINTER(_BlendFunction), ctypes.c_ulong,
+    ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,  # 见 GetMessage 那段：不写死结构体类型
 ]
 
 
@@ -280,6 +291,22 @@ def _create_layered_window() -> int:
     )
     _user32.ShowWindow(hwnd, 5)
     return hwnd
+
+
+def _is_our_window(hwnd: int) -> bool:
+    """这个句柄现在还是不是我们的分层窗口。
+
+    光用 IsWindow 不够：窗口被系统收走以后，句柄号会被回收给别人的窗口，
+    IsWindow 照样返回真 —— 于是"窗口没了"检测不到，就成了一个看不见的进程
+    （实测每 5 秒刷一次 re-show、桌面上却没有她）。所以再核对标题和类名。
+    """
+    if not hwnd or not _user32.IsWindow(hwnd):
+        return False
+    title = ctypes.create_unicode_buffer(64)
+    cls = ctypes.create_unicode_buffer(64)
+    _user32.GetWindowTextW(hwnd, title, 64)
+    _user32.GetClassNameW(hwnd, cls, 64)
+    return title.value == "Nyalume 3D" and cls.value == "Static"
 
 
 def _send_motion(win, vmd_root: str, path: str) -> None:
@@ -375,6 +402,17 @@ def _motion_url(path: str, vmd_root: str) -> str:
     return "/vmd/" + urllib.parse.quote(rel)
 
 
+def _display_window_thread_guarded(api, win, vmd_root: str, model_dir: str) -> None:
+    """给显示线程包一层：它异常退出时窗口会被系统销毁（"桌宠掉一下"），而 pythonw 下
+    traceback 没人看得到 —— 实测这条线程正好活 60 秒就没了，抓出来写日志才定位得到。"""
+    try:
+        _display_window_thread(api, win, vmd_root, model_dir)
+    except BaseException:
+        import traceback
+
+        _log("显示线程异常退出：" + traceback.format_exc().replace("\n", " | ")[:400])
+
+
 def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
     """专用线程：分层窗口 + WH_MOUSE_LL 全局鼠标钩子 + 消息泵。
 
@@ -465,7 +503,13 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
         if msg == _WM_MOUSEWHEEL:
             # 滚轮 = 放大/缩小（离镜头近/远）
             if over and not api._menu_rects:
-                api._zoom_at = (x - api._x, y - api._y)  # 缩放以光标为中心
+                # 缩放锚点：光标屏幕坐标 + 它在她那块画布里的归一化位置。**必须在这里算**：
+                # 画布是页面立刻改的、帧要晚一两拍才到，等 request_resize 时再拿帧尺寸
+                # 去除，分母已经是新尺寸了 —— 一乘回到原值，位置永远算成老位置（她就会
+                # 往右下漂，用户报的就是这个）。
+                ux = (x - api._x) / api._w if api._w else 0.5
+                uy = (y - api._y) / api._h if api._h else 0.5
+                api._zoom_at = (x, y, ux, uy)
                 api._zoom_steps += 1 if wheel > 0 else -1  # 同样累加，滚快了才不会丢档
                 _log(f"zoom {'in' if wheel > 0 else 'out'}")
                 # 连滚轮也不吞：这个钩子一次都不该挡系统输入（挡错一次就是整台电脑
@@ -475,6 +519,7 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
             if msg in (_WM_LBUTTONDOWN, _WM_RBUTTONDOWN):
                 mx, my = x - api._x, y - api._y
                 _log(f"menu click at {mx:.0f},{my:.0f}")
+                menu_snapshot = api._menu_rects
                 for rect in api._menu_rects:
                     if (
                         rect["x"] <= mx < rect["x"] + rect["w"]
@@ -511,11 +556,27 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
                         elif item_id.startswith("model:"):
                             switch_model(int(item_id.split(":", 1)[1]))
                         elif item_id == "style":
-                            api._pending = {"kind": "style"}  # 页面自己循环"光照+滤镜"组合
+                            # 点左半边往左切、右半边往右切（页面按 ±1 循环那几套光照+滤镜）
+                            step = -1 if mx < rect["x"] + rect["w"] / 2 else 1
+                            api._pending = {"kind": "style_step", "step": step}
+                            api._menu_rects = menu_snapshot  # 换风格常要连点，菜单留着
                         elif item_id.startswith("talk:"):
                             api.set_talk_mode(item_id.split(":", 1)[1])
                         elif item_id == "chat":
+                            # 打开聊天窗后把桌宠收掉：两个窗口同时开着会互相压，
+                            # 用户要的是"聊天窗接管"，要看她再点启动脚本即可
                             api.open_chat()
+                            api._pending = {"kind": "menu_close"}
+                            api._display_hwnd = 0
+                            threading.Thread(target=win.destroy, daemon=True).start()
+                        elif item_id.startswith("pick:"):
+                            api.pick_folder(item_id.split(":", 1)[1])
+                        elif item_id == "ik":
+                            # 别人的动作配布对不上这套骨架时，脚部 IK 会把腿拽歪（穿模/抽）
+                            api._ik = not api._ik
+                            _save_settings(ik=api._ik)
+                            api._pending = {"kind": "ik", "value": api._ik}
+                            _log(f"ik {'on' if api._ik else 'off'}")
                         elif item_id == "quiet":
                             api.set_quiet(not api._quiet)
                         elif item_id == "autofps":
@@ -656,11 +717,26 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
     msg = _Msg()
     raw_ok = _register_raw_mouse(api._display_hwnd)
     _dbg(f"raw mouse input={raw_ok}")
+    _log("显示线程启动")
     while api._display_hwnd:
-        if _user32.GetMessageW(ctypes.byref(msg), None, 0, 0) in (0, -1):
+        try:
+            got = _user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+        except BaseException as e:
+            # 实测这条会抛异常，而且是"正好 60 秒"一次 —— 抛完线程就没了、窗口被销毁。
+            # 先把异常本体记下来（traceback 里只看得到调用行，看不到类型/消息）。
+            _log(f"GetMessage 抛异常：{type(e).__name__}: {e} "
+                 f"hwnd={api._display_hwnd} msgtype={type(msg).__name__}")
+            break
+        if got in (0, -1):
+            # 0 = WM_QUIT，-1 = 出错。线程一退出，它拥有的分层窗口就被系统销毁 ——
+            # 这就是"桌宠突然掉一下"的真正原因，所以退出原因一定要记下来。
+            _log(f"显示线程退出：GetMessage={got}（窗口随之销毁）")
             break
         if msg.message == _WM_RECOVER_DISPLAY:
-            if not _user32.IsWindow(api._display_hwnd):
+            force = int(msg.wParam) == 1  # 1 = 连叫几次都不醒，别再哄了，直接重建
+            if force and _is_our_window(api._display_hwnd):
+                _user32.DestroyWindow(api._display_hwnd)  # 只有窗口线程能销毁自己的窗口
+            if not _is_our_window(api._display_hwnd):  # 句柄可能已被回收给别人，光 IsWindow 不够
                 new = _create_layered_window()
                 if new:
                     api._display_hwnd = new
@@ -682,6 +758,7 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
         _user32.DispatchMessageW(ctypes.byref(msg))
     if hook:
         _user32.UnhookWindowsHookEx(hook)
+    _log("显示线程结束（钩子已摘）")
 
 
 def _hide_renderer(native) -> int:
@@ -726,33 +803,75 @@ def _no_taskbar(hwnd: int) -> None:
 
 
 
-def _update_layered(hwnd: int, bgra: bytes, w: int, h: int, x: int, y: int) -> None:
-    """把一帧贴到分层窗口；位置由调用方明确给出。"""
-    hdc_screen = _user32.GetDC(None)
-    hdc_mem = _gdi32.CreateCompatibleDC(hdc_screen)
-    bi = _BitmapInfo()
-    bi.bmiHeader.biSize = ctypes.sizeof(_BitmapInfoHeader)
-    bi.bmiHeader.biWidth = w
-    bi.bmiHeader.biHeight = -h  # 负值 = 自顶向下
-    bi.bmiHeader.biPlanes = 1
-    bi.bmiHeader.biBitCount = 32
-    bi.bmiHeader.biCompression = 0
-    bi.bmiHeader.biSizeImage = w * h * 4
-    bits = ctypes.c_void_p()
-    hbmp = _gdi32.CreateDIBSection(hdc_screen, ctypes.byref(bi), 0, ctypes.byref(bits), None, 0)
-    _gdi32.SelectObject(hdc_mem, hbmp)
-    ctypes.memmove(bits, bgra, len(bgra))
+_LAYER: dict = {}  # hwnd → 常驻的全屏 DIB（窗口固定，不再每帧重建）
 
-    pt_dst = wintypes.POINT(x, y)
-    size = wintypes.SIZE(w, h)
+
+def _update_layered(hwnd: int, bgra: bytes, w: int, h: int, x: int, y: int) -> None:
+    """把"她那一块"(w×h) 贴进**固定铺满屏幕**的分层窗口里的 (x, y) 处。
+
+    以前是每帧按她的大小 CreateDIBSection + UpdateLayeredWindow（顺带把窗口改成那个大小），
+    于是缩放必须连着窗口一起改 —— 窗口顶到屏幕极限后相机再推，她就会同时被窗口的上下边
+    切掉头和脚。现在窗口固定 = 工作区，这里自己维护一张常驻全屏 DIB：先清掉上一帧占的
+    位置（不然她移动后留残影），再把她那一块拷进去，最后整块提交。落在窗口外的部分自然
+    被屏幕边缘挡掉（看不见），所以相机可以放心放大。
+    """
+    wa = _work_area()
+    if wa is None:
+        return
+    win_x, win_y = wa[0], wa[1]
+    win_w, win_h = wa[2] - wa[0], wa[3] - wa[1]
+
+    st = _LAYER.get(hwnd)
+    if st is None or st["w"] != win_w or st["h"] != win_h:
+        if st:
+            _gdi32.DeleteObject(st["hbmp"])
+            _gdi32.DeleteDC(st["dc"])
+        hdc_screen = _user32.GetDC(None)
+        hdc_mem = _gdi32.CreateCompatibleDC(hdc_screen)
+        bi = _BitmapInfo()
+        bi.bmiHeader.biSize = ctypes.sizeof(_BitmapInfoHeader)
+        bi.bmiHeader.biWidth = win_w
+        bi.bmiHeader.biHeight = -win_h  # 负值 = 自顶向下
+        bi.bmiHeader.biPlanes = 1
+        bi.bmiHeader.biBitCount = 32
+        bi.bmiHeader.biCompression = 0
+        bi.bmiHeader.biSizeImage = win_w * win_h * 4
+        bits = ctypes.c_void_p()
+        hbmp = _gdi32.CreateDIBSection(hdc_screen, ctypes.byref(bi), 0, ctypes.byref(bits), None, 0)
+        _gdi32.SelectObject(hdc_mem, hbmp)
+        _user32.ReleaseDC(None, hdc_screen)
+        ptr = ctypes.cast(bits, ctypes.POINTER(ctypes.c_ubyte))
+        st = _LAYER[hwnd] = {
+            "w": win_w, "h": win_h, "dc": hdc_mem, "hbmp": hbmp, "ptr": ptr,
+            "buf": np.ctypeslib.as_array(ptr, shape=(win_h * win_w * 4,)),
+            "rect": None,
+        }
+    dst = st["buf"].reshape(win_h, win_w, 4)
+    old = st["rect"]
+    if old:  # 清掉上一帧
+        ox0, oy0, ox1, oy1 = old
+        dst[oy0 - win_y:oy1 - win_y, ox0 - win_x:ox1 - win_x] = 0
+    src = np.frombuffer(bgra, dtype=np.uint8)
+    if src.size != w * h * 4:
+        return
+    src = src.reshape(h, w, 4)
+    x0, y0 = max(x, win_x), max(y, win_y)
+    x1, y1 = min(x + w, win_x + win_w), min(y + h, win_y + win_h)
+    if x1 > x0 and y1 > y0:  # 只拷落在窗口里的那部分
+        dst[y0 - win_y:y1 - win_y, x0 - win_x:x1 - win_x] = src[y0 - y:y1 - y, x0 - x:x1 - x]
+        st["rect"] = (x0, y0, x1, y1)
+    else:
+        st["rect"] = None
+
+    pt_dst = wintypes.POINT(win_x, win_y)
+    size = wintypes.SIZE(win_w, win_h)
     pt_src = wintypes.POINT(0, 0)
     blend = _BlendFunction(_AC_SRC_OVER, 0, 255, _AC_SRC_ALPHA)
+    hdc_screen = _user32.GetDC(None)
     _user32.UpdateLayeredWindow(
         hwnd, hdc_screen, ctypes.byref(pt_dst), ctypes.byref(size),
-        hdc_mem, ctypes.byref(pt_src), 0, ctypes.byref(blend), _ULW_ALPHA,
+        st["dc"], ctypes.byref(pt_src), 0, ctypes.byref(blend), _ULW_ALPHA,
     )
-    _gdi32.DeleteObject(hbmp)
-    _gdi32.DeleteDC(hdc_mem)
     _user32.ReleaseDC(None, hdc_screen)
 
 
@@ -781,6 +900,79 @@ def _save_settings(**kw) -> None:
             json.dump(data, f, ensure_ascii=False)
     except OSError as e:
         _log(f"配置写盘失败 {type(e).__name__}: {e}")
+
+
+def _first_model_in(root: str) -> str:
+    """模型根目录里的第一个模型（子目录里含 .pmx）。给"不带 --model 启动"用。"""
+    if not root or not os.path.isdir(root):
+        return ""
+    try:
+        names = sorted(os.listdir(root))
+        for name in names:
+            path = os.path.join(root, name)
+            if os.path.isdir(path) and any(n.lower().endswith(".pmx") for n in os.listdir(path)):
+                return path
+        if any(n.lower().endswith(".pmx") for n in names):
+            return root  # 根目录自己就放着 .pmx
+    except OSError:
+        return ""
+    return ""
+
+
+def _remember_dirs(model_dir: str, vmd_root: str, pmx: str = "") -> None:
+    """记住这次用的模型/动作根目录：下次不带参数启动也能直接起来。
+
+    `pmx` 有值时 `last_model` 存**具体的 .pmx 文件**（菜单里"导入模型"点的是哪一支就记哪一支，
+    否则一个目录里主模型+道具混着时会重挑一次）。
+    """
+    kw = {}
+    if model_dir:
+        kw["models_dir"] = os.path.dirname(os.path.abspath(model_dir))
+        kw["last_model"] = (os.path.join(os.path.abspath(model_dir), pmx) if pmx
+                            else os.path.abspath(model_dir))
+    if vmd_root:
+        kw["motions_dir"] = os.path.abspath(vmd_root)
+    if kw:
+        _save_settings(**kw)
+
+
+def _message_box(text: str) -> None:
+    """pythonw 没有控制台，出问题只能弹窗告诉用户。"""
+    try:
+        ctypes.windll.user32.MessageBoxW(None, text, "Nyalume 3D 桌宠", 0x40)
+    except Exception:
+        pass
+
+
+def _log_launcher_chain() -> None:
+    # 顺带确认模块有没有被加载两份（这是上面 GetMessage 那个坑的根源）
+    try:
+        dupes = [m for m in sys.modules if m.endswith("pet3d_win")]
+        if len(dupes) > 1:
+            _log(f"pet3d_win 被加载了多份：{dupes}")
+    except Exception:
+        pass
+    """记一笔是谁把我拉起来的（父进程→祖父进程）。
+
+    实测她会"莫名其妙掉一下"：其实是有人（本地 Python/agent）先发一串 /pet 指令、
+    几秒后再重启她一次。桌宠自己看不出发起方，所以启动时把父进程链写进日志。
+    """
+    try:
+        import psutil  # 已经在依赖里，比拉 PowerShell 快得多
+
+        proc = psutil.Process(os.getpid())
+        for depth, label in ((1, "父进程"), (2, "祖父进程")):
+            parent = proc.parent()
+            if parent is None:
+                break
+            try:
+                cmd = " ".join(parent.cmdline())[:110]
+            except (psutil.Error, OSError):
+                cmd = parent.name()
+            _log(f"启动来源 {label}: {parent.name()} {cmd}")
+            proc = parent
+    except Exception as e:
+        _log(f"启动来源记录失败 {type(e).__name__}: {e}")
 
 
 def _write_endpoint(port: int, model_dir: str) -> None:
@@ -964,15 +1156,22 @@ class _NativeApi:
         self._talk_mode = mode if mode in proactive.TALK_MODES else "normal"
         self._chat = None
         self._chat_opening = False
-        self._style_index = int(cfg.get("style", 0) or 0)  # 上次选的风格档
+        # 上次选的风格档；没存过就用"游戏味·浓郁"(2)：环境光低、有轮廓光，
+        # 模型不容易像"柔和"那档那样被加法光洗得发灰。
+        _style = cfg.get("style", 2)
+        self._style_index = int(_style) if str(_style).strip().lstrip("-").isdigit() else 0
         self._proactive = self._talk_mode != "quiet"
         self._auto_fps = bool(cfg.get("autofps", True))
+        self._ik = bool(cfg.get("ik", True))  # 脚部 IK：换别人的动作配布对不上时可关
         self._fps_now = 0  # 当前推帧上限，0=还没同步
         self._grab_xy = None  # 这次拖拽抓在帧里的归一化位置，页面拿它射线选骨骼
         self._hook_events = 0  # DEBUG：钩子还活着吗（拿它看线程有没有被异常打死）
         self._raw_events = 0
         self._timing: list = []
         self._frame_lock = threading.Lock()
+        self._frame_slot = None        # 单槽：桥接线程只放"最新一帧"，呈递线程来取
+        self._presenter = None
+        self._frames_in = 0            # 桥接线程收到了几帧（/pet_state 用来看有没有在送）
         self._last_batch = time.time()
         self._last_present = 0.0
         self._display_fps = 0.0
@@ -982,9 +1181,8 @@ class _NativeApi:
         self._bbox_all = None  # 归一化包围盒 (x0,y0,x1,y1)：视线跟随拿它当参照
         self._win_size = tuple(win_size)  # webview 窗口尺寸（含边框），用来算边框偏移
         self._frame_size = (0, 0)  # 最近一帧的显示尺寸（设备像素）
-        self._zoom_at = None  # 滚轮时光标在帧里的位置（缩放以它为中心）
-        self._pending_resize = None  # 待生效的缩放定位，等新尺寸的帧到了再算，避免和旧帧错位
-        self._border = None  # webview 窗口比客户区大的那圈边框，只在第一帧量一次
+        self._anchored_size = (0, 0)  # 上次按锚点摆位时用的画布尺寸
+        self._zoom_at = None  # 缩放锚点：(光标屏幕x, 光标屏幕y, 归一化x, 归一化y)
 
     def _ensure_display(self, w: int, h: int) -> int:
         deadline = time.time() + 5
@@ -995,11 +1193,15 @@ class _NativeApi:
             return 0
         if not self._positioned:
             self._positioned = True
+            # 窗口本身固定铺满工作区（见 _update_layered），这里只定她那一块的初始位置：
+            # 装得下就贴右下角，装不下（放大过屏幕）就竖向居中，保证看得见她。
             x, y = _bottom_right(w, h)
             if x is None:
                 x, y = 100, 100
+            wa = _work_area()
+            if wa and h > wa[3] - wa[1]:
+                y = wa[1] + (wa[3] - wa[1] - h) // 2
             self._x, self._y = x, y
-            _user32.SetWindowPos(hwnd, -1, x, y, w, h, 0x0010)
         elif not _user32.IsWindow(hwnd):
             self._reassert(hwnd)
             return 0
@@ -1025,7 +1227,7 @@ class _NativeApi:
                     _log(f"display window was off-screen → {x},{y}")
         if self._renderer_hwnd:  # WinForms 偶尔把 WS_EX_TOOLWINDOW 改回去
             _no_taskbar(self._renderer_hwnd)
-        if hwnd and not _user32.IsWindow(hwnd):
+        if hwnd and not _is_our_window(hwnd):
             # HWND 属于创建它的消息线程；在送帧线程重建会在线程结束时再次消失。
             if not self._display_recovering and self._display_thread_id:
                 self._display_recovering = True
@@ -1033,22 +1235,59 @@ class _NativeApi:
                     self._display_thread_id, _WM_RECOVER_DISPLAY, 0, 0
                 ):
                     self._display_recovering = False
+                    if time.time() - getattr(self, "_recover_fail_log_at", 0) > 30:
+                        self._recover_fail_log_at = time.time()
+                        _log("重建请求送不出去：窗口线程可能已经不在了")
             return
         if _user32.IsWindowVisible(hwnd):
+            self._hidden_hits = 0   # 看得见就清零，别攒够 3 次把好窗口也重建了
             return
         _log("display window was hidden → re-show")
-        # 不移动不激活，只重新置顶+显示；位置由那一帧的 UpdateLayeredWindow 定
+        # 不移动不激活，只重新显示 + 置顶；位置由那一帧的 UpdateLayeredWindow 定。
+        # 光 SetWindowPos(SWP_SHOWWINDOW) 有时叫不醒被 shell 藏起来的窗口，补一次
+        # ShowWindow(SW_SHOWNOACTIVATE)——它不抢焦点，所以不会搅乱全屏游戏。
+        _user32.ShowWindow(hwnd, 4)
         _user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040)
+        # 连着几次都叫不醒（实测被 shell 藏过之后会这样）→ 升级成"销毁重建"。
+        # 2 秒一次的自查，所以 3 次 ≈ 6 秒，不至于让用户干等。
+        self._hidden_hits = getattr(self, "_hidden_hits", 0) + 1
+        if self._hidden_hits >= 3 and self._display_thread_id and not self._display_recovering:
+            self._hidden_hits = 0
+            self._display_recovering = True
+            _log("display window 叫不醒 → 重建")
+            if not _user32.PostThreadMessageW(
+                self._display_thread_id, _WM_RECOVER_DISPLAY, 1, 0
+            ):
+                self._display_recovering = False
+        return
 
     def set_frame(
         self, b64: str, encode_ms: float = 0, display_w: int = 0, display_h: int = 0
     ) -> None:
-        if not self._frame_lock.acquire(blocking=False):
-            return  # 桥接回来的旧帧会积压；正在贴新帧时直接丢掉。
-        try:
-            self._present_frame(b64, encode_ms, display_w, display_h)
-        finally:
-            self._frame_lock.release()
+        """桥接线程只做一件事：把最新一帧放进单槽就返回。
+
+        解码 + 贴窗口都挪到呈递线程 —— 那一侧偶尔会卡住（实测某次 set_frame 一直不返回，
+        把 pywebview 的桥整个堵死：画面永久停住、每 80 秒被自动重启一次）。放单槽后
+        卡住只会让画面停一小下，桥和页面都不受影响；旧帧被新帧覆盖，正好是要的语义。
+        """
+        self._frames_in += 1
+        self._frame_slot = (b64, encode_ms, display_w, display_h)
+        if self._presenter is None:
+            self._presenter = threading.Thread(target=self._present_loop, daemon=True)
+            self._presenter.start()
+            _log("呈递线程启动")
+
+    def _present_loop(self) -> None:
+        while True:
+            frame = self._frame_slot
+            if frame is None:
+                time.sleep(0.002)
+                continue
+            self._frame_slot = None
+            try:
+                self._present_frame(*frame)
+            except Exception as e:  # 呈递线程绝不能死
+                _log(f"呈递失败 {type(e).__name__}: {e}")
 
     def _present_frame(
         self, b64: str, encode_ms: float = 0, display_w: int = 0, display_h: int = 0
@@ -1058,13 +1297,23 @@ class _NativeApi:
         t0 = time.perf_counter()
         try:
             bgra, w, h, alpha = _png_to_bgra(b64, display_w, display_h)
-        except Exception:
-            _dbg("set_frame png decode FAILED")
+        except Exception as e:
+            # 这条以前只在 debug 下记：一旦开始失败，画面就永久冻住，而外面什么都看不到。
+            # 现在每次失败都记（同一原因只记一次，避免刷屏），出问题能直接定位。
+            why = f"{type(e).__name__}: {e}"
+            if why != getattr(self, "_decode_fail", None):
+                self._decode_fail = why
+                self._decode_fail_at = time.time()
+                _log(f"帧解码失败（画面会停住）{why} len(b64)={len(b64 or '')} "
+                     f"display={display_w}x{display_h}")
             return
+        if getattr(self, "_decode_fail", None):
+            _log(f"帧解码恢复（停了 {time.time() - getattr(self, '_decode_fail_at', time.time()):.1f}s）")
+            self._decode_fail = None
         t1 = time.perf_counter()
         self._alpha = alpha
+        self._last_png = b64  # 只留最新一帧的引用（~100KB）：点她不中/要拍当前姿势时落盘用
         if os.environ.get("NYALUME_PET3D_DEBUG"):
-            self._last_png = b64  # 点她不中时落盘看：到底画在哪儿
             if self._fc == 200:  # 启动几秒后自留一张原图，方便量她的颜色/透明度
                 self.dump_frame(-1, -1)
         # "她不见了但进程还在"多半就是页面送来一整张全透明帧：记一笔好定位
@@ -1072,23 +1321,16 @@ class _NativeApi:
         if blank != self._blank:
             self._blank = blank
             _log(f"frame {'blank' if blank else 'has pixels'} #{self._fc + 1}")
-        if self._border is None and self._win_size:
-            # 只有第一帧是"创建时的窗口尺寸 ↔ 客户区"，之后窗口尺寸会被缩放改掉
-            self._border = (self._win_size[0] - w, self._win_size[1] - h)
-            _dbg(f"border offset {self._border}")
         self._w, self._h = w, h  # 显示尺寸（放大后），命中判定拿它换算
         self._frame_size = (w, h)
-        pr = self._pending_resize
-        if pr is not None and (w, h) != pr["from"]:
-            # 只有帧真的换成新尺寸了才定位，位置和尺寸永远出自同一帧
-            ax, ay, ux, uy = pr["anchor"]
+        # 画布尺寸一变就按锚点重算位置 —— 锚点在滚轮那一刻就存好了（屏幕坐标 + 归一化位置），
+        # 所以**每一帧**都锚在光标那一点上（以前是等"目标尺寸的帧"到了才跳一次，
+        # 中间那几帧尺寸变了位置没变，看起来就是先漂一下再弹回去）。
+        if self._zoom_at and (w, h) != self._anchored_size:
+            ax, ay, ux, uy = self._zoom_at
             self._x = int(round(ax - ux * w))
             self._y = int(round(ay - uy * h))
-            self._pending_resize = None
-            _log(
-                f"resized → {w}x{h} at {self._x},{self._y} "
-                f"(锚点 {ax:.0f},{ay:.0f} 归一 {ux:.3f},{uy:.3f})"
-            )
+            self._anchored_size = (w, h)
         self._fc += 1
         if self._fc % 10 == 0:
             rows = np.flatnonzero(self._alpha.any(axis=1))
@@ -1110,9 +1352,23 @@ class _NativeApi:
                 self._renderer_hwnd = _hide_renderer(native)
         hwnd = self._ensure_display(w, h)
         if not hwnd:
+            # 显示窗口句柄没了：帧贴不上去，画面就永远停住。这条以前是静默的。
+            if time.time() - getattr(self, "_no_hwnd_log_at", 0) > 30:
+                self._no_hwnd_log_at = time.time()
+                _log("没有显示窗口句柄，帧丢掉了（画面会停住）")
+            # 句柄是 0 只有一种可能：显示线程已经没了 —— 那窗口永远不会再有。
+            # 自己重启一只，总比让用户对着空桌面强（120 秒内只自动重启一次）。
+            if time.time() - getattr(self, "_auto_restart_at", 0) > 120:
+                self._auto_restart_at = time.time()
+                _log("显示线程不在了 → 自动重启桌宠")
+                self.restart_with()
             return
+        t_up = time.perf_counter()
         _update_layered(hwnd, bgra, w, h, self._x, self._y)
         presented_at = time.perf_counter()
+        spent = presented_at - t_up
+        if spent > 1.0:  # 贴一帧要一秒以上：就是这里把整条推帧链卡住的（画面会停住）
+            _log(f"贴帧耗时异常 {spent:.1f}s（UpdateLayeredWindow/GDI）")
         gap = presented_at - self._last_present if self._last_present else 0.0
         self._last_present = presented_at
         self._timing.append((len(b64), t1 - t0, presented_at - t1, encode_ms, gap))
@@ -1170,6 +1426,11 @@ class _NativeApi:
         if self._menu_page == "config":
             return [
                 {"id": "page:root", "label": "← 返回"},
+                {"id": "pick:model_file", "label": "导入模型（选 .pmx 文件）…"},
+                {"id": "pick:models", "label": "导入模型文件夹…"},
+                {"id": "pick:motion_file", "label": "导入动作（选 .vmd 文件）…"},
+                {"id": "pick:motions", "label": "导入动作文件夹…"},
+                {"id": "ik", "label": "脚部 IK：" + ("开" if self._ik else "关")},
                 {"id": "open:motions", "label": "打开动作目录"},
                 {"id": "open:model", "label": "打开模型目录"},
                 {"id": "open:state", "label": "打开状态/配置目录"},
@@ -1185,7 +1446,8 @@ class _NativeApi:
             now_model = _clip(self._models[self._model_index][0], 12)
             items.append({"id": "page:models", "label": f"换模型 ▸（{now_model}）"})
         items += [
-            {"id": "style", "label": "换风格（光照+滤镜）"},
+            # 两边的箭头既是提示（左右半边可以点），也顺便说明这行是分半的
+            {"id": "style", "label": "← 换风格 →"},
             {"id": "autofps", "label": "全屏游戏自动降帧：" + ("开" if self._auto_fps else "关")},
             {"id": "quiet", "label": "手动安静：" + ("开" if self._quiet else "关")},
             {"id": "page:talk", "label": "主动搭话 ▸（" + proactive.TALK_LABELS[self._talk_mode] + "）"},
@@ -1284,12 +1546,15 @@ class _NativeApi:
             "talk_mode": self._talk_mode,
             "display_fps": self._display_fps,
             "frame_gap_p95_ms": self._frame_gap_p95_ms,
+            "last_frame_age": (round(time.perf_counter() - self._last_present, 2)
+                               if self._last_present else None),
+            "frames_in": self._frames_in,
             "pos": [self._x, self._y],
             "size": [self._w, self._h],
             "desktop": dict(self._desk),
         }
 
-    def pet_command(self, payload: dict) -> dict:
+    def pet_command(self, payload: dict, ua: str = "") -> dict:
         """动作/表情/说话/换风格/换模型 —— 一行 JSON 就能指挥她。
 
         {"action": "dance", "name": "IRIS OUT"} / {"action": "idle"} /
@@ -1298,7 +1563,9 @@ class _NativeApi:
         {"action": "model", "name": "千咲"} / {"action": "tap_bump", "kind": "dance"}
         """
         kind = str(payload.get("action") or "").strip().lower()
-        _log(f"pet cmd {kind} {json.dumps(payload, ensure_ascii=False)[:120]}")
+        # 带上发起方的 UA：排查"谁在指挥她"用（实测有人在反复打这串固定指令）
+        _log(f"pet cmd {kind} {json.dumps(payload, ensure_ascii=False)[:120]}"
+             + (f" ua={ua[:48]}" if ua else ""))
         if kind in ("dance", "idle", "say", "face", "look"):
             self._note_touch()  # 有人（agent/用户）在指挥她 = 理她了
         if kind == "dance":
@@ -1321,6 +1588,9 @@ class _NativeApi:
                 return {"ok": False, "error": "text 空"}
             self._pending = {"kind": "say", "text": text[:60]}
             return {"ok": True}
+        if kind == "shot":  # 调试：把当前这一帧原图落盘（排查"姿势不对"用）
+            self.dump_frame(-1, -1)
+            return {"ok": True, "path": os.path.join(tempfile.gettempdir(), "nyalume_pet3d_frame.png")}
         if kind == "face":
             emotion = str(payload.get("emotion") or "happy").strip()
             self._pending = {"kind": "face", "emotion": emotion}
@@ -1417,14 +1687,79 @@ class _NativeApi:
         """
         if not 0 <= index < len(self._models):
             return False
-        target = self._models[index][1]
-        argv = list(sys.argv[1:])
-        if "--model" in argv:
-            argv[argv.index("--model") + 1] = target
+        return self.restart_with(model=self._models[index][1])
+
+    def pick_folder(self, kind: str) -> None:
+        """菜单里选模型/动作文件夹：弹系统对话框，选完存盘并重启生效。"""
+        threading.Thread(target=self._pick_folder_worker, args=(kind,), daemon=True).start()
+
+    def _pick_folder_worker(self, kind: str) -> None:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            if kind == "model_file":
+                # 直接导入单个 .pmx：一个目录里塞了主模型+道具时（火花那个目录就是）
+                # 只能选文件夹会挑到道具，所以给一条"选文件"的路
+                path = filedialog.askopenfilename(
+                    title="导入模型：选 .pmx 文件",
+                    filetypes=[("MMD 模型", "*.pmx"), ("所有文件", "*.*")],
+                ) or ""
+            elif kind == "motion_file":
+                path = filedialog.askopenfilename(
+                    title="导入动作：选 .vmd 文件",
+                    filetypes=[("MMD 动作", "*.vmd"), ("所有文件", "*.*")],
+                ) or ""
+            elif kind == "models":
+                path = filedialog.askdirectory(title="导入模型文件夹（每个模型一个子目录）") or ""
+            else:
+                path = filedialog.askdirectory(title="导入动作文件夹（里面放 .vmd）") or ""
+            root.destroy()
+        except Exception as e:
+            _log(f"打开导入对话框失败 {type(e).__name__}: {e}")
+            return
+        if not path:
+            return
+        if kind == "model_file":
+            _save_settings(models_dir=os.path.dirname(path))
+            _log(f"导入模型文件 {path}")
+            self.restart_with(model=path)
+        elif kind == "motion_file":
+            _log(f"导入动作文件 {path}")
+            self.restart_with(vmd=path)
+        elif kind == "models":
+            target = _first_model_in(path)
+            if not target:
+                _log(f"选模型文件夹：{path} 里没有 .pmx")
+                self._pending = {"kind": "say", "text": "这里没有找到模型"}
+                return
+            _save_settings(models_dir=path)
+            self.restart_with(model=target)
         else:
-            argv += ["--model", target]
+            _save_settings(motions_dir=path)
+            self.restart_with(vmd=path)
+
+    def restart_with(self, model: str = "", vmd: str = "") -> bool:
+        """换模型/换动作目录：用新参数起一只新的，自己退出（运行期换太容易留脏状态）。"""
+        argv = list(sys.argv[1:])
+
+        def put(flag: str, value: str) -> None:
+            if flag in argv:
+                argv[argv.index(flag) + 1] = value
+            else:
+                # 用 extend，别用 argv += [...]：那是赋值，argv 会变成 put 的局部变量，
+                # 上面那行读 argv 直接 UnboundLocalError（换模型/换目录静默失败过）
+                argv.extend((flag, value))
+
+        if model:
+            put("--model", model)
+        if vmd:
+            put("--vmd", vmd)
         _release_single_instance()  # 先放掉独占，不然新起的自己会被自己挡掉
-        _log(f"换模型 → {target}")
+        _log(f"重启 → model={model or '-'} vmd={vmd or '-'}")
         try:
             subprocess.Popen(
                 [*_self_command(), *argv],
@@ -1432,7 +1767,7 @@ class _NativeApi:
                 creationflags=0x00000008 | 0x00000200,  # DETACHED_PROCESS|NEW_PROCESS_GROUP
             )
         except OSError as e:
-            _log(f"换模型失败：{e}")
+            _log(f"重启失败：{e}")
             return False
         self._display_hwnd = 0
         threading.Thread(target=self._destroy_window, daemon=True).start()
@@ -1458,39 +1793,16 @@ class _NativeApi:
         _log(f"style {self._style_name}")
 
     def request_resize(self, css_w: int, css_h: int, dpr: float = 1.0) -> None:
-        """页面要把桌宠整体放大/缩小：连窗口一起改，模型不会被窗口边界切掉。"""
-        if not self.enabled or not self._win_size or not self._frame_size:
+        """页面要放大/缩小"她那一块"：窗口不动，位置由 _present_frame 按锚点摆。
+
+        这里只校验参数并记一笔日志 —— 定位不在这儿做：画布是页面立刻改的、帧要晚一两拍
+        才到，只有拿到某一帧的真实尺寸才能算出"光标底下那点不动"的位置。
+        """
+        if not self.enabled or not self._frame_size:
             return
         tw = max(160, int(round(css_w * dpr)))
         th = max(160, int(round(css_h * dpr)))
-        off_w, off_h = self._border or (0, 0)
-        rw, rh = tw + off_w, th + off_h
-        if (rw, rh) == self._win_size:
-            return
-        # 以光标为中心缩放：光标底下那个点缩放前后停在同一个屏幕位置。
-        # 定位不能现在算（现在算用的是旧帧尺寸、下一条帧却是新尺寸，会一直错位累积），
-        # 先记下"屏幕锚点 + 它在帧里的归一化位置"，等新尺寸的帧到了再定 x/y。
-        if self._zoom_at and self._w and self._h:
-            px, py = self._zoom_at
-        else:
-            px, py = self._w / 2 or 1, self._h / 2 or 1
-        ax = self._x + px
-        ay = self._y + py
-        self._pending_resize = {
-            "anchor": (ax, ay, px / self._w if self._w else 0.5, py / self._h if self._h else 0.5),
-            "from": (self._w, self._h),
-        }
-        self._win_size = (rw, rh)
-        _log(f"resize {tw}x{th} → win {rw}x{rh} anchor {ax:.0f},{ay:.0f}")
-        threading.Thread(target=self._apply_resize, args=(rw, rh), daemon=True).start()
-
-    @staticmethod
-    def _apply_resize(w: int, h: int) -> None:
-        try:
-            if webview.windows:
-                webview.windows[0].resize(w, h)
-        except Exception as e:
-            _log(f"resize failed {type(e).__name__}: {e}")
+        _log(f"box {tw}x{th}（窗口不动，位置按锚点逐帧摆）")
 
     def poll_action(self):
         """页面定时来取一条待办（拖拽/点击/菜单都走这里，Python 侧永不阻塞）。"""
@@ -1655,7 +1967,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         if not isinstance(payload, dict):
             self._json({"ok": False, "error": "bad json"}, 400)
             return
-        self._json(self.api.pet_command(payload))
+        self._json(self.api.pet_command(payload, self.headers.get("User-Agent", "")))
 
 
 # 一个模型目录里常常还丢着武器/道具（火花那个目录里就有"手杖（整.pmx"）。
@@ -1833,8 +2145,26 @@ def _fps_watch(api: "_NativeApi") -> None:
     """全屏游戏在前台时把推帧降到 30：这条渲染链路会跟游戏抢 CPU/GPU（实测 62→37fps）。
     菜单里可以关掉。"""
     last_hook = last_raw = 0
+    last_mem_log = 0.0
     while True:
         time.sleep(1.5)
+        # 每 60 秒记一次 WebView / 本进程内存：排查"跑一阵就卡一下"到底跟内存涨有没有关系
+        if time.time() - last_mem_log > 60:
+            last_mem_log = time.time()
+            try:
+                import psutil
+
+                me = psutil.Process(os.getpid())
+                kids = [me] + me.children(recursive=True)
+                total = sum(p.memory_info().rss for p in kids if p.is_running())
+                web = sum(
+                    p.memory_info().rss for p in psutil.process_iter(["name", "memory_info"])
+                    if (p.info["name"] or "").startswith("msedgewebview2") and p.info["memory_info"]
+                )
+                _log(f"内存 本进程树={total/1e6:.0f}MB WebView={web/1e6:.0f}MB "
+                     f"帧={api._frames_in} 贴帧={api._fc}")
+            except Exception:
+                pass
         if os.environ.get("NYALUME_PET3D_DEBUG"):
             # 心跳：钩子/原始输入还有没有事件 + 有效光标在哪（排查"点她没反应"）
             h, r = api._hook_events, api._raw_events
@@ -1853,6 +2183,13 @@ def _fps_watch(api: "_NativeApi") -> None:
             api._fps_now = want
             api._pending = {"kind": "fps", "value": want}
             _log(f"fps \u2192 {want}")
+        # 推帧停了 20 秒 = 页面被系统节流/卡死（日志里没有任何异常的那种"冻住"）。
+        # 页面内的看门狗救不了这种情况（它自己也被停了），只能在这儿重启一只。
+        if api._last_present and time.perf_counter() - api._last_present > 20:
+            if time.time() - getattr(api, "_stale_restart_at", 0) > 120:
+                api._stale_restart_at = time.time()
+                _log(f"推帧停了 {time.perf_counter() - api._last_present:.0f} 秒 → 自动重启桌宠")
+                api.restart_with()
 
 
 def _desktop_watch(api: "_NativeApi") -> None:
@@ -2157,13 +2494,22 @@ def _battery_state() -> dict:
     }
 
 
-def _bottom_right(width: int, height: int, margin: int = 24) -> tuple[int, int] | tuple[None, None]:
-    """任务栏之外的工作区右下角；拿不到就让系统自己摆。"""
+def _work_area() -> tuple[int, int, int, int] | None:
+    """桌面工作区 (left, top, right, bottom)，不含任务栏；拿不到返回 None。"""
     rect = _Rect()
     ok = ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)
     if not ok:
+        return None
+    return rect.left, rect.top, rect.right, rect.bottom
+
+
+def _bottom_right(width: int, height: int, margin: int = 24) -> tuple[int, int] | tuple[None, None]:
+    """任务栏之外的工作区右下角；拿不到就让系统自己摆。"""
+    wa = _work_area()
+    if wa is None:
         return None, None
-    return rect.right - width - margin, rect.bottom - height - margin
+    _l, _t, right, bottom = wa
+    return right - width - margin, bottom - height - margin
 
 
 
@@ -2223,7 +2569,7 @@ def _single_instance() -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Nyalume 3D 桌宠窗口")
-    parser.add_argument("--model", required=True, help="模型目录或 .pmx 文件")
+    parser.add_argument("--model", default="", help="模型目录或 .pmx 文件；不写就用上次记住的模型文件夹")
     parser.add_argument("--size", default="440x660", help="窗口尺寸，如 440x660")
     parser.add_argument("--scale", type=float, default=1.0, help="模型缩放")
     parser.add_argument(
@@ -2232,8 +2578,8 @@ def main() -> int:
     parser.add_argument("--debug", action="store_true", help="不透明背景，方便看效果")
     parser.add_argument(
         "--vmd",
-        default=DEFAULT_VMD,
-        help="动作文件或目录；默认用自带 motions/idle.vmd，none 表示不播",
+        default="",
+        help="动作文件或目录；不写就用上次记住的动作文件夹（没有则只播自带 idle）",
     )
     parser.add_argument("--no-physics", action="store_true", help="关掉骨骼物理")
     parser.add_argument(
@@ -2246,11 +2592,34 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # 不带参数启动：用上次记住的目录（菜单里选过就记住了）
+    cfg = _load_settings()
+    if not args.model:
+        last = str(cfg.get("last_model") or "")
+        # 上次那只还在就直接开她（菜单"导入模型"记的是具体的 .pmx 文件）
+        if last and (os.path.isdir(last) or os.path.isfile(last)):
+            args.model = last
+        else:
+            args.model = _first_model_in(str(cfg.get("models_dir") or ""))
+        if not args.model:
+            _message_box(
+                "还没有模型目录。\n\n"
+                "· 把模型文件夹拖到「启动3D桌宠.cmd」上跑一次，之后就会记住；\n"
+                "· 或者右键桌宠 → 配置目录 → 导入模型…"
+            )
+            return 2
+    if not args.vmd:
+        args.vmd = str(cfg.get("motions_dir") or "") or DEFAULT_VMD
+
     if args.admin and _elevate_if_needed():
         return 0
 
     if not _single_instance():  # 提权之后才占坑，不然提权出来的自己会被自己挡掉
         _log("已经有一个桌宠在跑了，这次启动忽略")
+        # 别让用户对着"没反应"发呆：直说已经有一只了，以及怎么换掉它
+        _message_box("已经有一个桌宠在运行了。\n\n"
+                     "· 她在桌面右下角；看不到就右键菜单 → 退出，再启动这次。\n"
+                     "· 要换模型/动作：右键她 → 换模型，或配置目录 → 选择模型文件夹…")
         return 0
 
     if not os.path.isfile(THREE_ENTRY):
@@ -2263,8 +2632,16 @@ def main() -> int:
     )
 
     width, height = (int(v) for v in args.size.lower().split("x"))
+    # 可见的分层窗口固定铺满工作区（她那一块由 Python 贴进去，窗口永不改尺寸/位置），
+    # 所以这个 offscreen 的 WebView 也开成工作区大小，保证画布再大也能正常出图。
+    wa0 = _work_area()
+    win_w, win_h = (wa0[2] - wa0[0], wa0[3] - wa0[1]) if wa0 else (width, height)
     model_dir, pmx = _resolve_model(args.model)
     vmd, vmd_root = _resolve_motion(args.vmd)
+    # 下次不带参数也能起来。动作目录只在"这次给的是目录"时记：直接拖个 .vmd 文件
+    # 进来时 vmd_root 是那个文件的父目录（可能只有一支动作），记下来会把动作库换掉。
+    _remember_dirs(model_dir, vmd_root if (not args.vmd or os.path.isdir(args.vmd)) else "", pmx)
+    _log_launcher_chain()  # 谁拉起来的（排查"莫名重启一次"）
     api = _NativeApi(enabled=not args.debug, win_size=(width, height))
     api._model_dir = os.path.abspath(model_dir)
     port = start_server(model_dir, vmd_root, api)
@@ -2285,8 +2662,10 @@ def main() -> int:
         f"?pmx=/model/{urllib.parse.quote(pmx)}&scale={args.scale}&rz={args.rotate}"
         f"&motion={urllib.parse.quote(motion_url)}&idle={use_idle}"
         f"&physics={0 if args.no_physics else 1}"
+        f"&ik={int(api._ik)}"
         f"&fps={args.fps}"
         f"&style={api._style_index}&quiet={int(api._effective_quiet)}"
+        f"&box={width}x{height}"  # 她那一块画布的基准尺寸（缩放从这里乘）
     )
     if args.debug:
         rx, ry = _bottom_right(width, height)
@@ -2297,8 +2676,8 @@ def main() -> int:
     win = webview.create_window(
         "Nyalume 3D Renderer",
         url,
-        width=width,
-        height=height,
+        width=win_w,
+        height=win_h,
         x=rx,
         y=ry,
         frameless=True,
@@ -2330,7 +2709,7 @@ def main() -> int:
         api._proactive = False
         _log(f"主动搭话：关（{type(e).__name__}: {e}）")
     threading.Thread(
-        target=_display_window_thread, args=(api, win, vmd_root, model_dir), daemon=True
+        target=_display_window_thread_guarded, args=(api, win, vmd_root, model_dir), daemon=True
     ).start()
     try:
         webview.start()

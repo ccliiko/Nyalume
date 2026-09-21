@@ -30,12 +30,37 @@ import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import { MMDAnimationHelper } from 'three/addons/animation/MMDAnimationHelper.js';
 
 const params = new URLSearchParams(location.search);
+// 她那一块画布的基准尺寸（Python 用 ?box= 传进来；缺省退回窗口尺寸）。
+// 现在**画布跟窗口无关**：窗口是固定铺满屏幕的透明图层，页面只渲染"她那一块"，
+// Python 把它贴到屏幕的对应坐标。缩放 = 只改这块画布，窗口一动不动
+// （以前是缩窗口，窗口顶到屏幕极限后相机再推，就会同时被窗口上下边切掉头和脚）。
+const baseW = parseFloat((params.get('box') || '').split('x')[0]) || innerWidth;
+const baseH = parseFloat((params.get('box') || '').split('x')[1]) || innerHeight;
+// 诊断：把页面 console 的警告/错误攒起来，4 秒后转给 Python 日志（pythonw 没控制台，
+// 而 three 的 PropertyBinding 绑定失败只打 console.warn —— "腿不动"这种就得靠它看）
+const _consoleLog = [];
+for (const lv of ['warn', 'error']) {
+  const orig = console[lv].bind(console);
+  console[lv] = (...a) => {
+    try { _consoleLog.push(lv + ': ' + a.map((x) => String(x)).join(' ').slice(0, 220)); } catch (e) { /* 忽略 */ }
+    orig(...a);
+  };
+}
+setTimeout(() => {
+  const api = window.pywebview && window.pywebview.api;
+  if (api && api.motion_loaded) {
+    api.motion_loaded('[console] ' + (_consoleLog.length ? _consoleLog.slice(0, 12).join(' | ') : '干净'));
+  }
+}, 4000);
 const pmx = params.get('pmx');
 const scale = parseFloat(params.get('scale') || '1') || 1;
 const yawOffset = THREE.MathUtils.degToRad(parseFloat(params.get('rz') || '0') || 0);
 const motionUrl = params.get('motion') || '';
 const useIdle = params.get('idle') !== '0';
 const usePhysics = params.get('physics') !== '0';
+// 脚部 IK：模型自带 IK 时，舞蹈里"左足ＩＫ"那些键会把脚拽到动作作者假定
+// 的模型比例上 —— 换别人的动作配布就容易拉腿/穿模。菜单里可以关掉。
+const useIK = params.get('ik') !== '0';
 const tip = document.getElementById('tip');
 const IDLE_URL = '/motions/idle.vmd';
 window.__idleUrl = IDLE_URL;
@@ -60,11 +85,11 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setClearAlpha(0);
 const basePixelRatio = Math.min(window.devicePixelRatio, 2);
 renderer.setPixelRatio(basePixelRatio);
-renderer.setSize(innerWidth, innerHeight);
+renderer.setSize(baseW, baseH); // 画布 = 她那一块（窗口是固定全屏的透明图层，不参与）
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(28, innerWidth / innerHeight, 0.1, 4000);
+const camera = new THREE.PerspectiveCamera(28, baseW / baseH, 0.1, 4000);
 
 // MMDLoader 建几何时把 PMX 的 Z 取反（MMD 左手系 → 右手系），加载后正面朝 +Z。
 // 这个模型用 tools/pmx_probe.py 量过：脸/眼/颊都朝 +Z。换模型先跑那个脚本。
@@ -78,9 +103,9 @@ let lightPreset = 0;
 // 菜单里直接切"组合"：用户挑出来的顺眼搭配。默认柔和 + 浓郁。
 const STYLE_PRESETS = [
   { name: '柔和·浓郁', light: '柔和', grade: '浓郁' },
-  { name: '游戏味·鲜明', light: '游戏味（强对比+轮廓光）', grade: '鲜明' },
-  { name: '游戏味·浓郁', light: '游戏味（强对比+轮廓光）', grade: '浓郁' },
   { name: '柔和·鲜明', light: '柔和', grade: '鲜明' },
+  { name: '游戏味·浓郁', light: '游戏味（强对比+轮廓光）', grade: '浓郁' },
+  { name: '游戏味·鲜明', light: '游戏味（强对比+轮廓光）', grade: '鲜明' },
   { name: '原版·无滤镜', light: '原版（平光）', grade: '关' },
 ];
 let stylePreset = 0;
@@ -160,14 +185,12 @@ let leanTgt = 0;
 // 右键拖动左右转。
 let viewYaw = 0;
 let spinVel = 0;
-const baseW = innerWidth; // 缩放基准：启动时的窗口尺寸
-const baseH = innerHeight;
-let viewZoom = 1; // 实际生效的缩放（跟着 resize 回调校准）
-let viewZoomTgt = 1; // 滚轮累积的目标
+let viewZoomTgt = 1; // 滚轮累积的目标 = 画布相对基准的倍数
 let resizeTimer = null;
+let boxDirty = false; // 画布刚改过尺寸，等下一次真正渲染完再推帧（否则会推一张空白帧）
 let baseCamZ = 10;
 const ZOOM_MIN = 0.45;
-const ZOOM_MAX = 3.0; // 真正能到多大由 Python 按屏幕工作区裁
+const ZOOM_MAX = 3.0; // 画布最大 3 倍（≈1272×1863，2.4M 像素，约 27fps；再大就是拿帧率换了）
 const _grabM3 = new THREE.Matrix3();
 
 // ---- 视线跟随：光标位置 → 眼睛/脖子/头的附加旋转（附加，不覆盖舞蹈动作）----
@@ -195,9 +218,21 @@ const EMOTION_TO_REGION = {
 };
 let idleTimer = null;
 
-// 窗口尺寸变了要连窗口一起改（Python 那边同时会把位置调成"脚底和水平中心不动"）
+// 缩放：只改"她那一块"画布的大小（窗口不动），并告诉 Python 新尺寸和锚点，
+// 由 Python 把这一块贴到屏幕的对应位置。
+function applyBox() {
+  // 画布 = 她那一块（窗口是固定铺满屏幕的透明图层，不参与）
+  const w = Math.max(120, Math.round(baseW * viewZoomTgt));
+  const h = Math.max(120, Math.round(baseH * viewZoomTgt));
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  boxDirty = true; // setSize 会重建 WebGL 缓冲区（内容清空），先别推帧，等渲染完
+}
+
 function scheduleResize() {
   clearTimeout(resizeTimer);
+  applyBox();
   resizeTimer = setTimeout(() => {
     const api = window.pywebview && window.pywebview.api;
     if (api && api.request_resize) {
@@ -342,7 +377,29 @@ function frameModel(mesh) {
   baseCamZ = camera.position.z; // 缩放在这个基准上乘，别被逐帧累乘跑飞
 }
 
+// 一帧里抛异常以前会把整个 rAF 循环打死：页面还活着（/pet 还能收命令），画面却
+// 永久冻住 —— 实测切到某支舞就这样。兜住、把异常报给 Python 记一笔，循环继续跑。
+let tickErrorReported = false;
+function reportTickError(err) {
+  if (tickErrorReported) return;
+  tickErrorReported = true;
+  const text = String((err && err.stack) || err).slice(0, 220);
+  const api = window.pywebview && window.pywebview.api;
+  if (api && api.motion_loaded) api.motion_loaded('[tick 出错] ' + text);
+  else console.error(err);
+}
+
 function tick() {
+  try {
+    tickFrame();
+  } catch (err) {
+    reportTickError(err);
+  } finally {
+    requestAnimationFrame(tick);
+  }
+}
+
+function tickFrame() {
   const delta = Math.min(clock.getDelta(), 0.05);
   tunePhysics();
   if (model) {
@@ -396,6 +453,11 @@ function tick() {
       const lookBlend = frameBlend(0.12, delta);
       lookX += ((lookingBack ? 0 : lookTx) - lookX) * lookBlend;
       lookY += ((lookingBack ? 0 : lookTy) - lookY) * lookBlend;
+      // 这些旋转是"叠在动画姿态之上"的：靠动画轨每帧把骨写回去才不累积 ——
+      // 所以 idle.vmd 必须给眼球（左目/右目）也留键，否则跳完舞没人归位，
+      // 眼睛会一帧帧加下去卡在右下角（布伦妮实测，见 make_idle_vmd.py）。
+      // 眼球和头/脖子用同一个符号就行（实测用 lookdiag 报"朝前向量"验证过：
+      // 光标在左 → 头前向 x 和眼球前向 x 都是负的，两个都朝画面左）。
       for (const eye of lookBones.eyes) {
         eye.rotateY(lookX);
         eye.rotateX(lookY);
@@ -434,6 +496,10 @@ function tick() {
     settling = true;
     const api = window.pywebview && window.pywebview.api;
     if (api && api.motion_ended) api.motion_ended(mainClip.name || '');
+    // 收尾也要先回静置：待机这支动作没写到的骨头（腿/腰/头）否则会留着舞里的
+    // 最后一帧 —— 跳「女」（坐姿）收尾后就一直"跪着低头"。
+    // 舞蹈自己那条轨还在淡出，权重没收完，所以它写到的骨头不会跳。
+    resetToRestPose();
     // crossFadeTo 只配权重：淡入的那个 action 必须先 play()，否则淡完就没人驱动骨骼了
     idleAction.reset();
     idleAction.play();
@@ -441,10 +507,10 @@ function tick() {
     mainAction = null; // 动作自己会播到最后一帧，这期间权重已降到 0
   }
   renderer.render(scene, camera);
-  requestAnimationFrame(tick);
+  boxDirty = false; // 新尺寸已经画出来了，可以继续推帧
 }
 
-function showBubble(text, secs = 2.4, plain = false) {
+function showBubble(text, secs = 2.4, plain = false, drift = false) {
   // 符号（❤ ♪ ！）雅黑里没有，得让字形回落到符号字体，否则画出来是空白
   const font = '600 30px "Microsoft YaHei", "Segoe UI Symbol", "Segoe UI Emoji", system-ui, sans-serif';
   const probe = document.createElement('canvas').getContext('2d');
@@ -476,9 +542,11 @@ function showBubble(text, secs = 2.4, plain = false) {
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   if (plain) {
-    // 符号：不要底框，白描边 + 粉填充，压在什么背景上都看得清
-    g.font = '700 46px "Microsoft YaHei", "Segoe UI Symbol", "Segoe UI Emoji", sans-serif';
-    g.lineWidth = 8;
+    // 无框：白描边 + 粉填充，压在桌面/头发/衣服上都看得清
+    // 短的是符号（♥ ♪ …），用大字号；成句的台词保持正常字号
+    const big = [...text].length <= 3;
+    if (big) g.font = '700 46px "Microsoft YaHei", "Segoe UI Symbol", "Segoe UI Emoji", sans-serif';
+    g.lineWidth = big ? 8 : 6;
     g.strokeStyle = 'rgba(255,255,255,0.92)';
     g.fillStyle = '#e0559a';
     lines.forEach((line, i) => {
@@ -506,14 +574,20 @@ function showBubble(text, secs = 2.4, plain = false) {
   bubbleStart = clock.elapsedTime;
   bubbleUntil = bubbleStart + secs;
   bubble.material.opacity = 1;
-  // 符号往头顶上方 120° 扇形里随机方向飘出去（文本气泡不动）
-  if (plain) {
+  // 符号往头顶上方 120° 扇形里随机方向飘出去；台词原地不动、满不透明度
+  // 撑到时间结束（飘 = 会一路淡出，长台词就没法读了）
+  if (drift) {
     const spread = THREE.MathUtils.degToRad(120);
     const a = (Math.random() - 0.5) * spread;
     bubbleVel.set(Math.sin(a), Math.cos(a));
   } else {
     bubbleVel.set(0, 0);
   }
+}
+
+// 台词气泡停留时间：≤10 字 5 秒，之后每多 5 字 +1 秒（11–15 字 6 秒，16–20 字 7 秒…）
+function bubbleSecs(text) {
+  return 5 + Math.max(0, Math.ceil(([...String(text)].length - 10) / 5));
 }
 
 // 待机自发小动作：没人碰的时候过一会儿自己动一下（换个重心、看看别处、待久了犯困）
@@ -526,7 +600,7 @@ function idleBeat() {
   if (quietSecs > 8 && !mainAction && model) {
     if (quietSecs > 150) {
       window.__react('belly', '');
-      showBubble('zzz', 1.8, true);
+      showBubble('zzz', 1.8, true, true);
     } else {
       const regions = ['head', 'chest', 'hand', 'belly', 'skirt'];
       // 跟单击一样：弹一下 + 表情（__react 里已经带了弹跳）
@@ -704,7 +778,7 @@ window.__react = function (region, text) {
   reactLeft = 0.5;
   const symbol = SYMBOL_BY_REGION[region];
   if (text) showBubble(text);
-  else if (symbol) showBubble(symbol, 1.4, true); // 透明无框 + 往头顶飘着淡出
+  else if (symbol) showBubble(symbol, 1.4, true, true); // 透明无框 + 往头顶飘着淡出
   return true;
 };
 
@@ -715,7 +789,7 @@ window.__face = function (emotion) {
   const region = REACT_POOLS[key] ? key : (EMOTION_TO_REGION[key] || 'head');
   if (key === 'sleepy') {
     window.__react(region, '');
-    showBubble('zzz', 1.8, true);
+    showBubble('zzz', 1.8, true, true);
     return true;
   }
   return window.__react(region, '');
@@ -777,7 +851,8 @@ function applyStyle(i) {
   // 让 /pet_state 说得出当前风格，并存盘（换模型要重启，风格不能丢）
   if (api && api.style_info) api.style_info(s.name, stylePreset);
 }
-// 默认：柔和光照 + 浓郁滤镜；url 里带了 style 就用上次选的
+
+// 默认：柔和·浓郁（0，跟 Python 侧默认一致）；url 里带了 style 就用上次选的
 const styleParam = parseInt(params.get('style') || '0', 10);
 stylePreset = Number.isFinite(styleParam) ? Math.abs(styleParam) % STYLE_PRESETS.length : 0;
 applyStyle(stylePreset);
@@ -791,8 +866,25 @@ window.__styleNames = STYLE_PRESETS.map((p) => p.name);
 
 function pushFrame() {
   const api = window.pywebview && window.pywebview.api && window.pywebview.api.set_frame;
-  if (!model || !api || framesInFlight >= 2) return;
-  framesInFlight++;
+  if (!model || !api) return;
+  // 刚改过画布尺寸（缩放）：这一帧缓冲区还是空的，推出去她就闪一下，等渲染完再说
+  if (boxDirty) return;
+  const now = performance.now();
+  // 不再"等上一帧的 promise 回来才发下一帧"：桥偶尔会吞掉某次调用（promise 永不
+  // settle），那样整条推帧链就死了（实测每 80 秒卡一次）。改成按时间节流 +
+  // "没回音的帧"上限：正常就是 FPS 上限的速率，桥真堵了就停手（也不会把桥灌爆）。
+  const unacked0 = frameSentCount - frameAckedCount;
+  if (unacked0 >= 2 && now - lastFrameAt < 5) return;  // 最多两帧并行（跟旧版一致的手感）
+  if (unacked0 > 40) return;                            // 40 帧没回音 = 桥真的堵了，先停手
+  if (now - lastFrameOkAt > 2000) {
+    lastFrameOkAt = now;  // 2 秒才报一次，别刷屏
+    const api2 = window.pywebview && window.pywebview.api;
+    if (api2 && api2.motion_loaded) {
+      api2.motion_loaded(`[push] 卡住 ${((now - lastFrameOkAt) / 1000).toFixed(1)}s`
+        + ` 可见=${document.visibilityState} 画布=${renderer.domElement.width}x${renderer.domElement.height}`);
+    }
+  }
+  lastFrameAt = now;
   try {
     const t0 = performance.now();
     const src = renderer.domElement;
@@ -809,18 +901,43 @@ function pushFrame() {
     }
     const b64 = out.toDataURL('image/png').split(',')[1];
     const encodeMs = performance.now() - t0;
+    frameSentCount++;
     // 目标尺寸：渲染分辨率的倒数，Python 负责放大到这个尺寸再合成
-    Promise.resolve(api(b64, encodeMs, Math.round(innerWidth * basePixelRatio), Math.round(innerHeight * basePixelRatio)))
-      .catch(() => {})
-      .finally(() => { framesInFlight--; });
+    Promise.resolve(api(b64, encodeMs, renderer.domElement.width, renderer.domElement.height))
+      .then(() => {
+        lastFrameOkAt = performance.now();
+        frameAckedCount++;
+      })
+      .catch(() => { frameAckedCount++; });
   } catch (err) {
-    framesInFlight--;
+    frameSentCount++;  // 编码就失败：也算一帧没回音，靠上面的上限兜住
   }
 }
 
 // 抓帧放在渲染循环外面：toDataURL 要几毫秒，别拖累动画本身
-let framesInFlight = 0;
+let lastFrameOkAt = performance.now();   // 最近一次帧成功过的时间（给上面的看门狗用）
+let frameSentCount = 0;                  // 成功推出去的帧数（给下面的心跳用）
+let frameAckedCount = 0;                 // 桥回话了的帧数（和 sent 的差 = 没回音的在飞帧）
+let lastFrameAt = 0;                     // 本帧发出（编码前）的时间
 let frameTimerId = setInterval(pushFrame, 1000 / FPS);
+
+// 诊断心跳：每 10 秒看一眼"这段时间推了几帧"。正常是几百帧，明显偏少才报一次。
+// 页面被系统整体停掉时这条根本不会出现（日志里连续 20 秒没有 [beat] 就是被停）；
+// 页面活着但推不出去时会出现，还带上"在飞"的帧数和可见性。
+let lastBeatCount = 0;
+setInterval(() => {
+  const api = window.pywebview && window.pywebview.api;
+  if (!api || !api.motion_loaded) return;
+  const sent = frameSentCount - lastBeatCount;
+  lastBeatCount = frameSentCount;
+  const unacked = frameSentCount - frameAckedCount;
+  if (sent < 20 || unacked > 0) {
+    api.motion_loaded(
+      `[beat] 10s 推帧=${sent} 未回音=${unacked} `
+      + `可见=${document.visibilityState} 画布=${renderer.domElement.width}x${renderer.domElement.height}`
+    );
+  }
+}, 10000);
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -839,6 +956,33 @@ function loadVmd(loader, url, mesh) {
   );
 }
 
+// 脚部 IK 按"这支动作有没有驱动 IK 骨"自动决定。
+// MMD 的足ＩＫ是**目标点**：动作没给它写帧时，目标就钉在静置位置，解算器为了把
+// 脚踝拉到那个固定点，会把膝盖硬掰住 —— 实测「今晚战个痛快？/女.vmd」：
+// IK 开时运行时 左ひざ=0.004,0,0,1.000（完全直、腿僵住），关掉就是动作里的
+// 0.795,0.153,-0.172,0.561（屈膝 111°，和 Blender 一致）。物理开/关无关。
+// 用户仍可用菜单"脚部 IK"整只关掉（useIK=false 时这里永远不开）。
+function applyIK(clip) {
+  if (!helper) return false;
+  const hasIkTracks = Boolean(clip) && clip.tracks.some((t) => /ＩＫ|IK/.test(t.name));
+  const on = useIK && hasIkTracks;
+  helper.enable('ik', on);
+  return on;
+}
+
+// 切动作之前把骨架拉回静置姿势。
+// MMDAnimationHelper 每帧是 `_restoreBones()`（从**上一帧的快照**）+ mixer 覆盖，
+// 没被新动作写到的骨头会原样留着上一条动画的姿势 —— 跳完「女」（坐姿）点一下回待机，
+// 就会看到"跪着+低着头"卡在那儿；换别的舞则要等它自己写到那些骨头才恢复。
+// three 的 `Skeleton.pose()` 按 boneInverses 还原静置姿势，再把助手那份快照同步过去，
+// 新动作没覆盖的骨头就回到站姿，而不是停在上一支动作。
+function resetToRestPose() {
+  if (!model || !helper) return;
+  model.skeleton.pose();
+  const rec = helper.objects.get(model);
+  if (rec && typeof helper._saveBones === 'function') helper._saveBones(model);
+}
+
 async function start(mesh, loader) {
   loaderRef = loader;
   mesh.scale.multiplyScalar(scale);
@@ -848,8 +992,9 @@ async function start(mesh, loader) {
   frameModel(mesh);
   model = mesh;
   // 拆包模型的材质色阶不统一：洛茜整套是 diffuse 0.87 / ambient 0.67，其他模型都是
-  // 1.0 / 0.5 —— 渲染出来就是"灰蒙蒙、塑料感"（加载器把 ambient 又乘了 0.2，目标按 0.1）。
-  // 按整套平均归一到常用档，材质之间的相对明暗保持不变；偏得不多就不动。
+  // 1.0 / 0.5 —— 渲染出来就是"灰蒙蒙、塑料感"。基准只统计**有贴图的材质**：
+  // three 只对这类材质做 emissive *= 0.2（没贴图的保留原 ambient），混在一起算会偏。
+  // 归一到"有贴图材质"的常用档，材质之间的相对明暗保持不变；偏得不多就不动。
   {
     const seen = new Set();
     const mats = [];
@@ -862,20 +1007,33 @@ async function start(mesh, loader) {
       }
     });
     if (mats.length) {
-      const mean = (f) => mats.reduce((s, m) => s + f(m), 0) / mats.length;
+      const mapped = mats.filter((m) => m.map);
+      const base = mapped.length ? mapped : mats; // 全都没贴图就退回全部
+      const mean = (f) => base.reduce((s, m) => s + f(m), 0) / base.length;
       const dAvg = mean((m) => (m.color.r + m.color.g + m.color.b) / 3);
-      const aAvg = mean((m) => (m.emissive.r + m.emissive.g + m.emissive.b) / 3);
       const dK = dAvg > 0.05 ? 1.0 / dAvg : 1;
-      const aK = aAvg > 0.005 ? 0.1 / aAvg : 1;
-      if (Math.abs(dK - 1) > 0.12 || Math.abs(aK - 1) > 0.12) {
+      // 環境色（emissive）不再归一：它现在是乘纹理的，压到固定值反而把贴图洗白
+      if (Math.abs(dK - 1) > 0.12) {
         for (const m of mats) {
           m.color.multiplyScalar(dK);
-          m.emissive.multiplyScalar(aK);
         }
       }
     }
   }
   tick(); // 先画出静止姿态，物理/动作接着上
+  // MMD 的"環境色"是**乘纹理**再加的；MMDLoader 没贴图时直接当 emissive 常量用，
+  // 有贴图时为了别过亮乘了 0.2 —— 常量加白会把整张脸/衣服洗成灰粉色（实测锁瞑
+  // 平均饱和度 0.366 的贴图渲染出来只剩 0.124）。这里把有贴图的材质改成
+  // emissiveMap = map、并乘回 5 抵掉那个 0.2，等效于 MMD 的 tex * ambient。
+  mesh.traverse((o) => {
+    for (const m of [].concat(o.material || [])) {
+      if (m && m.map && m.emissive) {
+        m.emissiveMap = m.map;
+        m.emissive.multiplyScalar(5);
+        m.needsUpdate = true; // 多一个 define，要重编译
+      }
+    }
+  });
   lookBones = {
     // 这个模型眼球是绑在 右目/左目 上的（両目 是空壳，0 顶点）；有分眼就用分眼
     eyes: [
@@ -910,9 +1068,22 @@ async function start(mesh, loader) {
     }
     const idle = useIdle ? await loadVmd(loader, IDLE_URL, mesh) : null;
     const main = motionUrl ? await loadVmd(loader, motionUrl, mesh) : null;
-    hasClip = Boolean(main || idle);
-    helper = new MMDAnimationHelper({ afterglow: 2.0, resetPhysicsOnLoop: false });
-    helper.add(mesh, { animation: main || idle, physics: usePhysics });
+  hasClip = Boolean(main || idle);
+  helper = new MMDAnimationHelper({ afterglow: 2.0, resetPhysicsOnLoop: false });
+  helper.add(mesh, { animation: main || idle, physics: usePhysics });
+  applyIK(main || idle); // 见 applyIK：这支动作没给 IK 骨写帧就把脚部 IK 关掉
+  { // 记一笔：模型有几条 IK 链、这支动作有几条 IK 轨、IK 最终开没开（排查"腿僵住"用）
+    const rec = helper.objects.get(mesh) || {};
+    const iks = (mesh.geometry.userData.MMD && mesh.geometry.userData.MMD.iks) || [];
+    const clip = main || idle;
+    const drv = clip ? clip.tracks.filter((t) => /ＩＫ|IK/.test(t.name)).length : 0;
+    const dapi = window.pywebview && window.pywebview.api;
+    if (dapi && dapi.motion_loaded) {
+      dapi.motion_loaded(`[diag] 骨=${mesh.skeleton.bones.length} 模型IK链=${iks.length}`
+        + ` 解算器=${rec.ikSolver ? '有' : '无'} 动作IK轨=${drv}`
+        + ` 脚部IK=${useIK ? '' : '（菜单关了）'}→${helper.enabled.ik ? '开' : '关'}`);
+    }
+  }
     // 布料子步加密到 1/120：three 默认 1/65，而这些模型是游戏拆包的重物理骨架
     // （裙/发/袖/披风 400~900 个动态刚体），解算残差大 → 布料一直微抖（"抽搐"）。
     // 实测（__probeJitter，菲比待机）：1/65 抖动 40.9%，1/120 降到 20.2%，
@@ -956,23 +1127,41 @@ window.__setMotion = async function (url) {
     const mixer = helper.objects.get(model).mixer;
     const from = mainAction || idleAction;
     const clip = url ? await loadVmd(loaderRef, url, model) : null;
+    resetToRestPose(); // 见函数注释：不先回静置，上一支动作留在骨头上的姿势会卡住
     if (clip) {
+      { // 诊断：这支动作到底建出了哪些轨（腿/根被丢掉的话这里一眼看得出）
+        const tn = clip.tracks.map((t) => t.name);
+        const boneOf = (n) => (n.match(/\.bones\[(.*?)\]/) || [])[1];
+        const bones = [...new Set(tn.map(boneOf).filter(Boolean))];
+        const dapi = window.pywebview && window.pywebview.api;
+        if (dapi && dapi.motion_loaded) {
+          const miss = ['センター', '下半身', '上半身', '左足', '左ひざ', '左足首', '右足']
+            .filter((b) => !bones.includes(b));
+          dapi.motion_loaded(`[diag] VMD骨=${bones.length} 轨=${tn.length}`
+            + ` 缺=${miss.join('/') || '无'}`);
+        }
+      }
       const next = mixer.clipAction(clip);
       next.setLoop(THREE.LoopOnce);
       next.clampWhenFinished = true;
       next.reset();
       next.play();
-      if (from && from !== next) from.crossFadeTo(next, LOOP_FADE, false);
+      // 硬切，不做过渡：MMD/Blender 播放动作也是硬切，跨淡入会让 0.9 秒里出现
+      // "半待机半动作"的中间姿势（坐姿的舞就是在这段里穿模）。物理在下面
+      // settlePhysics() 里重新贴合骨骼。
+      if (from && from !== next) from.stop();
       mainClip = clip;
       mainAction = next;
       settling = false;
+      applyIK(clip);
     } else if (idleAction) {
       idleAction.reset();
       idleAction.play();
-      if (from && from !== idleAction) from.crossFadeTo(idleAction, LOOP_FADE, false);
+      if (from && from !== idleAction) from.stop();
       mainClip = null;
       mainAction = null;
       settling = false;
+      applyIK(null);
     }
     settlePhysics();
     hasClip = true;
@@ -1138,8 +1327,11 @@ async function pollActions() {
   }
   if (!action) return;
   if (action.kind !== 'look') lastTouch = Date.now(); // 视线跟随不算"被互动"
-  // 视线跟随每 40ms 就来一条，不能让它把刚弹出的菜单关掉
-  if (action.kind !== 'menu' && action.kind !== 'look') window.__menu_close();
+  // 这几类不该关菜单：视线跟随每 40ms 就来一条；她主动搭话/做个表情是"自己冒出来的"，
+  // 正在右键浏览菜单时被气泡挤掉很烦（用户反馈）。菜单自己选完会用 menu_close 关。
+  // 换风格要连点（菜单那行左右半边），所以 style/style_step 也不能关菜单
+  const keepMenu = ['menu', 'look', 'say', 'face', 'style', 'style_step'].includes(action.kind);
+  if (!keepMenu) window.__menu_close();
   if (action.kind === 'motion') {
     window.__setMotion(action.url || '');
   } else if (action.kind === 'tap') {
@@ -1163,16 +1355,24 @@ async function pollActions() {
       ? (stylePreset + 1) % STYLE_PRESETS.length
       : ((action.index % STYLE_PRESETS.length) + STYLE_PRESETS.length) % STYLE_PRESETS.length;
     applyStyle(stylePreset);
-    showBubble('风格：' + STYLE_PRESETS[stylePreset].name);
+    showBubble(STYLE_PRESETS[stylePreset].name);
+  } else if (action.kind === 'style_step') {
+    // 菜单"换风格"那一行点左右半边：±1 档，循环
+    const n = STYLE_PRESETS.length;
+    stylePreset = ((stylePreset + (action.step || 1)) % n + n) % n;
+    applyStyle(stylePreset);
+    showBubble(STYLE_PRESETS[stylePreset].name);
   } else if (action.kind === 'say') {
-    // agent 让她说一句（气泡），台词由上层写得短一点
+    // agent 让她说一句（气泡）；台词无框、按字数决定停留多久
     const say = String(action.text || '').slice(0, 40);
-    if (action.plain) showBubble(say, 1.8, true); // 透明无框（音乐 ♪ 这种）
-    else showBubble(say);
+    if (action.plain) showBubble(say, 1.8, true, true); // 透明无框（音乐 ♪ 这种）
+    else showBubble(say, bubbleSecs(say), true);
   } else if (action.kind === 'face') {
     window.__face(action.emotion);
   } else if (action.kind === 'quiet') {
     quietMode = Boolean(action.value);
+  } else if (action.kind === 'ik') {
+    if (helper) helper.enable('ik', Boolean(action.value));
   } else if (action.kind === 'switch_model') {
     const m = window.pywebview && window.pywebview.api;
     if (m && m.switch_model) m.switch_model(action.index);
@@ -1228,12 +1428,8 @@ async function pollActions() {
 
 setInterval(pollActions, 40); // 拖拽惯性要靠它跟手，别太慢
 
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-  viewZoom = innerWidth / baseW; // 跟 Python 实际给的尺寸对齐（它可能按屏幕裁过）
-});
+// 窗口固定铺满屏幕、缩放只动画布，所以这个监听基本是空转（留着兜底）。
+addEventListener('resize', applyBox);
 
 if (!pmx) {
   tip.textContent = '缺少 pmx 参数';

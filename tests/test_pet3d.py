@@ -2,6 +2,7 @@
 
 import struct
 import os
+import sys
 import threading
 import time
 import urllib.error
@@ -11,8 +12,26 @@ from pathlib import Path
 import pytest
 
 from nyalume.frontends.pet.pet3d import pet3d_win
+from nyalume.frontends.pet.pet3d import proactive
 
 VMD_MAGIC = b"Vocaloid Motion Data 0002"
+
+
+def test_proactive_log_does_not_reload_pet3d_win(tmp_path, monkeypatch):
+    """主动搭话写日志不能把 pet3d_win 加载第二份。
+
+    `ctypes.windll` 是进程级单例：第二份模块实例会把共享的
+    `UpdateLayeredWindow.argtypes` 换成它自己的 `_BlendFunction`，主实例贴帧
+    全部 `ArgumentError` → 每 80 秒"掉一下"重启，主动搭话永远等不到间隔。
+    """
+    name = "nyalume.frontends.pet.pet3d.pet3d_win"
+    monkeypatch.setattr(proactive, "_LOG_PATH", str(tmp_path / "log.txt"))
+    monkeypatch.delitem(sys.modules, name, raising=False)
+
+    proactive._log("测试")
+
+    assert name not in sys.modules, "proactive 又把 pet3d_win 加载了第二份"
+    assert "测试" in (tmp_path / "log.txt").read_text(encoding="utf-8")
 
 
 def _fake_motion() -> bytes:
@@ -163,13 +182,19 @@ def test_missing_display_requests_one_rebuild_on_owner_thread(monkeypatch):
 
 
 def test_frame_bridge_drops_overlapping_frame(monkeypatch):
+    """桥接线程只往单槽放"最新一帧"，呈递线程去解码+贴窗口：
+    旧的会被新的覆盖（可以丢），但最新那帧一定要被呈递出来。"""
     api = pet3d_win._NativeApi(enabled=False)
     presented = []
     monkeypatch.setattr(api, "_present_frame", lambda *args: presented.append(args))
-    with api._frame_lock:
-        api.set_frame("old")
+    api.set_frame("old")
     api.set_frame("new")
-    assert presented == [("new", 0, 0, 0)]
+    for _ in range(200):  # 呈递线程是异步的，等它把槽取走
+        if api._frame_slot is None and presented:
+            break
+        time.sleep(0.01)
+    assert ("new", 0, 0, 0) in presented
+    assert api._frame_slot is None
 
 
 def test_cpu_sampling_does_not_scan_every_process(monkeypatch):
@@ -304,11 +329,10 @@ def test_proactive_reply_parsing():
 
 
 def test_proactive_budget_and_ignore_escalation():
-    """打扰预算：安静模式/全屏/深夜挡住；连续被无视两次就静默一小时。"""
+    """打扰预算：安静模式/全屏挡住；连续被无视两次就静默一小时。"""
     from nyalume.frontends.pet.pet3d import proactive as P
 
     pr = P.Proposer(chat=lambda _m: '{"action": "say", "text": "嗨"}')
-    # 用固定时间做基准（跑测试时如果是深夜，所有"可以说话"的断言都会挂）
     now = time.mktime(time.strptime("2026-09-21 14:00", "%Y-%m-%d %H:%M"))
     state = {"energy": 1.0, "mood": 0.6, "last_interaction": now - 600}
     desk = {"quiet": False, "fullscreen": False, "idle_sec": 10, "category": "剪辑"}
@@ -318,12 +342,12 @@ def test_proactive_budget_and_ignore_escalation():
     assert pr.blocked({**desk, "fullscreen": True}, state, now) == "全屏（游戏/视频）"
     assert pr.blocked(desk, {**state, "last_interaction": now}, now) == "刚被碰过"
     night = time.mktime(time.strptime("2026-09-21 23:30", "%Y-%m-%d %H:%M"))
-    assert pr.blocked(desk, state, night) == "深夜"
+    assert pr.blocked(desk, state, night) == ""  # 深夜也让她说话（没声音，不吵）
 
     act = pr.propose(desk, state, "剪辑（已经 30 分钟）", now)
     assert act == {"action": "say", "text": "嗨"}
     assert pr.sent == 1 and pr.tokens > 0
-    assert "刚说过" in pr.blocked(desk, state, now + 10)
+    assert "还没到下次搭话" in pr.blocked(desk, state, now + 10)
 
     # 两次没人理 → 静默
     pr.tick_ignored(now + P.IGNORE_AFTER + 1)
@@ -383,7 +407,7 @@ def test_talk_mode_schedules_within_selected_range(mode, monkeypatch):
     assert pr.propose({}, {}, "陪伴", now) == {"action": "say", "text": "嗨"}
     assert lo <= pr.next_allowed_at - now <= hi
     assert pr.blocked({"idle_sec": 0}, {"last_interaction": now - 1000},
-                      pr.next_allowed_at - 1) == "刚说过"
+                      pr.next_allowed_at - 1) == "还没到下次搭话的间隔（或刚说过）"
 
 
 def test_manual_quiet_and_mode_are_saved(monkeypatch):
@@ -505,3 +529,64 @@ def test_frame_conversion_is_premultiplied_bgra():
     assert np.abs(got.astype(int) - want.astype(int)).max() <= 1  # PIL 四舍五入，差 1 以内
     assert got[0, 0].tolist() == [0, 0, 0, 0]
     assert np.array_equal(mask, alpha > 32)
+
+def test_restart_with_rewrites_model_flag(monkeypatch):
+    """换模型/换目录要重写 --model / --vmd。
+
+    这里踩过 UnboundLocalError：闭包 put() 里的 `argv += [...]` 是赋值，会把 argv
+    变成 put 的局部变量，于是读 argv 那行直接炸 → 异常被 pywebview 吞掉，
+    表现就是"菜单里点模型没反应"。
+    """
+    seen = {}
+    monkeypatch.setattr(pet3d_win.subprocess, "Popen",
+                        lambda argv, **kw: seen.setdefault("argv", argv))
+    monkeypatch.setattr(pet3d_win, "_log", lambda *a, **k: None)  # 别往真日志里写测试噪音
+    api = pet3d_win._NativeApi.__new__(pet3d_win._NativeApi)  # 只要 restart_with
+
+    monkeypatch.setattr(sys, "argv", ["pet3d_win", "--model", "旧模型", "--vmd", "动作目录"])
+    assert api.restart_with(model="新模型") is True
+    argv = seen["argv"]
+    assert argv[argv.index("--model") + 1] == "新模型"
+    assert argv[argv.index("--vmd") + 1] == "动作目录"  # 换模型不能顺手把动作目录丢了
+
+    seen.clear()
+    monkeypatch.setattr(sys, "argv", ["pet3d_win", "--vmd", "动作目录"])
+    assert api.restart_with(model="二号") is True  # 原来没有 --model：补上，不能崩
+    argv = seen["argv"]
+    assert argv[argv.index("--model") + 1] == "二号"
+    assert argv[argv.index("--vmd") + 1] == "动作目录"
+
+def test_menu_config_has_import_entries():
+    """配置页要有"导入模型/动作（选文件）"这两条，标签也不再是"选择文件夹"。"""
+    api = pet3d_win._NativeApi.__new__(pet3d_win._NativeApi)  # 配置页只用到这两个字段
+    api._menu_page = "config"
+    api._ik = True
+    items = {it["id"]: it["label"] for it in api.menu_items()}
+    assert items["pick:model_file"].startswith("导入模型")
+    assert items["pick:motion_file"].startswith("导入动作")
+    assert items["pick:models"].startswith("导入模型文件夹")
+    assert items["pick:motions"].startswith("导入动作文件夹")
+
+
+def test_import_model_file_uses_that_pmx(monkeypatch, tmp_path):
+    """导入单个 .pmx：模型目录记成它所在文件夹，重启参数用这个文件（不是文件夹里的第一个）。"""
+    import types
+
+    pmx = tmp_path / "主角.pmx"
+    pmx.write_bytes(b"PMX ")
+    fake_tk = types.SimpleNamespace(
+        Tk=lambda: types.SimpleNamespace(withdraw=lambda: None, attributes=lambda *a: None,
+                                         destroy=lambda: None),
+        filedialog=types.SimpleNamespace(askopenfilename=lambda **kw: str(pmx)),
+    )
+    monkeypatch.setitem(sys.modules, "tkinter", fake_tk)
+    saved, restarted = {}, {}
+    monkeypatch.setattr(pet3d_win, "_save_settings", lambda **kw: saved.update(kw))
+    monkeypatch.setattr(pet3d_win, "_log", lambda *a, **k: None)
+    api = pet3d_win._NativeApi.__new__(pet3d_win._NativeApi)
+    api.restart_with = lambda model="", vmd="": restarted.update(model=model, vmd=vmd) or True
+
+    api._pick_folder_worker("model_file")
+
+    assert restarted["model"] == str(pmx)
+    assert saved["models_dir"] == str(tmp_path)

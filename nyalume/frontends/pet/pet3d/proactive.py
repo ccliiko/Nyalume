@@ -5,7 +5,8 @@
 * 采集、判定、预算、去重全在本地做，**不花 token**；
 * 只有真的决定开口时才调一次模型，一次约 0.5k token（输入 ~500 / 输出 ~60）；
 * 搭话间隔由用户选档，间隔内不会再主动说话；全屏游戏 / 开会 /
-  深夜 / 机器满载 / 刚被碰过都不打扰；被无视两次就静默一小时。
+  机器满载 / 刚被碰过都不打扰；被无视两次就静默一小时。
+  （深夜**不**挡：她本来就没声音，半夜搭一句话反而更像陪着你。）
 
 使用与主 App 相同的 `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` 环境变量
 （默认 DeepSeek）。没配 key 或没装 openai 就整个关掉，不影响其它功能。
@@ -17,6 +18,7 @@ import json
 import os
 import random
 import re
+import tempfile
 import time
 
 TALK_MODES = {
@@ -28,7 +30,6 @@ TALK_MODES = {
 }
 TALK_LABELS = {"quiet": "安静", "reserved": "寡言", "normal": "正常",
                "chatty": "健谈", "talkative": "话痨"}
-QUIET_HOURS = (23, 8)  # 这段时间不主动说话
 RECENT_TOUCH = 180.0  # 刚被碰过就别插嘴
 IGNORE_AFTER = 600.0  # 提议后这么久还没人理 → 记一次"被无视"
 IGNORE_LIMIT = 2  # 连续被无视这么多次 → 静默
@@ -159,7 +160,7 @@ class Proposer:
         if now < self.silenced_until:
             return "静默中"
         if now < self.next_allowed_at:
-            return "刚说过"
+            return "还没到下次搭话的间隔（或刚说过）"
         if desk.get("quiet"):
             return "手动安静模式"
         if desk.get("category") == "会议" or desk.get("busy"):
@@ -170,10 +171,6 @@ class Proposer:
             return "人不在（空闲太久）"
         if now - state.get("last_interaction", 0) < RECENT_TOUCH:
             return "刚被碰过"
-        hour = time.localtime(now).tm_hour
-        lo, hi = QUIET_HOURS
-        if hour >= lo or hour < hi:
-            return "深夜"
         return ""
 
     def note_touch(self, now: float) -> None:
@@ -236,6 +233,7 @@ def run_loop(api, interval: float = 60.0) -> None:
     api._proposer = proposer
     activity_since = 0.0
     last_category = ""
+    last_block = ""
     while True:
         time.sleep(interval)
         try:
@@ -262,9 +260,15 @@ def run_loop(api, interval: float = 60.0) -> None:
             )
             if not reason:
                 continue
-            if proposer.blocked(desk, state, now,
-                                allow_idle=reason in ("battery", "idle_care")):
+            block = proposer.blocked(desk, state, now,
+                                     allow_idle=reason in ("battery", "idle_care"))
+            if block:
+                # 为什么没开口：变了一次就记一笔，排查"配了 API 却从不搭话"用
+                if block != last_block:
+                    last_block = block
+                    _log(f"主动搭话：先不说（{block}）")
                 continue
+            last_block = ""
             action = proposer.propose(desk, state, reason, now)
             if not action:
                 continue
@@ -283,6 +287,18 @@ def run_loop(api, interval: float = 60.0) -> None:
 
 
 def _log(msg: str) -> None:
-    from .pet3d_win import _log as pet_log  # 复用主日志（避免循环 import 写在函数里）
+    """直接写主日志。
 
-    pet_log(msg)
+    别 import pet3d_win：那份会变成**第二份模块实例**，而 `ctypes.windll` 是
+    进程级单例，于是它把 `UpdateLayeredWindow.argtypes` 换成它自己的
+    `_BlendFunction`，主实例从此每帧都 `ArgumentError`（实测 63 帧/秒全失败）
+    → 推帧停 20 秒 → 自动重启，循环间隔 80 秒，主动搭话永远等不到间隔。
+    """
+    try:
+        with open(_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
+
+
+_LOG_PATH = os.path.join(tempfile.gettempdir(), "nyalume_pet3d.log")
