@@ -1,9 +1,11 @@
 ﻿param(
     [string]$Version = "0.3.1",
     [switch]$PersonalAssets,
-    # 带模型/动作的个人版：把 -ModelSource 下含 .pmx 或 .vmd 的子目录一起打进包
+    # 带模型/动作的个人版：-ModelSource 下含 .pmx 的模型目录全带，动作只带 -MotionPick 白名单
     [switch]$WithModels,
-    [string]$ModelSource = "D:\download\模型",
+    # 本机素材根：模型和动作是分开的两个目录
+    [string]$ModelSource = "D:\download\模型&动作\模型",
+    [string]$MotionSource = "D:\download\模型&动作\动作",
     # 动作只挑这几个子目录进包。动作配布里混着 .blend/.blend1 工程文件（实测 600 MB），
     # 整个目录拷进去纯属白占空间，所以这里用白名单；要全带就自己传 -MotionPick @()
     [string[]]$MotionPick = @(
@@ -75,6 +77,18 @@ foreach ($notice in @("LICENSE", "EULA.md", "PRIVACY.md", "THIRD_PARTY_NOTICES.m
 # 3D 桌宠文档：说明 + 教程合成一份（docs\3D桌宠说明.md），不再按版本后缀改名
 Copy-Item -LiteralPath (Join-Path $projectRoot "docs\3D桌宠说明.md") -Destination $distDir
 
+# 固定素材目录必须解压后就看得见：启动时那句弹窗让用户"把模型放进 models\"，
+# 目录不存在的话他只能自己猜。空目录进 zip 不可靠，所以各放一行说明当占位。
+$hints = @(
+    @("models",  "放模型到这里.txt", "把模型文件夹整个放进来（每个模型一个子目录，例如 锁瞑\xxx.pmx），重启桌宠即可看见。程序不附带任何模型，请自行从作者发布处取得。"),
+    @("motions", "放动作到这里.txt", ".vmd 放进来就行，子目录会被递归查找；不放的话只播程序自带的待机动作。程序不附带任何第三方动作。")
+)
+foreach ($h in $hints) {
+    $hintDir = Join-Path $distDir $h[0]
+    New-Item -ItemType Directory -Force -Path $hintDir | Out-Null
+    Set-Content -LiteralPath (Join-Path $hintDir $h[1]) -Value $h[2] -Encoding utf8
+}
+
 # cmd.exe 只认 CRLF：仓库里的 .cmd 若是 LF（编辑器/补丁工具写出来的），双击就会
 # 把每一行拆错（报 '65001' is not recognized 之类）。拷贝时统一成 CRLF、不带 BOM。
 function Copy-CmdLauncher([string]$Source, [string]$Destination) {
@@ -87,31 +101,28 @@ Copy-CmdLauncher (Join-Path $PSScriptRoot "launch_pet3d.cmd") (Join-Path $distDi
 Copy-CmdLauncher (Join-Path $PSScriptRoot "launch_pet3d.cmd") (Join-Path $distDir "启动3D桌宠-管理员.cmd")
 
 if ($WithModels) {
-    # 只带"有模型或有动作"的子目录：没有 .pmx/.vmd 的目录（纯贴图、半成品）打进去只是白占空间
     # 布局跟不带模型的包一致：模型进 models\、动作进 motions\（程序按这两个固定目录找）。
-    # 目录名保持 ASCII：中文名在 .cmd / 代码页那边容易出问题。
     $bundleDir = Join-Path $distDir "models"
     $motionsDir = Join-Path $distDir "motions"
     New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $motionsDir | Out-Null
     $picked = @()
+    # 模型：只挑含 .pmx 的子目录（纯贴图、半成品打进去只是白占空间）
     foreach ($dir in Get-ChildItem -LiteralPath $ModelSource -Directory) {
-        $hit = Get-ChildItem -LiteralPath $dir.FullName -Recurse -File -Include *.pmx, *.vmd -ErrorAction SilentlyContinue |
+        $hit = Get-ChildItem -LiteralPath $dir.FullName -Recurse -File -Include *.pmx -ErrorAction SilentlyContinue |
             Select-Object -First 1
         if (-not $hit) { continue }
-        if ($dir.Name -eq "动作配布") {
-            New-Item -ItemType Directory -Force -Path $motionsDir | Out-Null
-            foreach ($pick in $MotionPick) {
-                $from = Join-Path $dir.FullName $pick
-                if (-not (Test-Path -LiteralPath $from)) { throw "动作目录里没有 $pick：$($dir.FullName)" }
-                Copy-Item -LiteralPath $from -Destination (Join-Path $motionsDir $pick) -Recurse
-                $picked += $pick
-            }
-        } else {
-            Copy-Item -LiteralPath $dir.FullName -Destination (Join-Path $bundleDir $dir.Name) -Recurse
-            $picked += $dir.Name
-        }
+        Copy-Item -LiteralPath $dir.FullName -Destination (Join-Path $bundleDir $dir.Name) -Recurse
+        $picked += $dir.Name
     }
-    if (-not $picked) { throw "没找到含 .pmx/.vmd 的子目录：$ModelSource" }
+    # 动作：只按白名单拷（动作目录里常混着 .blend 工程文件，整个拷会白多几百 MB）
+    foreach ($pick in $MotionPick) {
+        $from = Join-Path $MotionSource $pick
+        if (-not (Test-Path -LiteralPath $from)) { throw "动作目录里没有 $pick：$MotionSource" }
+        Copy-Item -LiteralPath $from -Destination (Join-Path $motionsDir $pick) -Recurse
+        $picked += $pick
+    }
+    if (-not $picked) { throw "没找到模型或动作：$ModelSource / $MotionSource" }
     Write-Output ("Bundled models: " + ($picked -join ", "))
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "素材声明-必读.md") -Destination (Join-Path $bundleDir "素材声明-必读.md")
 }
