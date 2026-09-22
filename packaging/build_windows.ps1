@@ -3,7 +3,14 @@
     [switch]$PersonalAssets,
     # 带模型/动作的个人版：把 -ModelSource 下含 .pmx 或 .vmd 的子目录一起打进包
     [switch]$WithModels,
-    [string]$ModelSource = "D:\download\模型"
+    [string]$ModelSource = "D:\download\模型",
+    # 动作只挑这几个子目录进包。动作配布里混着 .blend/.blend1 工程文件（实测 600 MB），
+    # 整个目录拷进去纯属白占空间，所以这里用白名单；要全带就自己传 -MotionPick @()
+    [string[]]$MotionPick = @(
+        "だいあるのーと_by_若梦Romy_4f280529292577cf776c7063ed8c41fb",
+        "IRIS OUT_by_pronxy-迫奈熏_3000e43d1f56a24c3bc1c4a6e39a1a4b",
+        "【动作配布】Stay Tonight Heaven Lee Ver"
+    )
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,8 +100,12 @@ if ($WithModels) {
         if (-not $hit) { continue }
         if ($dir.Name -eq "动作配布") {
             New-Item -ItemType Directory -Force -Path $motionsDir | Out-Null
-            Copy-Item -LiteralPath $dir.FullName -Destination $motionsDir -Recurse
-            $picked += "motions"
+            foreach ($pick in $MotionPick) {
+                $from = Join-Path $dir.FullName $pick
+                if (-not (Test-Path -LiteralPath $from)) { throw "动作目录里没有 $pick：$($dir.FullName)" }
+                Copy-Item -LiteralPath $from -Destination (Join-Path $motionsDir $pick) -Recurse
+                $picked += $pick
+            }
         } else {
             Copy-Item -LiteralPath $dir.FullName -Destination (Join-Path $bundleDir $dir.Name) -Recurse
             $picked += $dir.Name

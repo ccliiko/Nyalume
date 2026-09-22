@@ -2081,9 +2081,10 @@ def _is_motion(path: str) -> bool:
         return False
 
 
-# 现在只留 IRIS OUT 和 だいあるのーと（初音ミク版）；爱丽丝版是给那个模型专用的，
-# Shes_21_years_old 和 Stay Tonight 先不用。要换回来就改这几个关键词。
-_MOTION_SKIP = ("Shes_21_years_old", "30486ed1e37cede0feae8cb196e1b2e7", "爱丽丝")
+# 只留 IRIS OUT、だいあるのーと（初音ミク版）和 Stay Tonight；爱丽丝版是给那个模型专用的，
+# Shes_21_years_old 不用了。要换回来就改这几个关键词。
+# （Stay Tonight 的文件名是纯哈希 30486ed1…，之前连同它一起跳过，菜单里一直看不到。）
+_MOTION_SKIP = ("Shes_21_years_old", "爱丽丝")
 
 
 def _iter_vmd(root: str):
