@@ -13,5 +13,7 @@ python-docx>=1.1
 openpyxl>=3.1
 python-pptx>=1.0
 pywin32>=306; platform_system == "Windows"
+psutil>=5.9
+winsdk>=1.0.0b10; platform_system == "Windows"
 tkinterdnd2>=0.4
 playwright>=1.40

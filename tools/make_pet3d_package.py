@@ -94,6 +94,9 @@ PET_FILES = [
     "nyalume/frontends/pet/pet3d/pet3d_win.py",
     "nyalume/frontends/pet/pet3d/viewer.html",
     "nyalume/frontends/pet/pet3d/proactive.py",
+    "nyalume/frontends/pet/pet3d/model_profile.py",
+    "nyalume/frontends/pet/pet3d/motion_check.py",
+    "tools/check_motion_compat.mjs",
 ]
 
 

@@ -25,3 +25,9 @@ def test_personas_have_no_relationship_state():
     expected = {"id", "name", "prompt"}
     assert set(personas.get_persona("nyalume")) == expected
     assert set(personas.get_persona("assistant")) == expected
+
+
+def test_worldview_is_injected_only_for_character():
+    assert personas.WORLD_VIEW_PROMPT in personas.persona_base_prompt("nyalume")
+    assert personas.WORLD_VIEW_PROMPT not in personas.persona_base_prompt("assistant")
+    assert "不编造往事" in personas.persona_base_prompt("nyalume")

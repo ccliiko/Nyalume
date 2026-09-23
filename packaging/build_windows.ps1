@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$Version = "0.3.1",
+    [string]$Version = "0.3.2",
     [switch]$PersonalAssets,
     # 带模型/动作的个人版：-ModelSource 下含 .pmx 的模型目录全带，动作只带 -MotionPick 白名单
     [switch]$WithModels,

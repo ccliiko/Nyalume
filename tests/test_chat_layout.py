@@ -131,6 +131,8 @@ def chat_page():
         else:
             result = {
                 "/api/projects": [], "/api/undo": {"ops": []},
+                "/api/pet/state": {"ok": True, "模型": "测试桌宠", "当前动作": "待机",
+                                   "心情": "开心", "风格": "柔和·浓郁", "安静模式": True},
                 "/api/state": {"summary": "", "notes": [], "docs": [], "reminders": [],
                                "mode": permission["mode"], "affection": 72},
                 "/api/personas": [{"id": "nyalume", "name": "Nyalume"}],
@@ -196,12 +198,88 @@ def chat_page():
 
 
 def assert_layout(page):
+    page.wait_for_function("""() => document.querySelector('#chat-floats').getBoundingClientRect().bottom
+      <= document.querySelector('#input-row').getBoundingClientRect().top""")
     log = page.locator("#log").bounding_box()
     composer = page.locator("#input-row").bounding_box()
     assert log["y"] + log["height"] <= composer["y"] + 1
     assert log["height"] >= 150
     assert composer["y"] + composer["height"] <= page.viewport_size["height"] + 1
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_multiline_composer_and_ime(chat_page):
+    page, errors, _ = chat_page
+    composer = page.locator("#input")
+    assert composer.evaluate("el => el.tagName") == "TEXTAREA"
+    assert composer.bounding_box()["height"] >= 80
+    composer.fill("第一行")
+    composer.press("End")
+    composer.press("Shift+Enter")
+    composer.press("a")
+    expect(composer).to_have_value("第一行\na")
+    composer.dispatch_event("keydown", {"key": "Enter", "isComposing": True})
+    assert not page.evaluate("state.busy")
+    composer.press("Enter")
+    expect(page.locator("#log .msg.user").last).to_contain_text("第一行\na")
+    expect(composer).to_have_value("")
+    page.evaluate("finishReply('收到')")
+    page.wait_for_function("!state.busy")
+    composer.fill("一行\n" * 30)
+    assert composer.bounding_box()["height"] <= 185
+    for width, height in [(760, 600), (480, 640)]:
+        page.set_viewport_size({"width": width, "height": height})
+        assert_layout(page)
+    assert not errors
+
+
+def test_tables_in_history_stream_and_code(chat_page, tmp_path):
+    page, errors, _ = chat_page
+    table = "| 内容 | 复杂度 | 说明 |\n\\|:------|:--------:|------:|\n\\| **输入框** | 低 | 正常 |\n\\| | | |"
+    page.evaluate("text => append('assistant', text, 42)", table)
+    history = page.locator("#log .msg.assistant").last
+    expect(history.locator("table")).to_have_count(1)
+    expect(history.locator("th")).to_have_count(3)
+    expect(history.locator("tbody tr")).to_have_count(2)
+    expect(history.locator("td .hl")).to_have_text("输入框")
+    assert history.locator("th").nth(2).evaluate("el => el.style.textAlign") == "right"
+    page.locator("#input").fill("给我一个表格")
+    page.locator("#input").press("Enter")
+    page.evaluate("pushReply('| A | B |\\n|---|')")
+    expect(page.locator(".latest-turn table")).to_have_count(0)
+    page.evaluate("pushReply('---|\\n| 1 | 2 |')")
+    expect(page.locator(".latest-turn table")).to_have_count(1)
+    page.evaluate("finishReply('\\n')")
+    page.wait_for_function("!state.busy")
+    sample = (
+        "A | B\n--- | ---\na\\|b | `<script>alert(1)</script>`\n"
+        "`a|b` | **粗体**\n\n普通 | 文本\n\n```text\n" + table + "\n```"
+    )
+    page.evaluate("text => append('assistant', text, 43)", sample)
+    reply = page.locator("#log .msg.assistant").last
+    expect(reply.locator("table")).to_have_count(1)
+    expect(reply.locator("td").first).to_have_text("a|b")
+    expect(reply.locator("tbody tr").nth(1).locator("td").first).to_have_text("`a|b`")
+    expect(reply.locator("script")).to_have_count(0)
+    expect(reply.locator(".code-block")).to_contain_text("| 内容 |")
+    expect(reply).to_contain_text("普通 | 文本")
+    page.set_viewport_size({"width": 480, "height": 640})
+    assert_layout(page)
+    page.screenshot(path=str(tmp_path / "tables-and-composer.png"))
+    print("PREVIEW", tmp_path / "tables-and-composer.png")
+    wide = "|" + "列|" * 12 + "\n|" + "---|" * 12 + "\n|" + "内容|" * 12
+    page.evaluate("text => append('assistant', text, 44)", wide)
+    assert_layout(page)
+    wrap = page.locator(".chat-table-wrap").last
+    assert wrap.evaluate("el => el.scrollWidth > el.clientWidth")
+    assert not errors
+
+
+def test_pet_status_panel(chat_page):
+    page, errors, _ = chat_page
+    page.locator("#sec-state .side-sec-head").click()
+    expect(page.locator("#state-body")).to_contain_text("测试桌宠 · 待机 · 开心 · 柔和·浓郁 · 安静中")
+    assert not errors
 
 
 def test_user_messages_stay_in_normal_history(chat_page, tmp_path):

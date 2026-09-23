@@ -99,6 +99,14 @@
     .search-item .s { font-size: 11px; color: #8a93a3; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .search-empty { padding: 8px; color: #98a1af; font-size: 12px; text-align: center; }
     #state-body { overflow: visible; padding: 4px 10px 12px; }
+    .companion-card { border: 1px solid var(--line, #eadfe8); border-radius: 10px; padding: 10px; margin: 8px 0; overflow-wrap: anywhere; }
+    .companion-card p { margin: 5px 0; white-space: pre-wrap; }
+    .companion-card small { color: var(--ink-3); }
+    .companion-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    #companion-content { box-sizing: border-box; width: 100%; min-height: 58px; resize: vertical; font: inherit; }
+    .motion-check-scroll { overflow-x: auto; margin-top: 8px; }
+    .motion-check-scroll table { border-collapse: collapse; min-width: 380px; width: 100%; font-size: 12px; }
+    .motion-check-scroll th, .motion-check-scroll td { padding: 7px; border-bottom: 1px solid #e7dfe8; text-align: left; vertical-align: top; }
     .side-block { border-top: 1px solid #d9dee7; background: #e6ebf3; }
     .side-state { flex: 0 1 auto; overflow-y: auto; }
     .side-sec {
@@ -705,8 +713,7 @@
       .daily-nyalume-card[data-tone="lucky"] { grid-template-columns: 116px minmax(0, 1fr) auto; }
       .daily-nyalume-card[data-tone="lucky"] .daily-nyalume-portrait { width: 116px; height: 162px; }
       #sidebar { width: 160px; flex-basis: 160px; }
-      #app #input-row { flex-wrap: wrap; border-radius: 18px; gap: 4px; }
-      #app #input { order: -1; flex: 1 0 100%; }
+      #app #input-row { border-radius: 18px; gap: 4px; }
       #app #model-chip { max-width: 120px; }
       #app #send { min-width: 40px; margin-left: auto; }
     }
@@ -731,6 +738,10 @@
     }
     .msg.assistant { align-self: flex-start; width: fit-content; max-width: 90%; }
     .reply-body { white-space: pre-wrap; word-break: break-word; }
+    .chat-table-wrap { max-width: 100%; overflow-x: auto; margin: 10px 0; white-space: normal; }
+    .chat-table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    .chat-table th, .chat-table td { border: 1px solid #d0d7e2; padding: 8px 12px; min-width: 80px; }
+    .chat-table th { background: rgba(125, 145, 175, .12); font-weight: 600; }
     .time-divider {
       clear: both;
       padding: 14px 0 6px;
@@ -839,7 +850,9 @@
     .task-state { color: #8a93a3; flex: 0 0 auto; font-size: 11px; }
     .task-row .mini-btn { padding: 0 6px; }
     #input-row {
-      display: flex;
+      display: grid;
+      grid-template-columns: auto auto minmax(0, 1fr) auto;
+      grid-template-areas: "input input input input" "add permission model send";
       align-items: center;
       gap: 8px;
       max-width: 860px;
@@ -851,6 +864,11 @@
       border-radius: 26px;
       box-shadow: 0 6px 20px rgba(20, 40, 80, 0.08);
     }
+    #input-row > .add-wrap { grid-area: add; }
+    #input-row > .perm-wrap { grid-area: permission; }
+    #input-row > .model-wrap { grid-area: model; justify-self: end; min-width: 0; max-width: 100%; }
+    #input-row #model-chip { max-width: 100%; }
+    #input-row > #send { grid-area: send; }
     #add-btn {
       border: none;
       background: none;
@@ -862,12 +880,20 @@
     }
     #add-btn:hover { background: #eef1f6; color: #0b57d0; }
     #input {
-      flex: 1;
+      grid-area: input;
+      width: 100%;
+      box-sizing: border-box;
       border: none;
       outline: none;
       background: transparent;
       padding: 9px 10px;
       font-size: 14px;
+      font-family: inherit;
+      line-height: 1.5;
+      min-height: 81px;
+      max-height: min(180px, 25vh);
+      resize: none;
+      overflow-y: auto;
     }
     button[type=button] { padding: 10px 18px; cursor: pointer; }
     .msg.docs {
@@ -1539,7 +1565,7 @@
       -webkit-backdrop-filter: blur(10px);
       backdrop-filter: blur(10px);
       border: 1px solid rgba(23, 32, 64, 0.1);
-      border-radius: 999px;
+      border-radius: 22px;
       box-shadow: 0 2px 6px rgba(23, 32, 64, 0.04), 0 14px 34px rgba(23, 32, 64, 0.08);
       transition: border-color 0.2s, box-shadow 0.2s;
     }
@@ -1770,8 +1796,8 @@
         </div>
       </section>
       <section class="side-sec collapsed" id="sec-state">
-        <button class="side-sec-head" type="button">
-          <span class="mark">▸</span><span>本对话记忆 / 状态</span>
+        <button class="side-sec-head" type="button" title="打开小约定、共同经历和桌宠状态">
+          <span class="mark">▸</span><span>小约定 · 共同经历</span>
         </button>
         <div class="side-sec-body">
           <div id="state-body"><div class="state-empty">展开后选择会话显示</div></div>
@@ -1810,6 +1836,7 @@
       <div id="log"><div class="empty-hint">🐾 主人想聊点什么喵？点左侧会话或 ＋ 开始～</div></div>
       <div id="task-panel" class="hidden"></div>
       <div id="input-row">
+        <textarea id="input" rows="3" placeholder="和 Nyalume 说点什么吧～" aria-label="聊天输入" title="Enter 发送，Shift+Enter 换行" autocomplete="off"></textarea>
         <div class="add-wrap">
           <button id="add-btn" type="button" title="添加：图片 / 文件 / 文件夹">＋</button>
           <div id="add-menu">
@@ -1823,7 +1850,6 @@
           <button id="perm-btn" type="button" title="切换聊天模式与访问权限">请求审批</button>
           <div id="perm-menu"></div>
         </div>
-        <input id="input" placeholder="和 Nyalume 说点什么吧～" autocomplete="off">
         <div class="model-wrap">
           <button id="model-chip" type="button" title="切换模型">deepseek-v4-pro</button>
           <div id="model-menu"></div>
@@ -2768,12 +2794,81 @@
       el.appendChild(block);
     }
 
+    function tableCells(line) {
+      // 兼容旧回复中被转义的行首管道；单元格内的 \| 仍是文字。
+      let row = line.trim().replace(/^\\\|/, "|");
+      if (!row.includes("|")) return null;
+      if (row.startsWith("|")) row = row.slice(1);
+      if (row.endsWith("|") && !row.endsWith("\\|")) row = row.slice(0, -1);
+      const cells = [];
+      let cell = "", codeTicks = 0;
+      for (let i = 0; i < row.length; i++) {
+        if (row[i] === "\\" && row[i + 1] === "|") { cell += "|"; i++; }
+        else if (row[i] === "`") {
+          const ticks = row.slice(i).match(/^`+/)[0];
+          if (!codeTicks) codeTicks = ticks.length;
+          else if (codeTicks === ticks.length) codeTicks = 0;
+          cell += ticks;
+          i += ticks.length - 1;
+        } else if (row[i] === "|" && !codeTicks) { cells.push(cell.trim()); cell = ""; }
+        else cell += row[i];
+      }
+      cells.push(cell.trim());
+      return cells;
+    }
+
+    function appendTextBlocks(el, text) {
+      const lines = text.split("\n");
+      let plain = [];
+      const flush = () => { appendRichText(el, plain.join("\n")); plain = []; };
+      for (let i = 0; i < lines.length; i++) {
+        const header = tableCells(lines[i]);
+        const separator = i + 1 < lines.length ? tableCells(lines[i + 1]) : null;
+        if (!header || !separator || header.length !== separator.length
+            || !separator.every(cell => /^:?-+:?$/.test(cell))) {
+          plain.push(lines[i]);
+          continue;
+        }
+        flush();
+        const wrap = document.createElement("div");
+        wrap.className = "chat-table-wrap";
+        wrap.tabIndex = 0;
+        wrap.setAttribute("role", "region");
+        wrap.setAttribute("aria-label", "表格，可横向滚动");
+        const table = document.createElement("table");
+        table.className = "chat-table";
+        const head = table.createTHead(), body = table.createTBody();
+        const addRow = (section, cells, heading) => {
+          const tr = section.insertRow();
+          header.forEach((_, column) => {
+            const td = document.createElement(heading ? "th" : "td");
+            if (heading) td.scope = "col";
+            const align = separator[column];
+            td.style.textAlign = align.endsWith(":") ? (align.startsWith(":") ? "center" : "right") : "left";
+            appendRichText(td, cells[column] || "");
+            tr.appendChild(td);
+          });
+        };
+        addRow(head, header, true);
+        i += 1;
+        while (i + 1 < lines.length) {
+          const cells = tableCells(lines[i + 1]);
+          if (!cells) break;
+          addRow(body, cells, false);
+          i++;
+        }
+        wrap.appendChild(table);
+        el.appendChild(wrap);
+      }
+      flush();
+    }
+
     function richInto(el, text) {
       el.textContent = "";
       const raw = String(text || "").replace(/^#{1,6}[ \t]*/gm, "");
       raw.split("```").forEach((part, i) => {
         if (i % 2) appendCodeBlock(el, part);
-        else appendRichText(el, part);
+        else appendTextBlocks(el, part);
       });
     }
 
@@ -3037,12 +3132,94 @@
       await streamMessage(text);
     }
 
+    let lastMotionReport = null;
+    let checkingMotions = false;
+    function motionReportHtml(report) {
+      if (!report) return '';
+      if (!report.ok) return '<div class="state-empty" role="status">' + esc(report.error || '检查失败') + '</div>';
+      let html = '<div class="summary-box">' + esc('上次检查：' + report.model + ' · ' + report.motions.length + ' 支动作') + '</div>';
+      html += '<div class="motion-check-scroll"><table><thead><tr><th>动作</th><th>检查结果</th><th>缺失详情</th></tr></thead><tbody>';
+      for (const r of report.motions) {
+        const result = r.error || (r.camera_only ? '镜头/空动作' : r.moving_bone_count || r.missing_morph_count ? '需试播确认' : '未发现有效轨道缺失');
+        const detail = r.error ? '请检查动作文件' : '骨骼 ' + r.moving_bone_count + '：' + (r.moving_bones.join('、') || '无')
+          + '；表情 ' + r.missing_morph_count + '：' + (r.missing_morphs.join('、') || '无')
+          + '；全部缺失骨骼 ' + r.missing_bone_count + '（含中立轨道）';
+        html += '<tr><td>' + esc(r.name) + '</td><td>' + esc(result) + '</td><td>' + esc(detail) + '</td></tr>';
+      }
+      return html + '</tbody></table></div><div class="state-empty">' + esc(report.notice || '')
+        + (report.memory_warning ? '<br>' + esc(report.memory_warning) : '') + '</div>';
+    }
+
+    async function loadCompanion(before = 0) {
+      const host = document.getElementById('companion-list');
+      if (!host) return;
+      try {
+        const rows = await api('/api/companion?before=' + before);
+        if (!before) host.innerHTML = '';
+        host.querySelector('.companion-more')?.remove();
+        if (!rows.length && !before) host.innerHTML = '<div class="state-empty">还没有共同经历。先约定一件小事，或一起检查一次动作。</div>';
+        const labels = {proposed: '她提出的小约定 · 等你确认', active: '我们约好的事', completed: '一起完成的事 · 你已确认', recorded: '共同经历 · 本地检查记录'};
+        for (const entry of rows) {
+          const card = document.createElement('div');
+          card.className = 'companion-card';
+          const stamp = new Date(entry.updated_at * 1000).toLocaleDateString();
+          card.innerHTML = '<small>' + esc(stamp + ' · ' + labels[entry.state]) + '</small><p>' + esc(entry.content) + '</p><div class="companion-actions"></div>';
+          const actions = card.querySelector('.companion-actions');
+          const addAction = (label, action) => {
+            const button = document.createElement('button');
+            button.className = 'side-mini-btn'; button.type = 'button'; button.textContent = label;
+            button.onclick = async () => {
+              button.disabled = true;
+              try {
+                await api('/api/companion/' + entry.id, action === 'delete' ? {method: 'DELETE'} : {
+                  method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action}),
+                });
+                document.getElementById('companion-feedback').textContent = {
+                  confirm: '约好了。我们按自己的节奏来。',
+                  complete: '又多了一件一起完成的事，留在共同经历里了。',
+                  delete: '这条共同经历已删除。',
+                }[action];
+                await loadCompanion();
+              } catch (error) { document.getElementById('companion-feedback').textContent = error.message; button.disabled = false; }
+            };
+            actions.appendChild(button);
+          };
+          if (entry.state === 'proposed') addAction('好，就这么约定', 'confirm');
+          if (entry.state === 'active') addAction('我们完成了', 'complete');
+          addAction(entry.state === 'proposed' ? '先不约了' : '删除记录', 'delete');
+          host.appendChild(card);
+        }
+        if (rows.length === 50) {
+          const more = document.createElement('button');
+          more.className = 'side-mini-btn companion-more'; more.textContent = '更早的经历';
+          more.onclick = () => loadCompanion(rows.at(-1).id); host.appendChild(more);
+        }
+      } catch (error) { document.getElementById('companion-feedback').textContent = '共同经历读取失败：' + error.message; }
+    }
+
     async function renderState() {
       if (!state.currentId) return;
       try {
-        const st = await api("/api/state?session_id=" + encodeURIComponent(state.currentId));
+        const [st, pet] = await Promise.all([
+          api("/api/state?session_id=" + encodeURIComponent(state.currentId)),
+          api("/api/pet/state").catch(() => ({ ok: false })),
+        ]);
         const body = document.getElementById("state-body");
         let html = "";
+        html += '<div class="state-section">3D 桌宠 · 此次刷新</div>';
+        html += pet.ok
+          ? '<div class="summary-box">' + esc([
+              pet["模型"], pet["当前动作"], pet["心情"], pet["风格"],
+              pet["安静模式"] ? "安静中" : "陪伴中",
+            ].filter(Boolean).join(" · ")) + '</div>'
+          : '<div class="state-empty">桌宠未运行或控制口不可用</div>';
+        html += '<button id="pet-motion-check" class="side-mini-btn" type="button"' + (checkingMotions ? ' disabled' : '') + '>'
+          + (checkingMotions ? '正在检查动作…' : '检查当前模型动作库') + '</button><div id="pet-motion-report">' + motionReportHtml(lastMotionReport) + '</div>';
+        html += '<div class="state-section">共同经历 · 跨对话保留</div>'
+          + '<form id="companion-form"><label for="companion-content">约定一件想一起做的小事</label>'
+          + '<textarea id="companion-content" maxlength="200" placeholder="例如：一起整理完这周的照片"></textarea>'
+          + '<button class="side-mini-btn" type="submit">记下我们的约定</button></form>'
+          + '<div id="companion-feedback" class="state-empty" role="status"></div><div id="companion-list"></div>';
         if (st.mode === "daily") {
           html += '<div class="state-section">日常模式</div>'
             + '<div class="summary-box">当前好感度：' + Number(st.affection) + '</div>';
@@ -3078,6 +3255,36 @@
           + '<button id="backup-open" class="side-mini-btn" type="button">📂 快照目录</button></div>'
           + '<div id="backup-list"></div>';
         body.innerHTML = html;
+        document.getElementById('pet-motion-check').onclick = async (event) => {
+          if (checkingMotions) return;
+          checkingMotions = true;
+          const button = event.currentTarget;
+          button.disabled = true; button.textContent = '正在检查动作…';
+          try { lastMotionReport = await api('/api/pet/motion-check', {method: 'POST'}); }
+          catch (error) { lastMotionReport = {ok: false, error: error.message}; }
+          finally {
+            checkingMotions = false;
+            const current = document.getElementById('pet-motion-check');
+            if (current) { current.disabled = false; current.textContent = '检查当前模型动作库'; }
+          }
+          const report = document.getElementById('pet-motion-report');
+          if (report) report.innerHTML = motionReportHtml(lastMotionReport);
+          await loadCompanion();
+        };
+        document.getElementById('companion-form').onsubmit = async (event) => {
+          event.preventDefault();
+          const input = document.getElementById('companion-content');
+          const button = event.currentTarget.querySelector('button');
+          button.disabled = true;
+          try {
+            await api('/api/companion/promises', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({content: input.value})});
+            input.value = '';
+            document.getElementById('companion-feedback').textContent = '记下了。做完后再告诉她，不用赶进度。';
+            await loadCompanion();
+          } catch (error) { document.getElementById('companion-feedback').textContent = error.message; }
+          finally { button.disabled = false; }
+        };
+        await loadCompanion();
         body.querySelectorAll(".state-del").forEach((btn) => {
           btn.addEventListener("click", () => {
             if (btn.dataset.type === "note") removeNote(Number(btn.dataset.id));
@@ -4354,6 +4561,7 @@
         state.stopped = false;
         if (stoppedStatusEl) { stoppedStatusEl.remove(); stoppedStatusEl = null; }
         input.value = state.pendingMessage || "";
+        resizeInput();
         setSendIcon("idle");
         input.focus();
         return;
@@ -4442,6 +4650,7 @@
       const message = input.value.trim();
       if (!message) return;
       input.value = "";
+      resizeInput();
       state.queue.push({ id: "t" + (++taskSeq), text: message });
       renderTaskPanel();
       await drainQueue();
@@ -5441,7 +5650,17 @@ async function loadConfigForm() {
     sendBtn.textContent = "↑";
     sendBtn.title = "发送";
     sendBtn.addEventListener("click", clickSend);
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+    function resizeInput() {
+      input.style.height = "auto";
+      input.style.height = input.scrollHeight + "px";
+    }
+    input.addEventListener("input", resizeInput);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+        e.preventDefault();
+        send();
+      }
+    });
     setInterval(pollReminders, 15000);
     refreshModelChip();
 
@@ -5601,6 +5820,9 @@ async function loadConfigForm() {
       updateFloatButtons();
     });
     new ResizeObserver(() => {
+      const composer = document.getElementById("input-row");
+      document.getElementById("chat-floats").style.bottom =
+        (composer.parentElement.getBoundingClientRect().bottom - composer.getBoundingClientRect().top + 12) + "px";
       scrollLog();
       logWidth = log.clientWidth;
       logHeight = log.clientHeight;

@@ -1,4 +1,4 @@
-Nyalume 0.3.1 Windows 便携版
+Nyalume 0.3.2 Windows 便携版
 ======================
 
 开始使用

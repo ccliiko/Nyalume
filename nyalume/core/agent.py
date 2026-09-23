@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 
-from . import daily_nyalume, llm, memory, skills
+from . import companionship, daily_nyalume, llm, memory, skills
 from .tracing import Trace
 from .personas import daily_mode_prompt, persona_base_prompt, resolve_persona_id
 from .tools import (
@@ -105,6 +105,7 @@ def _system_prompt(
     base = persona_base_prompt(persona_id)
     if persona_id == "nyalume":
         base += daily_nyalume.style_prompt()
+        base += companionship.prompt_context()
     if mode == "daily":
         base += daily_mode_prompt(affection)
         if memory_context:
@@ -120,8 +121,13 @@ def _system_prompt(
         "才用 create_reminder，绝不把一次性提醒写成每分钟。"
         "只有看到工具返回了“已设好/已保存”才算完成，未调用工具不得声称已设置；"
         "查提醒用 list_reminders 以数据库为准，不要凭记忆编造。"
-        "用户要求 3D 桌宠跳舞、换表情或头顶说话时，用 pet_status 查看可用动作，"
-        "再用 pet_perform 执行；桌宠未运行时如实说明。"
+        "用户要求 3D 桌宠跳舞、换表情、看向某处或头顶说话时，用 pet_status 查看状态，"
+        "再用 pet_perform 执行；风格、模型、安静和搭话档位用 pet_configure，"
+        "只有用户明确要求时才改设置。每次只发一个动作，避免连续指令互相覆盖；"
+        "接口接收指令不代表渲染完成，桌宠未运行时如实说明。"
+        "用户要求检查模型动作兼容性时用 pet_check_motions，不凭动作名猜测。"
+        "用户想一起做一件事时可用 companion_journal 提出小约定；返回 proposed 仅表示草案，"
+        "提示用户到状态面板的共同经历中确认。不能自行把约定标记完成。"
         "整理/修改/新建文件用 file_* 工具，只能在工作目录内操作；"
         "下载文件用 web_download；网页正文/动态页面在搜索和下载拿不到内容时"
         "用 browser_read 打开读；需要点击/填表/截图时用 browser_* 工具，"

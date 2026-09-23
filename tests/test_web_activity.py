@@ -11,6 +11,12 @@ from starlette.datastructures import UploadFile
 from nyalume.frontends.web import server
 
 
+def test_pet_state_reuses_sanitized_snapshot(monkeypatch):
+    snapshot = {"ok": True, "模型": "测试", "当前动作": "待机"}
+    monkeypatch.setattr(server, "pet_status_snapshot", lambda: snapshot)
+    assert server.pet_state() == snapshot
+
+
 def test_activity_counter_tracks_overlapping_runs():
     server._active_runs = 0
     server._pet_tap_seq = 0

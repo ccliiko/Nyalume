@@ -77,6 +77,19 @@ def init_db() -> None:
                 key TEXT PRIMARY KEY,
                 value TEXT
             );
+            CREATE TABLE IF NOT EXISTS companion_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL CHECK(kind IN ('promise', 'event')),
+                state TEXT NOT NULL CHECK(state IN ('proposed', 'active', 'completed', 'recorded')),
+                content TEXT NOT NULL,
+                source TEXT NOT NULL,
+                session_id TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                confirmed_at REAL,
+                completed_at REAL,
+                event_key TEXT UNIQUE
+            );
             CREATE TABLE IF NOT EXISTS tool_audit (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT,

@@ -44,7 +44,7 @@ from urllib.request import urlopen
 import webview
 import numpy as np
 from PIL import Image
-from . import proactive
+from . import proactive, model_profile
 # 台词先关掉：有 bug 而且 OOC，保留表情+轻弹即可
 # from nyalume.frontends.pet import interactions
 
@@ -453,14 +453,7 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
     """
     api._display_thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
     api._display_hwnd = _create_layered_window()
-    motions = sorted(_iter_vmd(vmd_root)) if vmd_root and os.path.isdir(vmd_root) else []
-    api._motions = motions  # 菜单要列出来，所以挂到 api 上
-    api._motion_urls = [_motion_url(p, vmd_root) for p in motions]
-    api._models = _scan_models(model_dir)  # 邻座还有别的模型就能在菜单里换
-    api._model_index = next(
-        (i for i, (_n, p) in enumerate(api._models) if p == os.path.abspath(model_dir)), 0
-    )
-    api._model_dir = os.path.abspath(model_dir)
+    motions = api._motions
     index = {"i": 0}
     state = {"drag": None, "spin": None, "last_click": 0.0, "last_pos": (0, 0)}
 
@@ -576,8 +569,9 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
                                 "motions": vmd_root,
                                 "model": model_root if os.path.isdir(model_root) else api._model_dir,
                                 "state": _STATE_DIR,
+                                "profile": api._profile_path,
                             }.get(who, "")
-                            if target and os.path.isdir(target):
+                            if target and os.path.exists(target):
                                 try:
                                     os.startfile(target)  # noqa: S606 (本机桌面程序，路径是我们自己的)
                                     _log(f"打开目录 {target}")
@@ -1199,6 +1193,10 @@ class _NativeApi:
         self._desk = {"category": "", "title": "", "fullscreen": False,
                       "idle_sec": 0.0, "quiet": False}  # L1 采集结果
         self._model_dir = ""
+        self._model_file = ""
+        self._profile_path = ""
+        self._model_profile = model_profile.defaults()
+        self._profile_error = ""
         self._motion_urls: list = []  # 与 _motions 一一对应（/vmd/… 这种可播 URL）
         self._playing = "待机"  # 现在屏幕上在放什么（菜单光标是 _motion_index）
         self._style_name = "柔和·浓郁"
@@ -1457,7 +1455,20 @@ class _NativeApi:
 
     def menu_items(self) -> list:
         """右键菜单。动作/模型是二级页（点标题展开），不再和"下一个"重复列两遍。"""
-        if self._menu_page == "motions":
+        page, _, number = self._menu_page.partition(":")
+
+        def paginate(items):
+            content = items[1:]  # 第一项始终保留返回入口
+            last = max(0, (len(content) - 1) // 5)
+            index = min(int(number) if number.isdigit() else 0, last)
+            result = items[:1] + content[index * 5:(index + 1) * 5]
+            if index:
+                result.append({"id": f"page:{page}:{index - 1}", "label": "‹ 上一页"})
+            if index < last:
+                result.append({"id": f"page:{page}:{index + 1}", "label": f"下一页 ›  {index + 1}/{last + 1}"})
+            return result
+
+        if page == "motions":
             items = [{"id": "page:root", "label": "← 返回"}]
             if not self._motions:
                 items.append({"id": "none", "label": "（动作目录里没有 .vmd）"})
@@ -1467,29 +1478,33 @@ class _NativeApi:
                 items.append({"id": f"motion:{i}", "label": f"{mark}{name}"})
             if self._motions:
                 items.append({"id": "idle", "label": "　回到待机"})
-            return items
-        if self._menu_page == "models":
+            return paginate(items)
+        if page == "models":
             items = [{"id": "page:root", "label": "← 返回"}]
             for i, (name, _dir) in enumerate(self._models):
                 mark = "● " if i == self._model_index else "　"
                 items.append({"id": f"model:{i}", "label": f"{mark}{_clip(name, 18)}"})
-            return items
-        if self._menu_page == "talk":
+            return paginate(items)
+        if page == "talk":
             return [{"id": "page:root", "label": "← 返回"}] + [
                 {"id": f"talk:{mode}",
                  "label": ("● " if mode == self._talk_mode else "　") + proactive.TALK_LABELS[mode]}
                 for mode in proactive.TALK_MODES
             ]
-        if self._menu_page == "config":
-            return [
+        if page == "config":
+            return paginate([
                 {"id": "page:root", "label": "← 返回"},
+                {"id": "quiet", "label": "手动安静：" + ("开" if self._quiet else "关")},
+                {"id": "page:talk", "label": "主动搭话 ▸（" + proactive.TALK_LABELS[self._talk_mode] + "）"},
+                {"id": "autofps", "label": "全屏自动降帧：" + ("开" if self._auto_fps else "关")},
                 {"id": "pick:model_file", "label": "导入模型（选 .pmx 文件）…"},
                 {"id": "pick:motion_file", "label": "导入动作（选 .vmd 文件）…"},
                 {"id": "ik", "label": "脚部 IK：" + ("开" if self._ik else "关")},
                 {"id": "open:motions", "label": "打开动作目录"},
                 {"id": "open:model", "label": "打开模型目录"},
                 {"id": "open:state", "label": "打开状态/配置目录"},
-            ]
+                {"id": "open:profile", "label": "模型配置（重启生效）"},
+            ])
         now_motion = "无"
         if self._motions:
             now_motion = _clip(os.path.basename(self._motions[self._motion_index])[:-4], 12)
@@ -1504,10 +1519,7 @@ class _NativeApi:
             # 两边的箭头既是提示（左右半边可以点），也顺便说明这行是分半的
             # 箭头由页面画在这行的最左/最右（贴字时点右箭头左半边会往左切），标签只给文字
             {"id": "style", "label": "换风格"},
-            {"id": "autofps", "label": "全屏游戏自动降帧：" + ("开" if self._auto_fps else "关")},
-            {"id": "quiet", "label": "手动安静：" + ("开" if self._quiet else "关")},
-            {"id": "page:talk", "label": "主动搭话 ▸（" + proactive.TALK_LABELS[self._talk_mode] + "）"},
-            {"id": "page:config", "label": "配置目录 ▸"},
+            {"id": "page:config", "label": "设置与文件 ▸"},
             {"id": "quit", "label": "退出"},
         ]
         return items
@@ -1582,6 +1594,45 @@ class _NativeApi:
 
     # ---- 给 agent / 脚本用的本地控制口（HTTP：POST /pet、GET /pet_state）----
 
+    def configure_model(self, filename: str, scale=None, rotate=None) -> None:
+        self._model_file = os.path.abspath(filename)
+        self._profile_path = model_profile.profile_path(filename)
+        try:
+            profile = model_profile.load(filename)
+            if not os.path.exists(self._profile_path):
+                model_profile.save(filename)
+            overrides = {k: v for k, v in (("scale", scale), ("rotate", rotate)) if v is not None}
+            self._model_profile = model_profile.validate({**profile, **overrides})
+            self._profile_error = ""
+        except (OSError, ValueError) as e:
+            self._profile_error = str(e)
+            self._model_profile = model_profile.defaults()
+            _log(f"模型配置无效，使用默认值且不覆盖原文件：{e}")
+
+    def load_library(self, vmd_root: str, model_dir: str) -> None:
+        self._motions = [p for p in sorted(_iter_vmd(vmd_root))
+                         if model_profile.allows_motion(p, vmd_root, self._model_profile)] if vmd_root and os.path.isdir(vmd_root) else []
+        self._motion_urls = [_motion_url(p, vmd_root) for p in self._motions]
+        self._models = _scan_models(model_dir)
+        self._model_index = next(
+            (i for i, (_, path) in enumerate(self._models) if path == os.path.abspath(model_dir)), 0)
+        self._model_dir = os.path.abspath(model_dir)
+
+    def view_info(self, zoom, view_yaw) -> dict:
+        """页面每秒最多回报一次；不在鼠标钩子或推帧热路径写盘。"""
+        try:
+            update = {"zoom": zoom, "view_yaw": view_yaw}
+            model_profile.validate(update)
+            if self._profile_error or not self._model_file:
+                return {"ok": False, "error": "模型配置未就绪"}
+            model_profile.save(self._model_file, **update)
+            self._model_profile.update(update)
+            return {"ok": True}
+        except (OSError, ValueError) as e:
+            self._profile_error = str(e)
+            _log(f"视角保存失败：{e}")
+            return {"ok": False, "error": str(e)}
+
     def pet_state(self) -> dict:
         """她现在的样子：状态 + 在放什么 + 动作库 + 桌面情况。"""
         return {
@@ -1596,6 +1647,8 @@ class _NativeApi:
             "model": (self._models[self._model_index][0]
                       if 0 <= self._model_index < len(self._models) else ""),
             "models": [name for name, _dir in self._models],
+            "view": {k: self._model_profile[k] for k in ("scale", "rotate", "zoom", "view_yaw")},
+            "profile_error": self._profile_error,
             "style": self._style_name,
             "quiet": self._quiet,
             "effective_quiet": self._effective_quiet,
@@ -1811,6 +1864,13 @@ class _NativeApi:
                 argv.extend((flag, value))
 
         if model:
+            # 显式启动偏移只属于原模型，切换时采用目标模型自己的配置。
+            for flag in ("--scale", "--rotate"):
+                for i in range(len(argv) - 1, -1, -1):
+                    if argv[i] == flag:
+                        del argv[i:i + 2]
+                    elif argv[i].startswith(flag + "="):
+                        del argv[i]
             put("--model", model)
         if vmd:
             put("--vmd", vmd)
@@ -1999,6 +2059,13 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         return not self.headers.get("Origin")
 
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler 的命名)
+        if urllib.parse.urlparse(self.path).path == "/model_profile":
+            if not self._local_only():
+                self._json({"error": "forbidden"}, 403)
+                return
+            profile = self.api._model_profile if self.api else model_profile.defaults()
+            self._json({k: profile[k] for k in model_profile.defaults()})
+            return
         if urllib.parse.urlparse(self.path).path == "/pet_state":
             if not self._local_only() or self.api is None:
                 self._json({"ok": False, "error": "forbidden"}, 403)
@@ -2008,7 +2075,8 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self) -> None:  # noqa: N802
-        if urllib.parse.urlparse(self.path).path != "/pet":
+        path = urllib.parse.urlparse(self.path).path
+        if path not in ("/pet", "/motion_check"):
             self._json({"ok": False, "error": "not found"}, 404)
             return
         if not self._local_only() or self.api is None:
@@ -2022,6 +2090,10 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             return
         if not isinstance(payload, dict):
             self._json({"ok": False, "error": "bad json"}, 400)
+            return
+        if path == "/motion_check":
+            from .motion_check import check
+            self._json(check(self.api._model_file, list(self.api._motions)))
             return
         self._json(self.api.pet_command(payload, self.headers.get("User-Agent", "")))
 
@@ -2313,7 +2385,7 @@ def _desktop_watch(api: "_NativeApi") -> None:
         api._pet_state.tick()
 
 
-def _stdin_commands(win, vmd_root: str) -> None:
+def _stdin_commands(win, vmd_root: str, api=None) -> None:
     """转发通道：stdin 一行一命令（motion <名称> / quit）。"""
     stream = getattr(sys, "stdin", None)
     if stream is None:  # pythonw 无控制台，也没人往里写命令
@@ -2327,6 +2399,11 @@ def _stdin_commands(win, vmd_root: str) -> None:
                 win.destroy()
                 return
             if cmd.startswith("motion "):
+                if api is not None:
+                    name = cmd.split(" ", 1)[1].strip()
+                    api.pet_command({"action": "idle"} if name in ("none", "off", "")
+                                    else {"action": "dance", "name": name})
+                    continue
                 url = _motion_url(cmd.split(" ", 1)[1].strip(), vmd_root)
                 if url is None:
                     continue
@@ -2630,9 +2707,9 @@ def main() -> int:
         "--model", default="", help="模型目录或 .pmx 文件；不写就用程序根 models/ 里的第一个模型"
     )
     parser.add_argument("--size", default="440x660", help="窗口尺寸，如 440x660")
-    parser.add_argument("--scale", type=float, default=1.0, help="模型缩放")
+    parser.add_argument("--scale", type=float, default=None, help="模型缩放；默认采用该模型配置")
     parser.add_argument(
-        "--rotate", type=float, default=0.0, help="朝向偏移角度；看不到正脸时用 180"
+        "--rotate", type=float, default=None, help="朝向偏移角度；默认采用该模型配置"
     )
     parser.add_argument("--debug", action="store_true", help="不透明背景，方便看效果")
     parser.add_argument(
@@ -2700,6 +2777,11 @@ def main() -> int:
     _log_launcher_chain()  # 谁拉起来的（排查"莫名重启一次"）
     api = _NativeApi(enabled=not args.debug, win_size=(width, height))
     api._model_dir = os.path.abspath(model_dir)
+    api.configure_model(os.path.join(model_dir, pmx), args.scale, args.rotate)
+    api.load_library(vmd_root, model_dir)
+    if vmd and vmd != DEFAULT_VMD and not model_profile.allows_motion(vmd, vmd_root, api._model_profile):
+        _log("启动动作不在当前模型白名单内，回到自然待机")
+        vmd = DEFAULT_VMD
     port = start_server(model_dir, vmd_root, api)
     _write_endpoint(port, model_dir)
     motion_url, use_idle = "", 0
@@ -2715,7 +2797,7 @@ def main() -> int:
             use_idle = 1
     url = (
         f"http://127.0.0.1:{port}/viewer.html"
-        f"?pmx=/model/{urllib.parse.quote(pmx)}&scale={args.scale}&rz={args.rotate}"
+        f"?pmx=/model/{urllib.parse.quote(pmx)}"
         f"&motion={urllib.parse.quote(motion_url)}&idle={use_idle}"
         f"&physics={0 if args.no_physics else 1}"
         f"&ik={int(api._ik)}"
@@ -2747,7 +2829,7 @@ def main() -> int:
         min_size=(120, 120),
         js_api=api,
     )
-    threading.Thread(target=_stdin_commands, args=(win, vmd_root), daemon=True).start()
+    threading.Thread(target=_stdin_commands, args=(win, vmd_root, api), daemon=True).start()
     threading.Thread(target=_state_loop, args=(api,), daemon=True).start()
     threading.Thread(target=_fps_watch, args=(api,), daemon=True).start()
     threading.Thread(target=_desktop_watch, args=(api,), daemon=True).start()

@@ -558,10 +558,16 @@ def test_restart_with_rewrites_model_flag(monkeypatch):
 
 def test_menu_config_has_import_entries():
     """配置页只留"导入单个文件"两条；模型/动作目录位置固定，不再有选文件夹的入口。"""
-    api = pet3d_win._NativeApi.__new__(pet3d_win._NativeApi)  # 配置页只用到这两个字段
+    api = pet3d_win._NativeApi.__new__(pet3d_win._NativeApi)
     api._menu_page = "config"
     api._ik = True
-    items = {it["id"]: it["label"] for it in api.menu_items()}
+    api._quiet = False
+    api._auto_fps = True
+    api._talk_mode = "normal"
+    items = {}
+    for page in range(3):
+        api._menu_page = f"config:{page}"
+        items.update({it["id"]: it["label"] for it in api.menu_items()})
     assert items["pick:model_file"].startswith("导入模型")
     assert items["pick:motion_file"].startswith("导入动作")
     assert "pick:models" not in items

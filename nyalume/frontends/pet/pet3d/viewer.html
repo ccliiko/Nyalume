@@ -30,6 +30,10 @@ import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import { MMDAnimationHelper } from 'three/addons/animation/MMDAnimationHelper.js';
 
 const params = new URLSearchParams(location.search);
+const modelProfile = await fetch('/model_profile').then(response => {
+  if (!response.ok) throw new Error('模型配置读取失败');
+  return response.json();
+});
 // 她那一块画布的基准尺寸（Python 用 ?box= 传进来；缺省退回窗口尺寸）。
 // 现在**画布跟窗口无关**：窗口是固定铺满屏幕的透明图层，页面只渲染"她那一块"，
 // Python 把它贴到屏幕的对应坐标。缩放 = 只改这块画布，窗口一动不动
@@ -53,8 +57,8 @@ setTimeout(() => {
   }
 }, 4000);
 const pmx = params.get('pmx');
-const scale = parseFloat(params.get('scale') || '1') || 1;
-const yawOffset = THREE.MathUtils.degToRad(parseFloat(params.get('rz') || '0') || 0);
+const scale = parseFloat(params.get('scale') || modelProfile.scale || '1') || 1;
+const yawOffset = THREE.MathUtils.degToRad(parseFloat(params.get('rz') || modelProfile.rotate || '0') || 0);
 const motionUrl = params.get('motion') || '';
 const useIdle = params.get('idle') !== '0';
 const usePhysics = params.get('physics') !== '0';
@@ -67,8 +71,6 @@ window.__idleUrl = IDLE_URL;
 // 舞蹈收尾：不再"播完定格一会儿再淡"——定格会把最后一帧整个冻住，而很多舞的最后一帧
 // 恰好是别扭的姿势（IRIS OUT 裙摆被物理带起来、だいある 收尾一串表情归零）。
 // 改成和尾巴重叠的交叉淡出：还剩 END_FADE 秒就开始淡回待机，那段尾巴被一起淡掉。
-// 切换动作（非收尾）用的淡入淡出时长仍是 LOOP_FADE。
-const LOOP_FADE = 0.9;
 const END_FADE = 1.2;
 // 这些平滑系数原本按 60fps 写死；换到 30fps 时按实际帧时长换算，手感才一致。
 const frameBlend = (amount, delta) => 1 - Math.pow(1 - amount, delta * 60);
@@ -183,9 +185,9 @@ let leanZ = 0;
 let leanTgt = 0;
 // 视角：滚轮缩放（改的是窗口尺寸，模型按比例变大，不会被窗口边界切头切脚），
 // 右键拖动左右转。
-let viewYaw = 0;
+let viewYaw = THREE.MathUtils.degToRad(modelProfile.view_yaw || 0);
 let spinVel = 0;
-let viewZoomTgt = 1; // 滚轮累积的目标 = 画布相对基准的倍数
+let viewZoomTgt = modelProfile.zoom || 1; // 滚轮累积的目标 = 画布相对基准的倍数
 let resizeTimer = null;
 let boxDirty = false; // 画布刚改过尺寸，等下一次真正渲染完再推帧（否则会推一张空白帧）
 let baseCamZ = 10;
@@ -199,6 +201,8 @@ let lookTy = 0;
 let lookX = 0;
 let lookY = 0;
 let lookBones = null;
+let lookFrameDelta = 0;
+let physicsResetPending = false;
 let headTapAt = -10;
 const HEAD_TAP_DURATION = 0.9;
 // ---- 反应符号气泡：脸只有 40px 宽，符号比表情更容易被看到 ----
@@ -399,9 +403,41 @@ function tick() {
   }
 }
 
+function applyLookPose(delta) {
+  // 视线跟随：附加旋转，舞蹈/待机的原动作照常播
+  if (lookBones) {
+    const lookingBack = clock.elapsedTime - headTapAt < 1.3 && !mainAction;
+    const lookBlend = frameBlend(0.12, delta);
+    lookX += ((lookingBack ? 0 : lookTx) - lookX) * lookBlend;
+    lookY += ((lookingBack ? 0 : lookTy) - lookY) * lookBlend;
+    // helper 在动画之后保存干净骨骼，下一帧恢复，因此这里的附加旋转不累积。
+    // 眼球和头/脖子用同一个符号就行（实测用 lookdiag 报"朝前向量"验证过：
+    // 光标在左 → 头前向 x 和眼球前向 x 都是负的，两个都朝画面左）。
+    for (const eye of lookBones.eyes) {
+      eye.rotateY(lookX);
+      eye.rotateX(lookY);
+    }
+    // 脖子/头也跟一点点俯仰：只转眼球的话"跟不动"，看着像没在看她指的地方
+    if (lookBones.neck) {
+      lookBones.neck.rotateY(lookX * 0.35);
+      lookBones.neck.rotateX(lookY * 0.28);
+    }
+    if (lookBones.head) {
+      lookBones.head.rotateY(lookX * 0.25);
+      lookBones.head.rotateX(lookY * 0.20);
+      const age = clock.elapsedTime - headTapAt;
+      if (!mainAction && age >= 0 && age < HEAD_TAP_DURATION) {
+        // 点头只转头部，首尾都是零偏移；手臂继续使用自然站姿 VMD。
+        const phase = Math.PI * age / HEAD_TAP_DURATION;
+        lookBones.head.rotateX(0.11 * Math.sin(phase) * Math.sin(2 * phase));
+      }
+    }
+  }
+}
+
 function tickFrame() {
   const delta = Math.min(clock.getDelta(), 0.05);
-  tunePhysics();
+  lookFrameDelta = delta;
   if (model) {
     const t = clock.elapsedTime;
     let py = baseY;
@@ -444,51 +480,6 @@ function tickFrame() {
       if (t > bubbleUntil) bubble.visible = false;
     }
   }
-  if (helper) {
-    // VMD 动画、IK 和骨骼物理都在这一步推进
-    helper.update(delta);
-    // 视线跟随：附加旋转，舞蹈/待机的原动作照常播
-    if (lookBones && lookBones.eyes.length) {
-      const lookingBack = clock.elapsedTime - headTapAt < 1.3 && !mainAction;
-      const lookBlend = frameBlend(0.12, delta);
-      lookX += ((lookingBack ? 0 : lookTx) - lookX) * lookBlend;
-      lookY += ((lookingBack ? 0 : lookTy) - lookY) * lookBlend;
-      // 这些旋转是"叠在动画姿态之上"的：靠动画轨每帧把骨写回去才不累积 ——
-      // 所以 idle.vmd 必须给眼球（左目/右目）也留键，否则跳完舞没人归位，
-      // 眼睛会一帧帧加下去卡在右下角（布伦妮实测，见 make_idle_vmd.py）。
-      // 眼球和头/脖子用同一个符号就行（实测用 lookdiag 报"朝前向量"验证过：
-      // 光标在左 → 头前向 x 和眼球前向 x 都是负的，两个都朝画面左）。
-      for (const eye of lookBones.eyes) {
-        eye.rotateY(lookX);
-        eye.rotateX(lookY);
-      }
-      // 脖子/头也跟一点点俯仰：只转眼球的话"跟不动"，看着像没在看她指的地方
-      if (lookBones.neck) {
-        lookBones.neck.rotateY(lookX * 0.35);
-        lookBones.neck.rotateX(lookY * 0.28);
-      }
-      if (lookBones.head) {
-        lookBones.head.rotateY(lookX * 0.25);
-        lookBones.head.rotateX(lookY * 0.20);
-        const age = clock.elapsedTime - headTapAt;
-        if (!mainAction && age >= 0 && age < HEAD_TAP_DURATION) {
-          // 点头只转头部，首尾都是零偏移；手臂继续使用自然站姿 VMD。
-          const phase = Math.PI * age / HEAD_TAP_DURATION;
-          lookBones.head.rotateX(0.11 * Math.sin(phase) * Math.sin(2 * phase));
-        }
-      }
-    }
-    // 抓取弹簧要放在物理之后：物理每帧会把骨头写回自己的结果，先加就白加了。
-    // 每帧在当前值上叠加（不是从快照重算）——helper 每帧 restore 骨骼，不会累积
-    if (grabBone) {
-      grabOff.lerp(grabTgt, frameBlend(0.25, delta));
-      grabTgt.multiplyScalar(frameDecay(0.82, delta));
-      if (grabOff.lengthSq() > 1e-7) {
-        _grabM3.setFromMatrix4(grabBone.parent.matrixWorld).invert();
-        grabBone.position.add(grabOff.clone().applyMatrix3(_grabM3));
-      }
-    }
-  }
   // 收尾：还剩 END_FADE 秒就和待机交叉淡出（不留定格、不重启动物理）。
   // 物理全程开着：reset() 会把刚体瞬移到骨骼当前位置，那正是"裙摆忽然掀起"的来源。
   if (helper && mainAction && mainClip && !settling &&
@@ -505,6 +496,22 @@ function tickFrame() {
     idleAction.play();
     mainAction.crossFadeTo(idleAction, END_FADE, false);
     mainAction = null; // 动作自己会播到最后一帧，这期间权重已降到 0
+  }
+  if (helper) {
+    // VMD 动画、IK 和骨骼物理都在这一步推进
+    helper.update(delta);
+    // 关闭物理时 helper 不调用 onBeforePhysics，仍保留视线反馈。
+    if (!helper.objects.get(model).physics || !helper.enabled.physics) applyLookPose(delta);
+    // 抓取弹簧要放在物理之后：物理每帧会把骨头写回自己的结果，先加就白加了。
+    // 每帧在当前值上叠加（不是从快照重算）——helper 每帧 restore 骨骼，不会累积
+    if (grabBone) {
+      grabOff.lerp(grabTgt, frameBlend(0.25, delta));
+      grabTgt.multiplyScalar(frameDecay(0.82, delta));
+      if (grabOff.lengthSq() > 1e-7) {
+        _grabM3.setFromMatrix4(grabBone.parent.matrixWorld).invert();
+        grabBone.position.add(grabOff.clone().applyMatrix3(_grabM3));
+      }
+    }
   }
   renderer.render(scene, camera);
   boxDirty = false; // 新尺寸已经画出来了，可以继续推帧
@@ -768,7 +775,7 @@ window.__react = function (region, text) {
   const dict = model.morphTargetDictionary || {};
   const pool = REACT_POOLS[region];
   if (!pool) return false;
-  const combo = pool[Math.floor(Math.random() * pool.length)];
+  const combo = modelProfile.expressions?.[region] ?? pool[Math.floor(Math.random() * pool.length)];
   reactMorphs = combo
     .map((name) => dict[name])
     .filter((index) => index !== undefined);
@@ -786,6 +793,14 @@ window.__react = function (region, text) {
 // 也可以直接传部位名（head/face/chest/...）。困了就额外飘个 zzz。
 window.__face = function (emotion) {
   const key = String(emotion || 'happy').toLowerCase();
+  const custom = modelProfile.expressions?.[key];
+  if (custom) {
+    const dict = model?.morphTargetDictionary || {};
+    reactMorphs = custom.map(name => dict[name]).filter(index => index !== undefined);
+    reactLevel = 1;
+    reactHold = REACT_HOLD;
+    return true;
+  }
   const region = REACT_POOLS[key] ? key : (EMOTION_TO_REGION[key] || 'head');
   if (key === 'sleepy') {
     window.__react(region, '');
@@ -809,17 +824,16 @@ window.__tap = function (nx, ny) {
   return region;
 };
 
-// 状态映射：干活中 / 干完了。持续表情放 stateMorphs，瞬时反应走 __react。
-// 干活中/干完了。单用真面目只有 7 个像素的变化，视觉上等于没有，所以配一组
+// 状态映射：干活中持续表情，干完了只短暂反应，避免笑脸一直卡住。
+// 单用真面目只有 7 个像素的变化，视觉上等于没有，所以配一组
 const STATE_MORPHS = {
   working: ['真面目', 'ｷﾘｯ', 'じと目'], // 认真盯着
-  done: ['なごみ', '笑い'], // 完事了放松一笑
 };
 
 window.__state = function (name) {
   if (!model) return false;
   const dict = model.morphTargetDictionary || {};
-  stateMorphs = (STATE_MORPHS[name] || [])
+  stateMorphs = (modelProfile.expressions?.[name] ?? STATE_MORPHS[name] ?? [])
     .map((morph) => dict[morph])
     .filter((index) => index !== undefined);
   if (name === 'done') window.__react('head', '');
@@ -991,6 +1005,10 @@ async function start(mesh, loader) {
   mesh.updateMatrixWorld(true);
   frameModel(mesh);
   model = mesh;
+  applyBox();
+  const missingMorphs = [...new Set(Object.values(modelProfile.expressions || {}).flat())]
+    .filter(name => mesh.morphTargetDictionary[name] === undefined);
+  if (missingMorphs.length) console.warn('模型配置中不存在的表情：' + missingMorphs.join('、'));
   // 拆包模型的材质色阶不统一：洛茜整套是 diffuse 0.87 / ambient 0.67，其他模型都是
   // 1.0 / 0.5 —— 渲染出来就是"灰蒙蒙、塑料感"。基准只统计**有贴图的材质**：
   // three 只对这类材质做 emissive *= 0.2（没贴图的保留原 ambient），混在一起算会偏。
@@ -1070,7 +1088,32 @@ async function start(mesh, loader) {
     const main = motionUrl ? await loadVmd(loader, motionUrl, mesh) : null;
   hasClip = Boolean(main || idle);
   helper = new MMDAnimationHelper({ afterglow: 2.0, resetPhysicsOnLoop: false });
-  helper.add(mesh, { animation: main || idle, physics: usePhysics });
+  helper.add(mesh, { animation: main || idle, physics: usePhysics, unitStep: 1 / 120, maxStepNum: 6 });
+  // 动画/IK -> 视线/点头 -> 世界矩阵 -> 碰撞 -> 显示，头与头发使用同一帧姿态。
+  helper.onBeforePhysics = (mesh) => {
+    applyLookPose(lookFrameDelta);
+    mesh.updateMatrixWorld(true);
+    if (physicsResetPending) {
+      physicsResetPending = false;
+      const physics = helper.objects.get(mesh).physics;
+      // MMD 刚体使用未缩放坐标，与 MMDPhysics.update 的坐标约定一致。
+      const savedScale = mesh.scale.clone();
+      mesh.scale.set(1, 1, 1);
+      mesh.updateMatrixWorld(true);
+      physics.reset();
+      mesh.scale.copy(savedScale);
+      mesh.updateMatrixWorld(true);
+      // reset() 只移动刚体；清除上一支舞的速度，避免从新姿势继续被甩出去。
+      const zero = new Ammo.btVector3(0, 0, 0);
+      for (const rb of physics.bodies) {
+        if (rb.params.type === 0) continue;
+        rb.body.setLinearVelocity(zero);
+        rb.body.setAngularVelocity(zero);
+        rb.body.clearForces();
+      }
+      Ammo.destroy(zero);
+    }
+  };
   applyIK(main || idle); // 见 applyIK：这支动作没给 IK 骨写帧就把脚部 IK 关掉
   { // 记一笔：模型有几条 IK 链、这支动作有几条 IK 轨、IK 最终开没开（排查"腿僵住"用）
     const rec = helper.objects.get(mesh) || {};
@@ -1084,13 +1127,13 @@ async function start(mesh, loader) {
         + ` 脚部IK=${useIK ? '' : '（菜单关了）'}→${helper.enabled.ik ? '开' : '关'}`);
     }
   }
+    // 待机和舞蹈统一用 1/120，避免舞蹈时放粗子步加剧头发碰撞抖动。
     // 布料子步加密到 1/120：three 默认 1/65，而这些模型是游戏拆包的重物理骨架
     // （裙/发/袖/披风 400~900 个动态刚体），解算残差大 → 布料一直微抖（"抽搐"）。
     // 实测（__probeJitter，菲比待机）：1/65 抖动 40.9%，1/120 降到 20.2%，
     // 1/180 没有更好了；求解迭代次数(25)和加阻尼都基本无效，所以只动子步。
     const phys = helper.objects.get(mesh).physics;
     if (phys) {
-      phys.unitStep = 1 / 120;
       // 有些拆包模型的物理数据是垃圾：希希芙 16 根尾巴刚体质量 2.5e11（正常 1~100）、
       // 关节限制还全是 0；菲比 8 根"带子"是 1.7e6。解算器拖不动这种量级，
       // 表现就是尾巴一直往下沉（实测 8 秒沉 1.43，关物理就不动）。
@@ -1147,8 +1190,8 @@ window.__setMotion = async function (url) {
       next.reset();
       next.play();
       // 硬切，不做过渡：MMD/Blender 播放动作也是硬切，跨淡入会让 0.9 秒里出现
-      // "半待机半动作"的中间姿势（坐姿的舞就是在这段里穿模）。物理在下面
-      // settlePhysics() 里重新贴合骨骼。
+      // "半待机半动作"的中间姿势（坐姿的舞就是在这段里穿模）。物理在下一帧
+      // 新姿态就绪后重新贴合骨骼。
       if (from && from !== next) from.stop();
       mainClip = clip;
       mainAction = next;
@@ -1195,91 +1238,94 @@ function menuFrameRect() {
 }
 
 window.__menu = function (items) {
-  const pad = 10;
-  const font = '600 28px "Microsoft YaHei", system-ui, sans-serif';
-  const rowH = 46;
-  // 菜单宽度按最长的一条量出来（"全屏游戏自动降帧：开"这种长标签以前会被切掉）
+  const dpr = renderer.getPixelRatio();
+  const frameW = renderer.domElement.width;
+  const frameH = renderer.domElement.height;
+  const compact = frameH / dpr < 400;
+  const pad = 8 * dpr;
+  const rowH = (compact ? 24 : 30) * dpr;
+  const fontSize = (compact ? 13 : 14) * dpr;
+  const font = `500 ${fontSize}px "Microsoft YaHei", system-ui, sans-serif`;
   const meas = document.createElement('canvas').getContext('2d');
   meas.font = font;
-  // "换风格"那行的箭头要顶到行的两头（贴着文字时，点右箭头左半边其实落在行左半边
-  // → 往左切，很难点准，用户实测反馈）。所以那行要多留两个箭头 + 间距的宽度。
-  const arrowW = Math.ceil(Math.max(meas.measureText('←').width, meas.measureText('→').width));
-  const textW = Math.max(
-    ...items.map(
-      (it) => meas.measureText(it.label).width + (it.id === 'style' ? arrowW * 2 + 40 : 0),
-    ),
-  );
-  const width = Math.max(300, Math.ceil(textW) + 34 + pad * 2);
+  const textW = Math.max(0, ...items.map(it => meas.measureText(it.label).width));
+  const width = Math.ceil(Math.min(frameW - pad * 2, 252 * dpr,
+    Math.max(204 * dpr, textW + pad * 4)));
   const height2 = items.length * rowH + pad * 2;
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height2;
   const g = canvas.getContext('2d');
-  g.fillStyle = 'rgba(255,251,253,0.97)';
-  g.strokeStyle = 'rgba(217,79,138,0.95)';
-  g.lineWidth = 4;
+  // 分层窗口能保留真实 alpha；文字保持不透明，浅色底保证复杂桌面上的对比。
+  g.fillStyle = 'rgba(250,248,252,0.87)';
+  g.strokeStyle = 'rgba(255,255,255,0.72)';
+  g.lineWidth = dpr;
   g.beginPath();
-  g.roundRect(3, 3, width - 6, height2 - 6, 18);
+  g.roundRect(dpr, dpr, width - 2 * dpr, height2 - 2 * dpr, 12 * dpr);
   g.fill();
   g.stroke();
   g.font = font;
   g.textBaseline = 'middle';
-  g.fillStyle = '#c8386f';
+  const shorten = (label, maxWidth) => {
+    if (g.measureText(label).width <= maxWidth) return label;
+    const chars = [...label];
+    while (chars.length && g.measureText(chars.join('') + '…').width > maxWidth) chars.pop();
+    return chars.join('') + '…';
+  };
   items.forEach((item, i) => {
-    const y = pad + rowH * i + rowH / 2;
-    if (item.id === 'style') {
-      // 一个最左、一个最右：点哪半边就换哪边，箭头位置和结果对得上
-      g.fillText('←', 34, y);
-      g.fillText(item.label, 34 + arrowW + 20, y);
-      g.fillText('→', width - 34 - arrowW, y);
-      return;
+    const y = pad + rowH * i;
+    const selected = /^[●▶]/.test(item.label);
+    if (selected) {
+      g.fillStyle = 'rgba(198,95,142,0.12)';
+      g.beginPath();
+      g.roundRect(pad, y + 2 * dpr, width - pad * 2, rowH - 4 * dpr, 6 * dpr);
+      g.fill();
     }
-    g.fillText(item.label, 34, y);
+    g.fillStyle = selected ? '#923660' : item.id === 'quit' ? '#7a6875' : '#34313e';
+    if (item.id === 'style') {
+      g.textAlign = 'left';
+      g.fillText('‹', pad * 2, y + rowH / 2);
+      g.textAlign = 'center';
+      g.fillText(item.label, width / 2, y + rowH / 2);
+      g.textAlign = 'right';
+      g.fillText('›', width - pad * 2, y + rowH / 2);
+      g.textAlign = 'left';
+    } else {
+      g.fillText(shorten(item.label, width - pad * 4), pad * 2, y + rowH / 2);
+    }
   });
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   if (!menuSprite) {
     menuSprite = new THREE.Sprite(
-      new THREE.SpriteMaterial({ transparent: true, depthTest: false }),
+      new THREE.SpriteMaterial({ transparent: true, depthTest: false, toneMapped: false }),
     );
-    // 只有 depthTest:false 不够：透明物体还是按 z 从远到近画，墨镜那种半透明材质
-    // 离相机更近就后画，会把菜单盖住（火花/洛茜实测）。renderOrder 大的最后画。
     menuSprite.renderOrder = 999;
     scene.add(menuSprite);
   }
+  menuSprite.material.map?.dispose();
   menuSprite.material.map = texture;
   menuSprite.material.needsUpdate = true;
-  const unit = height * 0.0015;
-  // 菜单必须在窗口里放得下：按帧尺寸算一次缩放系数（条目多了/窗口小了就整体缩小）
-  const frameW = renderer.domElement.width;
-  const frameH = renderer.domElement.height;
   const pxPerUnit = pixelsPerUnit(MENU_Z);
-  const fit = Math.min(
-    1,
-    (frameW * 0.92) / (width * unit * pxPerUnit),
-    (frameH * 0.92) / (height2 * unit * pxPerUnit),
-  );
-  menuSprite.scale.set(width * unit * fit, height2 * unit * fit, 1);
-  // 菜单在 z=MENU_Z 平面；显示范围和命中区域都用该平面的透视比例。
-  const frameTop = frameH / (2 * pxPerUnit);
-  const menuH = height2 * unit * fit; // 用缩放后的高度定中心，不然缩小过的菜单会偏上
+  const fit = Math.min(1, (frameH - pad * 2) / height2);
+  const w = width * fit, h = height2 * fit;
+  menuSprite.scale.set(w / pxPerUnit, h / pxPerUnit, 1);
+  // 靠右下留出头部；布局用帧像素计算，独立于模型身高和缩放。
   menuSprite.position.set(
-    0,
-    frameTop - 12 / pxPerUnit - menuH / 2,
+    (frameW / 2 - pad - w / 2) / pxPerUnit,
+    (-frameH / 2 + pad + h / 2) / pxPerUnit,
     MENU_Z,
   );
   menuSprite.visible = true;
-
   const rect = menuFrameRect();
-  const scale = rect.w / width;
   const rects = items.map((item, i) => ({
     id: item.id,
-    x: rect.x,
-    y: rect.y + (pad + i * rowH) * scale,
-    w: rect.w,
-    h: rowH * scale,
+    x: rect.x + pad * fit,
+    y: rect.y + (pad + i * rowH) * fit,
+    w: rect.w - pad * 2 * fit,
+    h: rowH * fit,
   }));
-  const api = window.pywebview && window.pywebview.api && window.pywebview.api.menu_rects;
+  const api = window.pywebview?.api?.menu_rects;
   if (api) api(rects);
   return true;
 };
@@ -1292,38 +1338,10 @@ window.__menu_close = function () {
   return true;
 };
 
-// 换动作时骨骼姿势是瞬间变的，物理刚体却还停在上一支舞的相对位置上 → 穿模、卡住、抽搐。
-// 做法：立刻按新姿势把刚体重置并静置几步。
-// 注意别"先关物理再开"——关着的时候骨骼改由 VMD 的布料键驱动，
-// IRIS OUT 开头就会把披风硬拽上去（实测 y 从 4.01 拽到 4.65）。
+// 等下一帧动画写入新姿态后再对齐刚体；不关物理、不留下延迟重置定时器。
+// 自然收尾的交叉淡出不调用这里，保留头发/裙摆的连续运动。
 function settlePhysics() {
-  if (!helper) return;
-  helper.enable('physics', false);
-  setTimeout(
-    () => {
-      if (!helper) return;
-      helper.enable('physics', true);
-      const physics = model && helper.objects.get(model).physics;
-      if (!physics) return;
-      physics.reset();
-      physics.warmup(20);
-    },
-    LOOP_FADE * 1000 + 80,
-  );
-}
-
-// 物理子步跟着状态走：待机时布料几乎不动、抖动最显眼 → 细子步（实测 1/65 抖 40.9%、
-// 1/120 降到 20.2%）；跳舞时肢体和布料都在动，抖动看不出来，而物理恰好是那时最大的
-// 开销（同一页面跳同一支舞：762 帧 vs 关物理 1200 帧）→ 放粗换帧率。
-const PHYS_STEP_IDLE = 1 / 120;
-const PHYS_STEP_BUSY = 1 / 70;
-
-function tunePhysics() {
-  if (!helper || !model) return;
-  const phys = helper.objects.get(model).physics;
-  if (!phys) return;
-  const want = mainAction ? PHYS_STEP_BUSY : PHYS_STEP_IDLE;
-  if (phys.unitStep !== want) phys.unitStep = want;
+  physicsResetPending = Boolean(helper && helper.objects.get(model).physics);
 }
 
 // Python 只摆待办，这里定时来取 —— 反过来的通道不会被 promise 堵住
@@ -1444,6 +1462,24 @@ async function pollActions() {
 }
 
 setInterval(pollActions, 40); // 拖拽惯性要靠它跟手，别太慢
+
+// 视角属于这份 PMX；最多每秒保存一次，等旋转惯性稳定后仍会补存最终角度。
+let savedView = JSON.stringify([viewZoomTgt, modelProfile.view_yaw || 0]);
+let savingView = false;
+setInterval(async () => {
+  const api = window.pywebview?.api;
+  if (!model || !api?.view_info || savingView) return;
+  const yaw = Math.round(((THREE.MathUtils.radToDeg(viewYaw) + 180) % 360 + 360) % 360 * 1000) / 1000 - 180;
+  const current = JSON.stringify([viewZoomTgt, yaw]);
+  if (current === savedView) return;
+  savingView = true;
+  try {
+    const result = await api.view_info(viewZoomTgt, yaw);
+    if (result.ok) savedView = current;
+    else { savedView = current; console.warn('视角未保存：' + result.error); }
+  } catch (error) { console.warn('视角保存失败：' + error); }
+  finally { savingView = false; }
+}, 1000);
 
 // 窗口固定铺满屏幕、缩放只动画布，所以这个监听基本是空转（留着兜底）。
 addEventListener('resize', applyBox);

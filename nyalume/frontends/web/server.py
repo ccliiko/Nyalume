@@ -19,7 +19,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from nyalume.core import daily_nyalume, memory, personas, reminders, skills, tracing
+from nyalume.core import companionship, daily_nyalume, memory, personas, reminders, skills, tracing
 from nyalume.core.agent import run_stream
 from nyalume.core.vision import describe_image as _vd
 from nyalume.core.vision import vision_configured
@@ -29,6 +29,8 @@ from nyalume.core.tools import (
     clear_session_context,
     diff_undo,
     permission_mode,
+    pet_status_snapshot,
+    pet_check_motions,
     preview_undo,
     set_permission_mode,
     set_session_context,
@@ -41,6 +43,9 @@ from nyalume.frontends.pet.pets_registry import (
     load_config,
     save_config,
 )
+
+# --- world system ---
+from nyalume.core.world.manager import world as _world
 
 
 def _auto_backup_on_start() -> None:
@@ -61,7 +66,19 @@ def _auto_backup_on_start() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _auto_backup_on_start()
+    # --- start world system ---
+    _repo_root = os.path.dirname(
+        os.path.dirname(
+            os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__))
+            )
+        )
+    )
+    _world.start(_repo_root)
+    print(f'[world] started, root={_repo_root}')
     yield
+    _world.shutdown()
+    print('[world] stopped')
 
 
 app = FastAPI(title="Nyalume", lifespan=lifespan)
@@ -1307,6 +1324,53 @@ def agent_state(session_id: str = "web-default"):
         "mode": mode,
         "affection": memory.get_daily_affection(session_id) if mode == "daily" else None,
     }
+
+
+@app.get("/api/pet/state")
+def pet_state():
+    """按需读取桌宠概况，复用 Agent 的隐私白名单，不启动桌宠。"""
+    return pet_status_snapshot()
+
+
+@app.post("/api/pet/motion-check")
+def check_pet_motions():
+    return pet_check_motions()
+
+
+class CompanionPromiseIn(BaseModel):
+    content: str
+
+
+class CompanionActionIn(BaseModel):
+    action: str
+
+
+@app.get("/api/companion")
+def companion_entries(before: int = 0):
+    return companionship.entries(max(0, before))
+
+
+@app.post("/api/companion/promises")
+def create_companion_promise(body: CompanionPromiseIn):
+    try:
+        return companionship.promise(body.content)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.patch("/api/companion/{entry_id}")
+def update_companion_promise(entry_id: int, body: CompanionActionIn):
+    try:
+        return companionship.transition(entry_id, body.action)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.delete("/api/companion/{entry_id}")
+def delete_companion_entry(entry_id: int):
+    if not companionship.delete(entry_id):
+        raise HTTPException(status_code=404, detail="记录不存在或已经删除")
+    return {"ok": True}
 
 
 @app.get("/api/docs")

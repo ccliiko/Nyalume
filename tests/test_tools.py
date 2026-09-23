@@ -20,6 +20,7 @@ def test_tool_schemas_include_reminder_tools():
     assert "office_edit" in names
     assert "pet_status" in names
     assert "pet_perform" in names
+    assert "pet_configure" in names
 
 
 def test_pet_tools_use_local_state_without_exposing_window_title(monkeypatch):
@@ -29,13 +30,20 @@ def test_pet_tools_use_local_state_without_exposing_window_title(monkeypatch):
         calls.append((path, payload))
         if path == "/pet_state":
             return {"ok": True, "model": "MikuQ", "feeling": "开心", "playing": "待机",
-                    "motions": ["IRIS OUT"], "desktop": {"title": "私人文件.txt"}}
+                    "motions": ["IRIS OUT"], "state": {"energy": 0.4, "mood": 0.7},
+                    "quiet": False, "effective_quiet": True, "talk_mode": "reserved",
+                    "desktop": {"title": "私人文件.txt", "media": {"title": "私人曲目"}}}
         return {"ok": True}
 
     monkeypatch.setattr(tools, "_pet_request", fake_pet_request)
     status = tools._pet_status()
     assert "MikuQ" in status and "私人文件.txt" not in status
-    assert "已执行 dance" in tools._pet_perform("dance", "IRIS OUT")
+    assert "私人曲目" not in status
+    snapshot = tools.pet_status_snapshot()
+    assert snapshot["体力"] == 0.4
+    assert snapshot["手动安静"] is False and snapshot["安静模式"] is True
+    assert snapshot["主动搭话"] == "reserved"
+    assert "已接收 dance" in tools._pet_perform("dance", "IRIS OUT")
     assert calls[-1] == ("/pet", {"action": "dance", "name": "IRIS OUT"})
 
 
