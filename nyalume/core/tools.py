@@ -207,7 +207,7 @@ def execute_tool(name: str, arguments: dict) -> str:
     spec = _REGISTRY.get(name)
     if not spec:
         return f"未知工具：{name}（可用工具：{', '.join(_REGISTRY)}）"
-    if permission_mode() == "daily":
+    if permission_mode() == "daily" and name != "pet_plan":
         return "当前是日常模式：只进行聊天，不会调用工具；切回工作模式后可执行。"
     missing = [
         key for key in spec["required"] if arguments.get(key) in (None, "")
@@ -310,6 +310,36 @@ def pet_check_motions() -> dict:
           "通过不等于不会穿模。完成后保存一条真实检查经历。", {})
 def _pet_check_motions() -> str:
     return json.dumps(pet_check_motions(), ensure_ascii=False)
+
+
+@register("pet_plan", "查看或更新小窝里的虚拟小计划。用户明确说选某种植物/颜色、陪伴、喜欢、暂停/恢复时执行；"
+          "start 用于用户同意开始一个新计划。不得代替用户选择、把备选项当成已选，或跳过成长阶段。"
+          "更新已有计划必须提供其 id；先读当前进度，失败时按错误解释。日常模式也可用。", {
+    "action": {"type": "string", "enum": ["status", "start", "choose", "accompany", "like", "unlike", "pause", "resume"]},
+    "plan_id": {"type": "integer", "description": "当前计划 id，更新时必填"},
+    "choice": {"type": "string", "description": "当前计划列出的植物或颜色，完整名称"},
+    "kind": {"type": "string", "enum": ["garden", "boat", "stars"], "description": "新计划主题；不填则她自己选"},
+}, required=["action"])
+def _pet_plan(action: str, plan_id: int = 0, choice: str = "", kind: str | None = None) -> str:
+    from . import small_plans
+    try:
+        if action == "status":
+            return json.dumps({"plan": small_plans.current(), "themes": small_plans.catalog()}, ensure_ascii=False)
+        if action == "start":
+            current = small_plans.current()
+            if current and current["stage"] < 3:
+                return "已有小计划正在进行，请先查看它；不能用新计划覆盖进度。"
+            plan = small_plans.tick(restart=True, kind=kind)
+        else:
+            fields = {"choose": {"choice": choice}, "accompany": {"accompany": True},
+                      "like": {"liked": True}, "unlike": {"liked": False},
+                      "pause": {"paused": True}, "resume": {"paused": False}}
+            if action not in fields or not plan_id:
+                return "请提供有效操作和当前计划 id。"
+            plan = small_plans.update(plan_id, **fields[action])
+        return json.dumps({"ok": True, "plan": plan}, ensure_ascii=False)
+    except ValueError as error:
+        return str(error)
 
 
 @register("companion_journal", "查看共同经历，或在用户想一起做某件事时提出一条小约定。"
@@ -1031,6 +1061,8 @@ def clean_session_workspace(session_id: str) -> dict:
 
 def permission_mode() -> str:
     """当前模式：daily=日常聊天，其余三档为工作权限。"""
+    if getattr(_CTX_LOCAL, "session_id", "") == "nyalume-daily":
+        return "daily"
     mode = get_setting(_PERM_SETTING, "workspace")
     return mode if mode in ("daily", "read_only", "workspace", "full") else "workspace"
 
@@ -1048,6 +1080,7 @@ def describe_tool(name: str, arguments: dict) -> str:
     args = arguments or {}
     simple = {
         "pet_status": "查看桌宠状态",
+        "pet_plan": "查看或更新她的小计划",
         "pet_check_motions": "检查桌宠动作兼容性",
         "companion_journal": "查看共同经历" if args.get("action") == "list" else "提出一个小约定",
         "pet_perform": f"桌宠动作：{args.get('action')} {args.get('value') or ''}",

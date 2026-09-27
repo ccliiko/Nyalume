@@ -1,0 +1,80 @@
+{
+  "dessert": {
+    "title": "甜点等你回来",
+    "use": "今日小窝的欢迎场景；4:3 横幅让桌面、空椅子与人物动作一起讲故事。",
+    "size": [
+      1152,
+      864
+    ],
+    "seed": 9274401,
+    "action": "(standing:1.4), (holding plate:1.3), cowboy shot, three-quarter side view, looking back at viewer, open mouth smile, one hand holding a plate of strawberry cake, other hand pulling an empty chair, visible hands",
+    "outfit": "dusty pink dress, short puff sleeves, white frilled waist apron, small strawberry embroidery on apron pocket, scalloped petal hem, small pink collar bow",
+    "setting": "dining nook, walnut wood table and chairs, light gray walls, two white ceramic teacups, empty chair beside her, soft neutral daylight from side window, balanced exposure, natural skin color, silver white hair, clean anime illustration, soft cel shading",
+    "expression": "cheerful welcoming smile, bright affectionate eyes, open mouth smiling",
+    "negative": "color cast, monochrome, oversaturated, neon lighting, overexposure, washed out colors, bad anatomy, extra limbs, sitting, head rest, hand on own face, long sleeves",
+    "cfg": 5.5
+  },
+  "star": {
+    "title": "见习星术师",
+    "use": "奇幻冒险入口或章节角色封面；2:3 竖幅容纳伸手、披风和靴子的完整动作。",
+    "size": [
+      832,
+      1248
+    ],
+    "seed": 9274402,
+    "action": "(full body:1.2), (one arm up:1.4), (reaching for a floating star:1.35), standing on tiptoes, other arm holding a book against waist, bent knee, looking up, surprised, dynamic pose, diagonal composition",
+    "outfit": "cream fantasy dress, asymmetrical layered skirt, (short dark plum capelet:1.2), gold constellation embroidery, crescent moon clasp, small leather waist pouch, lace-up ankle boots",
+    "setting": "from below, entire figure inside frame, small golden star above raised fingers, old stone observatory with a small twilight window, neutral soft light on face and skin, silver white ponytail flowing, cream dress and dark plum cape, small brass details, crisp anime fantasy illustration, balanced natural colors",
+    "expression": "surprised delighted expression, raised eyebrows, mouth slightly open, looking upward",
+    "negative": "color cast, monochrome, oversaturated, neon lighting, overexposure, washed out colors, bad anatomy, extra limbs, standing at attention, both arms down",
+    "cfg": 5.5
+  },
+  "postcard": {
+    "title": "书里的小惊喜",
+    "use": "今日 Nyalume 卡片；3:4 竖幅，从斜后方越过桌沿看她回头。",
+    "size": [
+      864,
+      1152
+    ],
+    "seed": 9275004,
+    "action": "(candid moment:1.25), (three-quarter side view:1.2), standing at a wooden library table, leaning slightly forward, (placing a pressed strawberry flower bookmark between pages of an open book:1.3), one hand holding the book page flat, other hand tucking the bookmark between pages, both hands clearly visible, hears someone arrive and turns head back toward viewer, warm surprised smile, body still facing the book, waist-up with table and hands included",
+    "outfit": "dusty rose fitted cardigan with tiny shell buttons, muted plum knit vest, high-waisted cream skirt, small embroidered strawberry on vest, graceful adult proportions",
+    "setting": "warm quiet library alcove, three-quarter view from slightly behind her shoulder, foreground open book and hands in focus, walnut bookshelves, amber afternoon light, natural peach skin, neutral silver white hair, dusty rose and warm ivory clothing, rich brown background, candid anime illustration, soft shoujo cel shading, off-center composition",
+    "expression": "surprised warm smile, gentle eyes glancing back toward viewer, faint blush",
+    "negative": "front view, facing viewer, posing, symmetrical composition, presenting object to camera, product shot, advertisement, hair bows, hair clips, beads in hair, roses in hair, blue cast, monochrome purple, child proportions, big head, tiny body, blurred hands, hands out of frame, obscured hands, hair ornament",
+    "cfg": 5.5
+  },
+  "departure": {
+    "title": "出发前五分钟",
+    "use": "她的小计划或外出准备卡片；4:5 竖幅从斜上方看到系鞋带的完整动作。",
+    "size": [
+      896,
+      1120
+    ],
+    "seed": 9274904,
+    "action": "(tying footwear:1.5), (adjusting footwear:1.3), (bending forward:1.3), sitting on low bench, both hands near one sneaker, untied shoelaces, full body, head tilted up, gentle smile",
+    "outfit": "cream short jacket, navy sailor collar, dusty pink pleated skirt, white socks, white sneakers with coral shoelaces, canvas bag with small rabbit plush charm",
+    "setting": "from above, three-quarter view, brown wooden entry bench, gray tiled floor, wooden door, soft neutral daylight, (natural colors:1.15), white hair, pink eyes, peach skin, anime illustration",
+    "expression": "playful impatient smile, looking up at viewer, bright lively eyes",
+    "negative": "color cast, monochrome, oversaturated, neon lighting, overexposure, washed out colors, bad anatomy, extra limbs, missing shoes, high heels, hands behind back, upright torso, crossed legs, tinted lighting",
+    "cfg": 5.5,
+    "pose": "nyalume_story_departure_pose.png",
+    "control_model": "OpenPoseXL2.safetensors",
+    "control_strength": 1.15
+  },
+  "gaming": {
+    "title": "再玩一局",
+    "use": "夜间小窝或休息场景；3:2 横幅沿身体方向展开，保留旁边可以一起坐的位置。",
+    "size": [
+      1248,
+      832
+    ],
+    "seed": 9274405,
+    "action": "(lying on stomach on a soft rug:1.35), body extending sideways across the frame, propped on elbows, (holding a handheld game console with both hands:1.3), head turned toward viewer, relaxed playful smile, knees bent and feet raised behind her, full body",
+    "outfit": "powder blue pajama shirt with tiny white cloud pattern, rounded collar, matching loose opaque pajama shorts, cream fluffy ankle socks, comfortable cotton fabric",
+    "setting": "floor level side view, body across frame, face and hands nearest camera, handheld console in foreground, beige rug, brown sofa, spare cream cushion beside her, small shaded lamp with neutral white light, night outside window, silver ponytail on rug, powder blue cotton pajamas, soft anime illustration, natural skin color",
+    "expression": "relaxed playful smile, looking sideways at viewer, amused eyes",
+    "negative": "color cast, monochrome, oversaturated, neon lighting, overexposure, washed out colors, bad anatomy, extra limbs, kneeling, sitting, standing, underwear",
+    "cfg": 5.5
+  }
+}

@@ -167,6 +167,7 @@ const REACT_HOLD = 0.35;
 const REACT_FADE = 1.6; // 每秒回落量：保持 0.35s 再 ~0.6s 淡掉
 let stateMorphs = []; // 持续表情：跟着状态走，不衰减
 let bubbleUntil = 0;
+let bubbleReply = null;
 let bubbleStart = 0;
 const bubbleVel = new THREE.Vector2(); // 符号气泡飘的方向（世界单位/秒，xy 就是屏幕平面）
 const BUBBLE_SPEED = 1.6;
@@ -205,6 +206,7 @@ let lookFrameDelta = 0;
 let physicsResetPending = false;
 let headTapAt = -10;
 const HEAD_TAP_DURATION = 0.9;
+const touch = {kind: 'idle', lastAt: -10, region: '', rapid: 0, gentle: 0, until: 0, attentionUntil: 0, dodge: 0, side: 1};
 // ---- 反应符号气泡：脸只有 40px 宽，符号比表情更容易被看到 ----
 const SYMBOL_BY_REGION = {
   // 用 ♥ 不用 ❤：❤ 走彩色 emoji 字形，从 canvas 传成 WebGL 贴图后画不出来（实测 0 像素）
@@ -406,7 +408,7 @@ function tick() {
 function applyLookPose(delta) {
   // 视线跟随：附加旋转，舞蹈/待机的原动作照常播
   if (lookBones) {
-    const lookingBack = clock.elapsedTime - headTapAt < 1.3 && !mainAction;
+    const lookingBack = (clock.elapsedTime < touch.attentionUntil || clock.elapsedTime - headTapAt < 1.3) && !mainAction;
     const lookBlend = frameBlend(0.12, delta);
     lookX += ((lookingBack ? 0 : lookTx) - lookX) * lookBlend;
     lookY += ((lookingBack ? 0 : lookTy) - lookY) * lookBlend;
@@ -425,6 +427,10 @@ function applyLookPose(delta) {
     if (lookBones.head) {
       lookBones.head.rotateY(lookX * 0.25);
       lookBones.head.rotateX(lookY * 0.20);
+      if (!mainAction) {
+        lookBones.head.rotateY(touch.dodge * touch.side * 0.24);
+        lookBones.head.rotateZ(touch.dodge * touch.side * 0.12);
+      }
       const age = clock.elapsedTime - headTapAt;
       if (!mainAction && age >= 0 && age < HEAD_TAP_DURATION) {
         // 点头只转头部，首尾都是零偏移；手臂继续使用自然站姿 VMD。
@@ -440,6 +446,8 @@ function tickFrame() {
   lookFrameDelta = delta;
   if (model) {
     const t = clock.elapsedTime;
+    if (t >= touch.until && touch.kind !== 'idle') touch.kind = t < touch.attentionUntil ? 'linger' : 'idle';
+    touch.dodge += ((touch.kind === 'dodge' && !mainAction ? 1 : 0) - touch.dodge) * frameBlend(0.12, delta);
     let py = baseY;
     // 没有动作时靠这点摆动撑着；有动作就交给 VMD，别两边打架
     if (!hasClip) py += Math.sin(t * 1.3) * height * 0.004;
@@ -456,7 +464,7 @@ function tickFrame() {
     dragLag.y += (dragLag.ty - dragLag.y) * dragBlend;
     dragLag.tx *= frameDecay(0.88, delta);
     dragLag.ty *= frameDecay(0.88, delta);
-    model.position.x = dragLag.x;
+    model.position.x = dragLag.x + touch.dodge * touch.side * height * 0.025;
     py += dragLag.y;
     model.position.y = py;
     leanZ += (leanTgt - leanZ) * frameBlend(0.15, delta);
@@ -517,7 +525,9 @@ function tickFrame() {
   boxDirty = false; // 新尺寸已经画出来了，可以继续推帧
 }
 
-function showBubble(text, secs = 2.4, plain = false, drift = false) {
+function showBubble(text, secs = 2.4, plain = false, drift = false, reply = false) {
+  if (drift && bubbleReply && bubble.visible && clock.elapsedTime < bubbleUntil) return;
+  bubbleReply = null;
   // 符号（❤ ♪ ！）雅黑里没有，得让字形回落到符号字体，否则画出来是空白
   const font = '600 30px "Microsoft YaHei", "Segoe UI Symbol", "Segoe UI Emoji", system-ui, sans-serif';
   const probe = document.createElement('canvas').getContext('2d');
@@ -539,8 +549,8 @@ function showBubble(text, secs = 2.4, plain = false, drift = false) {
   }
   const lineH = 42;
   const pad = 20;
-  const w = Math.min(660, Math.max(...lines.map((l) => probe.measureText(l).width)) + pad * 2);
-  const h = lines.length * lineH + pad * 2 - 10;
+  const w = Math.max(reply ? 180 : 0, Math.min(660, Math.max(...lines.map((l) => probe.measureText(l).width)) + pad * 2));
+  const h = lines.length * lineH + pad * 2 - 10 + (reply ? 52 : 0);
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
@@ -571,8 +581,22 @@ function showBubble(text, secs = 2.4, plain = false, drift = false) {
     g.fillStyle = '#c8386f';
     lines.forEach((line, i) => g.fillText(line, w / 2, pad + lineH * i + lineH / 2 - 2));
   }
+  if (reply) {
+    const x = (w - 130) / 2, y = h - 50;
+    g.fillStyle = '#fff4f8';
+    g.strokeStyle = '#b53e76';
+    g.lineWidth = 2;
+    g.beginPath();
+    g.roundRect(x, y, 130, 40, 14);
+    g.fill(); g.stroke();
+    g.font = '600 26px "Microsoft YaHei", sans-serif';
+    g.fillStyle = '#97375f';
+    g.fillText('回复 ↗', w / 2, y + 20);
+    bubbleReply = { text: String(text), x: x / w, y: y / h, w: 130 / w, h: 40 / h };
+  }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  bubble.material.map?.dispose();
   bubble.material.map = texture;
   bubble.material.needsUpdate = true;
   const unit = height * 0.0016; // 画布像素 → 世界单位
@@ -596,6 +620,24 @@ function showBubble(text, secs = 2.4, plain = false, drift = false) {
 function bubbleSecs(text) {
   return 5 + Math.max(0, Math.ceil(([...String(text)].length - 10) / 5));
 }
+
+// 只在气泡期间回报按钮；过期清空，Python 同时限制旧矩形存活时间。
+let hadReplyTarget = false;
+setInterval(() => {
+  const api = window.pywebview?.api;
+  if (!api?.reply_target) return;
+  const active = bubble.visible && clock.elapsedTime < bubbleUntil && bubbleReply && !menuSprite?.visible;
+  if (active) {
+    const unit = pixelsPerUnit(bubble.position.z);
+    const fw = renderer.domElement.width, fh = renderer.domElement.height;
+    const w = bubble.scale.x * unit, h = bubble.scale.y * unit;
+    const x = fw / 2 + bubble.position.x * unit - w / 2;
+    const y = fh / 2 - bubble.position.y * unit - h / 2;
+    api.reply_target([(x + bubbleReply.x * w) / fw, (y + bubbleReply.y * h) / fh,
+      bubbleReply.w * w / fw, bubbleReply.h * h / fh], bubbleReply.text);
+  } else if (hadReplyTarget) api.reply_target(null, '');
+  hadReplyTarget = Boolean(active);
+}, 250);
 
 // 待机自发小动作：没人碰的时候过一会儿自己动一下（换个重心、看看别处、待久了犯困）
 function idleBeat() {
@@ -789,6 +831,38 @@ window.__react = function (region, text) {
   return true;
 };
 
+// 仅真实触摸进入这一层；自发待机、任务完成和 agent 表情不累积连摸次数。
+window.__touch = function (region) {
+  if (!model || !REACT_POOLS[region]) return false;
+  const now = clock.elapsedTime, gap = now - touch.lastAt;
+  touch.rapid = gap <= 0.45 ? touch.rapid + 1 : 1;
+  touch.gentle = region === 'head' && touch.region === 'head' && gap >= 0.45 && gap <= 3
+    ? touch.gentle + 1 : 1;
+  const stillDodging = touch.kind === 'dodge' && now < touch.until;
+  touch.lastAt = now; touch.region = region;
+  touch.attentionUntil = now + 4;
+  lastTouch = Date.now();
+  if (touch.rapid >= 3 || stillDodging) {
+    if (!stillDodging) touch.side *= -1;
+    touch.kind = 'dodge'; touch.until = now + 1.4;
+    window.__react('face', '');
+    reactLeft = 0; reactHold = 1.1;
+  } else if (region === 'head' && touch.gentle >= 2) {
+    touch.kind = 'relax'; touch.until = now + 1.8;
+    window.__react('head', '');
+    const names = modelProfile.expressions?.head ?? ['なごみ', '笑い', '照れ'];
+    const dict = model.morphTargetDictionary || {};
+    reactMorphs = names.map(name => dict[name]).filter(index => index !== undefined);
+    reactLeft = 0; reactHold = 1.8;
+    headTapAt = now;
+  } else {
+    touch.kind = 'notice'; touch.until = now + 0.95;
+    window.__react(region, '');
+    if (region === 'head') { headTapAt = now; reactHold = 0.95; reactLeft = 0; }
+  }
+  return true;
+};
+
 // agent 用情绪名指挥表情：happy / shy / surprise / angry / sad / sleepy / calm / love，
 // 也可以直接传部位名（head/face/chest/...）。困了就额外飘个 zzz。
 window.__face = function (emotion) {
@@ -816,11 +890,7 @@ window.__tap = function (nx, ny) {
   if (!model) return null;
   const region = regionOf(pickBone(nx, ny));
   if (!region) return null;
-  window.__react(region, '');
-  if (region === 'head') {
-    headTapAt = clock.elapsedTime;
-    reactHold = 0.95;
-  }
+  window.__touch(region);
   return region;
 };
 
@@ -1361,7 +1431,7 @@ async function pollActions() {
     return;
   }
   if (!action) return;
-  if (action.kind !== 'look') lastTouch = Date.now(); // 视线跟随不算"被互动"
+  if (['tap', 'react', 'drag', 'spin', 'motion'].includes(action.kind)) lastTouch = Date.now();
   // 这几类不该关菜单：视线跟随每 40ms 就来一条；她主动搭话/做个表情是"自己冒出来的"，
   // 正在右键浏览菜单时被气泡挤掉很烦（用户反馈）。菜单自己选完会用 menu_close 关。
   // 换风格要连点（菜单那行左右半边），所以 style/style_step 也不能关菜单
@@ -1374,7 +1444,7 @@ async function pollActions() {
     const tapi = window.pywebview && window.pywebview.api;
     if (tapi && tapi.tap_info) tapi.tap_info(region || '-');
   } else if (action.kind === 'react') {
-    window.__react(action.region, ''); // Python 侧指定部位的直接反应（比如聊天窗被戳）
+    window.__touch(action.region); // 聊天窗里的摸头也进入同一套连续互动
   } else if (action.kind === 'fps') {
     // 全屏游戏时 Python 会把推帧降到 30，省下来的资源留给游戏
     FPS = Math.min(240, Math.max(10, action.value || 60));
@@ -1401,7 +1471,10 @@ async function pollActions() {
     // agent 让她说一句（气泡）；台词无框、按字数决定停留多久
     const say = String(action.text || '').slice(0, 40);
     if (action.plain) showBubble(say, 1.8, true, true); // 透明无框（音乐 ♪ 这种）
-    else showBubble(say, bubbleSecs(say), true);
+    else showBubble(say, Math.max(15, bubbleSecs(say)), true, false, true);
+    if (action.delivery_id && bubble.visible && api.proactive_displayed) {
+      await api.proactive_displayed(action.delivery_id);
+    }
   } else if (action.kind === 'face') {
     window.__face(action.emotion);
   } else if (action.kind === 'quiet') {

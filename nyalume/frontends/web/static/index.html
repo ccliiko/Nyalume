@@ -116,7 +116,7 @@
       min-height: 0;
     }
     .side-sec.grow { flex: 0 0 auto; }
-    .side-sec:not(.collapsed) { min-height: 180px; }
+    .side-sec:not(.collapsed) { min-height: 0; }
     .side-sec.collapsed { min-height: 36px; }
     .side-sec.collapsed .side-sec-body { display: none; }
     .side-sec-head {
@@ -1419,267 +1419,56 @@
     #send:disabled { opacity: 0.55; cursor: not-allowed; }
     .empty-hint { color: #98a1af; text-align: center; margin-top: 40px; }
 
-    /* ---- 高级感视觉层：只改观感，不动结构 ---- */
-    :root {
-      --ink: #1b2333;
-      --ink-2: #5b6474;
-      --ink-3: #98a1b0;
-      --line: rgba(23, 32, 64, 0.08);
-      --a1: #5b5bd6;
-      --a2: #9a5bff;
-      --a3: #e0569a;
-      --grad: linear-gradient(135deg, #5b5bd6, #9a5bff);
-      --soft-grad: linear-gradient(135deg, rgba(91, 91, 214, 0.06), rgba(154, 91, 255, 0.06));
-    }
-    body {
-      font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
-      color: var(--ink);
-      -webkit-font-smoothing: antialiased;
-      background: var(--bg, #f4f5fa);
-    }
-    #wall-bg {
-      background:
-        radial-gradient(1100px 700px at 88% -12%, rgba(154, 91, 255, 0.09), transparent 60%),
-        radial-gradient(900px 600px at -8% 108%, rgba(224, 86, 154, 0.08), transparent 60%),
-        #f4f5fa center/cover no-repeat fixed;
-    }
-    #app { background: transparent; }
-
-    /* 侧栏：半透明毛玻璃 */
-    #sidebar {
-      background: rgba(255, 255, 255, 0.66);
-      -webkit-backdrop-filter: blur(12px);
-      backdrop-filter: blur(12px);
-      border-right: 1px solid var(--line);
-    }
-    .side-head { padding: 16px 16px 10px; }
-    .side-head strong {
-      font-size: 15px; font-weight: 700; letter-spacing: 0.02em;
-      background: var(--grad);
-      -webkit-background-clip: text; background-clip: text; color: transparent;
-    }
-    #new-btn {
-      width: 30px; height: 30px; border-radius: 10px;
-      background: var(--grad); box-shadow: 0 4px 10px rgba(110, 80, 230, 0.28);
-      transition: transform 0.15s, box-shadow 0.15s;
-    }
-    #new-btn:hover { box-shadow: 0 6px 14px rgba(110, 80, 230, 0.36); }
-    #config-btn { color: var(--ink-3); font-size: 15px; border-radius: 8px; }
-    #config-btn:hover { color: var(--a1); background: rgba(91, 91, 214, 0.08); }
-    #side-search { padding: 2px 12px 10px; }
-    #search-input {
-      background: rgba(255, 255, 255, 0.8);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      transition: border-color 0.15s, box-shadow 0.15s;
-    }
-    #search-input:focus { border-color: rgba(91, 91, 214, 0.45); box-shadow: 0 0 0 3px rgba(91, 91, 214, 0.1); }
-    .side-sec-head {
-      color: var(--ink-2); font-size: 12px; letter-spacing: 0.04em;
-      border-top: 1px solid var(--line);
-    }
-    .side-sec-head:hover { background: rgba(91, 91, 214, 0.05); }
-    .side-mini-btn {
-      border: 1px solid var(--line) !important;
-      border-radius: 9px !important;
-      color: var(--ink-2) !important;
-      background: #fff !important;
-      transition: all 0.15s;
-    }
-    .side-mini-btn:hover { color: var(--a1) !important; border-color: rgba(91, 91, 214, 0.35) !important; }
-
-    /* 会话/项目卡片 */
-    .project, .session-item {
-      border: 1px solid transparent !important;
-      border-radius: 12px !important;
-      background: transparent !important;
-      transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
-    }
-    .project:hover, .session-item:hover {
-      background: rgba(255, 255, 255, 0.85) !important;
-      border-color: var(--line) !important;
-      box-shadow: 0 4px 14px rgba(23, 32, 64, 0.06);
-    }
-    .project-head.active, .session-item.active {
-      background: linear-gradient(135deg, rgba(91, 91, 214, 0.1), rgba(154, 91, 255, 0.1)) !important;
-      border-color: rgba(91, 91, 214, 0.25) !important;
-    }
-    .project-new, .row-act .mini-btn, .more-btn, .proj-toggle {
-      border-radius: 8px !important;
-      transition: background 0.15s, color 0.15s;
-    }
-
-    /* 顶栏与主区 */
-    #chat-head {
-      background: rgba(255, 255, 255, 0.6);
-      -webkit-backdrop-filter: blur(10px);
-      backdrop-filter: blur(10px);
-      border-bottom: 1px solid var(--line);
-    }
-    #chat-title { font-weight: 600; }
-    #persona-select {
-      background: rgba(255, 255, 255, 0.8);
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      color: var(--ink-2);
-    }
-    .wall-btn {
-      background: rgba(255, 255, 255, 0.7);
-      border: 1px solid var(--line);
-      border-radius: 9px;
-    }
-    #log { background: transparent; }
-
-    /* 消息：用户气泡渐变 + 助手正文呼吸感 */
-    #app .msg.user {
-      background: linear-gradient(135deg, #6a5be0, #8b5cf6) !important;
-      color: #fff;
-      border-radius: 16px 16px 4px 16px;
-      box-shadow: 0 4px 14px rgba(110, 80, 230, 0.22);
-      border: none !important;
-    }
-    #app .msg.docs {
-      background: var(--soft-grad) !important;
-      border: 1px solid rgba(91, 91, 214, 0.16) !important;
-      border-radius: 12px !important;
-      color: var(--ink-2) !important;
-    }
-    #app .msg.status { color: var(--ink-3); }
-    .reply-body { line-height: 1.75; }
-    .hl {
-      background: linear-gradient(135deg, rgba(224, 86, 154, 0.14), rgba(154, 91, 255, 0.14));
-      border-radius: 4px; padding: 0 3px; color: #7a2f6e;
-    }
-    .reply-meta { color: var(--ink-3); }
-    .mini-btn {
-      border: none !important;
-      background: transparent !important;
-      color: var(--ink-3) !important;
-      border-radius: 7px !important;
-    }
-    .mini-btn:hover { background: rgba(91, 91, 214, 0.08) !important; color: var(--a1) !important; }
-
-    /* 输入栏：悬浮玻璃胶囊 */
-    #input-row {
-      background: rgba(255, 255, 255, 0.85);
-      -webkit-backdrop-filter: blur(10px);
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(23, 32, 64, 0.1);
-      border-radius: 22px;
-      box-shadow: 0 2px 6px rgba(23, 32, 64, 0.04), 0 14px 34px rgba(23, 32, 64, 0.08);
-      transition: border-color 0.2s, box-shadow 0.2s;
-    }
-    #input-row:focus-within {
-      border-color: rgba(91, 91, 214, 0.4);
-      box-shadow: 0 0 0 4px rgba(91, 91, 214, 0.1), 0 14px 34px rgba(23, 32, 64, 0.1);
-    }
-    #add-btn { color: var(--ink-3); transition: color 0.15s, background 0.15s; }
-    #add-btn:hover { color: var(--a1); }
-    #perm-btn { color: var(--ink-3); }
-    #perm-btn:hover { color: var(--a2); background: rgba(154, 91, 255, 0.08); }
-    #model-chip { color: var(--ink-3); max-width: 190px; }
-    #model-chip:hover { color: var(--ink-2); background: rgba(23, 32, 64, 0.05); }
-    #send {
-      background: var(--grad);
-      box-shadow: 0 4px 12px rgba(110, 80, 230, 0.3);
-      border-radius: 999px;
-      min-width: 78px;
-      transition: transform 0.15s, box-shadow 0.15s, opacity 0.2s;
-    }
-    #send:hover:not(:disabled) { box-shadow: 0 6px 16px rgba(110, 80, 230, 0.4); }
-    #send.paused { background: linear-gradient(135deg, #98a1b0, #6b7280); }
-
-    /* 弹出层统一精致化 */
-    #model-menu, #perm-menu, #add-menu, #search-results, #wall-menu, #jump-panel {
-      border: 1px solid rgba(23, 32, 64, 0.08);
-      border-radius: 14px;
-      box-shadow: 0 18px 44px rgba(23, 32, 64, 0.14);
-      background: rgba(255, 255, 255, 0.96);
-      -webkit-backdrop-filter: blur(14px);
-      backdrop-filter: blur(14px);
-    }
-    #model-menu button, #perm-menu button, #add-menu button, #wall-menu button { border-radius: 9px; }
-    #model-menu button.current, #perm-menu button.current { color: var(--a1); background: rgba(91, 91, 214, 0.08); }
-
-    /* 模态 */
-    .modal-overlay { background: rgba(15, 20, 40, 0.4); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
-    .modal-box { border-radius: 18px; box-shadow: 0 24px 60px rgba(15, 20, 40, 0.28); }
-    .modal-btns .primary, .cfg-btns button { background: var(--grad); border: none; box-shadow: 0 4px 12px rgba(110, 80, 230, 0.28); }
-    .full-overlay { background: #f6f7fb; }
-    .full-top { background: rgba(255, 255, 255, 0.8); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border-bottom: 1px solid var(--line); }
-    .settings-nav { border-right: 1px solid var(--line); }
-    .settings-nav button.active { background: var(--soft-grad); color: var(--a1); }
-    .cfg-row input, .cfg-row select { border: 1px solid var(--line); border-radius: 10px; }
-    .cfg-row input:focus, .cfg-row select:focus { outline: none; border-color: rgba(91, 91, 214, 0.5); box-shadow: 0 0 0 3px rgba(91, 91, 214, 0.1); }
-
-    /* 滚动条 */
-    ::-webkit-scrollbar { width: 8px; height: 8px; }
-    ::-webkit-scrollbar-thumb { background: rgba(23, 32, 64, 0.14); border-radius: 8px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(23, 32, 64, 0.26); }
-    ::-webkit-scrollbar-track { background: transparent; }
-
-    /* ---- nyalume 主题：蜜橘 × 樱花粉 + 猫爪细节 ---- */
-    :root {
-      --a1: #ea580c;
-      --a2: #ec4899;
-      --a3: #fbbf24;
-      --grad: linear-gradient(135deg, #fb923c, #f472b6);
-      --soft-grad: linear-gradient(135deg, rgba(249, 115, 22, 0.08), rgba(236, 72, 153, 0.08));
-    }
-    #wall-bg {
-      background:
-        radial-gradient(1100px 700px at 88% -12%, rgba(251, 146, 60, 0.1), transparent 60%),
-        radial-gradient(900px 600px at -8% 108%, rgba(244, 114, 182, 0.09), transparent 60%),
-        #fff6f0 center/cover no-repeat fixed;
-    }
-    body { background: #fff6f0; }
-    .full-overlay { background: #fdf8f4; }
-    #new-btn { background: var(--grad); box-shadow: 0 4px 10px rgba(236, 72, 153, 0.26); }
-    #new-btn:hover { box-shadow: 0 6px 14px rgba(236, 72, 153, 0.36); }
-    #config-btn:hover { color: #ea580c; background: rgba(249, 115, 22, 0.08); }
-    #search-input:focus { border-color: rgba(249, 115, 22, 0.5); box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.12); }
-    .side-sec-head:hover { background: rgba(249, 115, 22, 0.05); }
-    .side-mini-btn:hover { color: #ea580c !important; border-color: rgba(249, 115, 22, 0.35) !important; }
-    .project-head.active, .session-item.active {
-      background: linear-gradient(135deg, rgba(251, 146, 60, 0.13), rgba(244, 114, 182, 0.13)) !important;
-      border-color: rgba(244, 114, 182, 0.32) !important;
-    }
-    #app .msg.user {
-      background: linear-gradient(135deg, #fb923c, #f472b6) !important;
-      box-shadow: 0 4px 14px rgba(236, 72, 153, 0.2);
-    }
-    #app .msg.docs { background: var(--soft-grad) !important; border-color: rgba(249, 115, 22, 0.18) !important; }
-    .hl {
-      background: linear-gradient(135deg, rgba(251, 146, 60, 0.18), rgba(244, 114, 182, 0.18));
-      color: #b45309;
-    }
-    .mini-btn:hover { background: rgba(249, 115, 22, 0.08) !important; color: #ea580c !important; }
-    #input-row:focus-within {
-      border-color: rgba(249, 115, 22, 0.45);
-      box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.12), 0 14px 34px rgba(23, 32, 64, 0.1);
-    }
-    #add-btn:hover { color: #ea580c; }
-    #perm-btn:hover { color: #ec4899; background: rgba(236, 72, 153, 0.08); }
-    #send { background: var(--grad); box-shadow: 0 4px 12px rgba(236, 72, 153, 0.32); }
-    #send:hover:not(:disabled) { box-shadow: 0 6px 16px rgba(236, 72, 153, 0.42); }
-    #model-menu button.current, #perm-menu button.current { color: #ea580c; background: rgba(249, 115, 22, 0.08); }
-    .settings-nav button.active { background: var(--soft-grad); color: #ea580c; }
-    .cfg-row input:focus, .cfg-row select:focus { border-color: rgba(249, 115, 22, 0.5); box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.12); }
-    .empty-hint { color: #c48a6a; }
-    #log { position: relative; }
-    #log::before {
-      content: "🐾";
-      position: absolute;
-      right: 26px;
-      bottom: 18px;
-      font-size: 72px;
-      opacity: 0.055;
-      pointer-events: none;
-      z-index: 0;
-    }
   </style>
+  <style>
+    body.quick-chat #sidebar, body.quick-chat #daily-nyalume-btn,
+    body.quick-chat .wall-wrap, body.quick-chat #persona-select,
+    body.quick-chat #cat-tap-wrap { display: none; }
+    body.quick-chat main { min-width: 0; }
+    body.quick-chat #chat-head { padding: 12px 16px; }
+    body.quick-chat #log { padding: 12px 16px; }
+    body.quick-chat #input-row { margin: 8px; width: calc(100% - 16px); }
+    #full-chat-link { display: none; white-space: nowrap; color: #9a4d3b; font-size: 12px; }
+    body.quick-chat #full-chat-link { display: inline; }
+    .reply-options { margin: 16px 0 4px; padding: 14px; border: 1px solid #e5ddd4; border-radius: 16px; background: #fffdf9; min-width: 0; }
+    .reply-options legend { padding: 0 5px; font-size: 13px; font-weight: 600; color: #68584b; }
+    .msg.assistant:not(.latest) .reply-options, .chat-turn:not(.latest-turn) .reply-options, .pending-turn .reply-options { display: none; }
+    .reply-choice-card { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; margin: 7px 0; border: 1px solid #e7e0d8; border-radius: 11px; cursor: pointer; background: white; }
+    .reply-choice-card:has(input:checked) { background: #fff1e6; border-color: #dba278; }
+    .reply-choice-card:focus-within { outline: 2px solid #dba278; outline-offset: 1px; }
+    .reply-choice-card input { margin: 3px 0 0; flex-shrink: 0; accent-color: #c68152; }
+    .reply-choice-card span { min-width: 0; }
+    .reply-choice-card strong { display: block; font-size: 13px; color: #55483e; }
+    .reply-choice-card small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 3px; font-size: 12px; line-height: 1.5; color: #897a6c; overflow-wrap: anywhere; }
+    .reply-choice-send { border: 0; border-radius: 9px; padding: 8px 12px; background: #b87951; color: white; cursor: pointer; margin-top: 6px; }
+    .reply-choice-send:disabled { opacity: .45; cursor: default; }
+    .reply-choice-hint { display: block; margin-top: 8px; color: #958678; font-size: 11px; }
+    .reply-story { margin-bottom: 10px; color: #6c7251; }
+    .reply-story strong, .reply-story small { display: block; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+    #pet-plan-toggle { border: 1px solid #d7e5d5; border-radius: 12px; padding: 5px 9px; background: #f4faf2; color: #446444; cursor: pointer; white-space: nowrap; }
+    #pet-plan-panel { position: fixed; top: 62px; right: 12px; z-index: 70; width: min(420px, calc(100vw - 24px)); max-height: calc(100vh - 160px); overflow-y: auto; padding: 18px; box-sizing: border-box; border: 1px solid #dce6d6; border-radius: 20px; background: #fcfff8; box-shadow: 0 14px 38px #293b2926; color: #354936; }
+    #pet-plan-panel.hidden { display: none; }
+    #pet-plan-panel .side-mini-btn { width: auto; margin: 0; padding: 7px 12px; }
+    #pet-plan-panel h3 { margin: 0 0 8px; font-size: 16px; }
+    #pet-plan-panel p { line-height: 1.7; margin: 8px 0; }
+    #pet-plan-panel small { color: #657562; }
+    .plan-art { text-align: center; font-size: 54px; padding: 10px; background: linear-gradient(var(--plan-color, #e9f3df), #fffaf0); border-radius: 14px; margin-top: 12px; }
+    .plan-portrait { display: block; width: 160px; height: 160px; object-fit: contain; margin: auto; }
+    .plan-portrait[hidden] { display: none; }
+    .plan-image-missing { font-size: 13px; }
+    .plan-keepsake { border-top: 1px solid #d9dfd5; margin-top: 16px; padding-top: 8px; }
+    .plan-company { background: #eef3e8; padding: 10px; border-radius: 10px; }
+    .plan-theme-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 16px 0 8px; }
+    .plan-theme-picker select { max-width: 160px; padding: 6px; border-radius: 8px; }
+    .plan-steps { display: flex; justify-content: space-between; gap: 5px; list-style: none; padding: 0; font-size: 12px; }
+    .plan-steps li { color: #91a18b; }
+    .plan-steps .reached { color: #426a3a; font-weight: 600; }
+    #pet-plan-feedback { font-size: 12px; color: #755446; }
+  </style>
+  <link rel="stylesheet" href="/static/companion.css">
 </head>
 <body>
+  <script>if (new URLSearchParams(location.search).get('quick') === '1') document.body.classList.add('quick-chat');</script>
   <div id="wall-bg"></div>
   <video id="wall-video" muted autoplay loop playsinline></video>
   <div id="drop-hint" class="hidden">松开：文件夹会加入项目，文件会导入当前对话</div>
@@ -1770,43 +1559,61 @@
   <div id="app">
     <aside id="sidebar">
       <div class="side-head">
-        <strong>🐾 Nyalume</strong>
-        <button id="config-btn" title="API 配置">⚙</button>
-        <button id="new-btn" title="新建最近对话">＋</button>
+        <strong><span class="brand-mark" aria-hidden="true">✧</span>Nyalume</strong>
+        <span class="brand-caption">陪伴手记</span>
       </div>
+      <button id="new-btn" type="button" title="新建最近对话"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>开启新对话</span></button>
+      <nav class="lounge-nav" aria-label="主要导航">
+        <button id="home-nav" type="button"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7M5 9v11h14V9M9 20v-7h6v7"/></svg>今日小窝</button>
+        <button id="chat-nav" type="button" aria-current="page"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15a3 3 0 0 1-3 3H9l-5 3V6a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3ZM8 8h8M8 12h5"/></svg>继续对话</button>
+      </nav>
       <div id="side-search">
-        <input id="search-input" type="text" placeholder="搜索聊天内容…" autocomplete="off">
+        <svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
+        <input id="search-input" type="text" placeholder="搜索对话内容" aria-label="搜索对话内容" autocomplete="off">
         <div id="search-results" class="hidden"></div>
       </div>
+      <div id="sidebar-scroll">
       <section class="side-sec" id="sec-projects">
-        <button class="side-sec-head" type="button">
-          <span class="mark">▾</span><span>项目</span>
+        <button class="side-sec-head" type="button" aria-controls="projects-body" aria-expanded="true">
+          <span class="mark" aria-hidden="true">▾</span><span class="section-name">一起做的事 · 项目</span><span id="project-count" class="section-count">0</span>
         </button>
-        <div class="side-sec-body">
+        <div class="side-sec-body" id="projects-body">
           <div id="project-list"></div>
           <button id="add-project-btn" class="side-mini-btn" type="button">＋ 添加项目</button>
         </div>
       </section>
       <section class="side-sec grow" id="sec-recent">
-        <button class="side-sec-head" type="button">
-          <span class="mark">▾</span><span>最近</span>
+        <button class="side-sec-head" type="button" aria-controls="recent-body" aria-expanded="true">
+          <span class="mark" aria-hidden="true">▾</span><span class="section-name">我们的对话</span><span id="session-count" class="section-count">0</span>
         </button>
-        <div class="side-sec-body">
+        <div class="side-sec-body" id="recent-body">
           <div id="session-list"></div>
         </div>
       </section>
       <section class="side-sec collapsed" id="sec-state">
-        <button class="side-sec-head" type="button" title="打开小约定、共同经历和桌宠状态">
-          <span class="mark">▸</span><span>小约定 · 共同经历</span>
+        <button class="side-sec-head" type="button" title="打开小约定、共同经历和桌宠状态" aria-controls="companion-body" aria-expanded="false">
+          <span class="mark" aria-hidden="true">▸</span><span class="section-name">小约定 · 共同经历</span>
         </button>
-        <div class="side-sec-body">
+        <div class="side-sec-body" id="companion-body">
           <div id="state-body"><div class="state-empty">展开后选择会话显示</div></div>
         </div>
       </section>
+      </div>
+      <footer class="sidebar-foot">
+        <button id="command-open" type="button"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m7 9 3 3-3 3m6 0h4"/></svg><span>快捷入口</span><kbd>Ctrl K</kbd></button>
+        <button id="config-btn" type="button" title="API 配置"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg><span>设置与技能</span></button>
+        <div class="sidebar-local"><span class="status-dot"></span>记忆保存在本机<span>NYALUME</span></div>
+      </footer>
     </aside>
+    <button id="sidebar-scrim" type="button" aria-label="关闭导航"></button>
     <main>
       <header id="chat-head">
+        <button id="sidebar-toggle" type="button" aria-label="打开导航" aria-expanded="false" aria-controls="sidebar">☰</button>
         <span id="chat-title">新对话</span>
+        <button id="focus-chip" type="button" hidden title="查看陪伴专注"></button>
+        <button id="pet-plan-toggle" type="button" aria-expanded="false" aria-controls="pet-plan-panel">🌱 小计划</button>
+        <a id="fantasy-entry" href="/fantasy" target="_blank" rel="noopener" style="white-space:nowrap;font-size:13px;color:#786198;text-decoration:none" title="在独立窗口开始或继续剧情">✦ 奇幻冒险 ↗</a>
+        <a id="full-chat-link" href="/" target="_blank" rel="noopener">完整聊天 ↗</a>
         <button id="daily-nyalume-btn" type="button" title="每天 0:00 刷新">✦ 今日 Nyalume</button>
         <div class="wall-wrap">
           <button id="wall-btn" class="wall-btn" title="聊天壁纸">🖼 壁纸</button>
@@ -1829,6 +1636,87 @@
         </div>
         <select id="persona-select" title="切换人设"></select>
       </header>
+      <section id="home-panel" aria-label="今日小窝" hidden>
+        <div class="home-inner">
+          <div class="home-dateline"><span id="home-date"></span><span>NYALUME'S DIARY / 日常篇</span></div>
+          <div class="home-hero">
+            <div class="hero-chapter">✧ 与你相伴的日常</div>
+            <h1><span id="home-greeting">欢迎回来，</span><br>今天的故事，<em>也想有你。</em></h1>
+            <div class="home-dialogue"><span class="dialogue-name">Nyalume <span>✧</span></span><p>今天想认真一点，还是想被陪着？<br>无论哪一种，都给你留了位置喵。</p></div>
+            <img id="home-portrait" class="home-portrait" src="/api/pet/plan/portrait" alt="在小窝等你的 Nyalume" width="300" height="300" hidden>
+            <svg class="home-cat" viewBox="0 0 200 180" fill="none" aria-hidden="true">
+              <circle cx="106" cy="83" r="65" fill="#edf0e4"/>
+              <path d="M24 143h155" stroke="#c5cdb8" stroke-width="1.5"/>
+              <path d="M51 138c-6-16-4-32 10-44l-2-38 27 16c10-3 21-3 31 0l27-16-1 39c11 12 14 27 6 43Z" fill="#faf8ec" stroke="#879079" stroke-width="2" stroke-linejoin="round"/>
+              <path d="m71 101 11 1m33 0 11-1m-30 9 4 3 4-3m-4 3c-3 6-7 5-9 2m9-2c3 6 7 5 9 2M65 114l-12-2m13 8-12 2m72-8 13-2m-13 8 12 2" stroke="#879079" stroke-width="2" stroke-linecap="round"/>
+              <path d="M146 140c34 2 39-24 23-24-12 0-6 16-23 15" stroke="#879079" stroke-width="2" stroke-linecap="round"/>
+              <path d="M77 140v-7m39 7v-7" stroke="#879079" stroke-width="2" stroke-linecap="round"/>
+              <path d="m159 39 3 7 7 3-7 3-3 7-3-7-7-3 7-3Z" fill="#c5aa76"/>
+              <text x="65" y="163">I'M HERE.</text>
+            </svg>
+          </div>
+          <div class="home-grid">
+            <section id="focus-card" class="home-card focus-card" aria-labelledby="focus-heading">
+              <div class="home-label">CH.01 / 陪伴专注</div>
+              <h2 id="focus-heading">这次的小任务，陪你一起。</h2>
+              <p id="focus-intro">这一小段时间，就交给我们吧。我会安静陪着你。</p>
+              <form id="focus-start-form" hidden>
+                <label for="focus-goal">这段时间，想做什么？</label>
+                <input id="focus-goal" maxlength="120" required placeholder="比如，读完十页书" autocomplete="off">
+                <fieldset class="focus-durations"><legend>给自己一点时间</legend>
+                  <label><input type="radio" name="focus-minutes" value="15"><span>15 分钟</span></label>
+                  <label><input type="radio" name="focus-minutes" value="25" checked><span>25 分钟</span></label>
+                  <label><input type="radio" name="focus-minutes" value="45"><span>45 分钟</span></label>
+                </fieldset>
+                <button class="home-primary" type="submit">开始陪伴专注 <span aria-hidden="true">↗</span></button>
+              </form>
+              <div id="focus-running" hidden>
+                <div id="focus-goal-display"></div>
+                <div id="focus-clock" class="focus-clock" role="timer" aria-label="剩余时间">25:00</div>
+                <div id="focus-stage" role="status"></div>
+                <div class="focus-track" aria-hidden="true"><span id="focus-progress"></span></div>
+                <div class="home-actions">
+                  <button id="focus-pause" class="home-primary" type="button">暂停一下</button>
+                  <button id="focus-finish" class="home-secondary" type="button">提前收尾</button>
+                  <button id="focus-cancel" class="home-secondary" type="button">放下这次</button>
+                </div>
+              </div>
+              <form id="focus-review" hidden>
+                <p id="focus-review-goal"></p>
+                <label for="focus-note">留一句回顾，也可以先空着</label>
+                <textarea id="focus-note" maxlength="500" placeholder="做到了什么？下次从哪里继续？"></textarea>
+                <div class="home-actions" style="margin-top:14px">
+                  <button class="home-primary" type="submit" value="done">完成了 ✓</button>
+                  <button class="home-secondary" type="submit" value="progress">有进展，下次继续</button>
+                  <button id="focus-discard" class="home-secondary" type="button">不留记录</button>
+                </div>
+              </form>
+              <p id="focus-feedback" role="status">正在读取专注记录…</p>
+              <button id="focus-retry" class="home-secondary" type="button" hidden>重新加载</button>
+            </section>
+            <section class="home-card" aria-labelledby="home-chat-heading">
+              <div class="home-label">CH.02 / 心事频道</div>
+              <h2 id="home-chat-heading">要和我说说吗？</h2>
+              <p>小小的烦恼、突然的灵感，或者一句「我回来啦」。</p>
+              <div class="home-paths">
+                <button type="button" data-prompt="我有一件一直拖着没做的事，请先问我是什么，再帮我找一个五分钟就能开始的小步骤。"><span class="path-icon">↗</span><span>把难事，拆小一点<small>一起找到可以开始的第一步</small></span><span class="path-arrow">→</span></button>
+                <button type="button" data-prompt="今天我想和你聊聊近况。先问问我今天过得怎么样，不急着给建议。"><span class="path-icon">☁</span><span>让心事，有处安放<small>聊聊今天，或者什么都不做</small></span><span class="path-arrow">→</span></button>
+                <button type="button" data-prompt="我想整理一下今天：请一次只问我一个问题，陪我回顾今天的小收获，再选一件明天想做的事。"><span class="path-icon">✎</span><span>给今天，留一页记录<small>看见那些微小的进展</small></span><span class="path-arrow">→</span></button>
+              </div>
+            </section>
+          </div>
+          <div class="home-section-head"><h2>✧ 小窝里的支线故事</h2><span>想起我时，就来坐坐吧</span></div>
+          <div class="home-rituals">
+            <button id="home-daily" class="home-ritual" type="button"><span class="ritual-symbol">✧</span><strong>今日 Nyalume</strong><small>收下一句，只属于今天的祝福</small></button>
+            <button id="home-plan" class="home-ritual" type="button"><span class="ritual-symbol">♧</span><strong>她的小计划</strong><small>看看小窝，又有了什么变化</small></button>
+            <a class="home-ritual" href="/fantasy" target="_blank" rel="noopener"><span class="ritual-symbol">☾</span><strong>奇幻冒险 ↗</strong><small>在另一段故事里，和她相遇</small></a>
+          </div>
+          <div class="home-section-head"><h2>我们的进度手记</h2><span id="focus-today">专注足迹 · 本地保存</span></div>
+          <div id="focus-history" class="focus-history"><div class="history-empty">正在读取…</div></div>
+          <div class="home-footer"><span>TO BE CONTINUED / 和你的下一页</span><span>故事不用赶，我会在这里喵。</span></div>
+        </div>
+      </section>
+      <section id="pet-plan-panel" class="hidden" aria-label="她的小计划"></section>
       <div id="daily-nyalume-layer" class="hidden">
         <section id="daily-nyalume-popover" aria-live="polite"></section>
       </div>
@@ -1836,7 +1724,7 @@
       <div id="log"><div class="empty-hint">🐾 主人想聊点什么喵？点左侧会话或 ＋ 开始～</div></div>
       <div id="task-panel" class="hidden"></div>
       <div id="input-row">
-        <textarea id="input" rows="3" placeholder="和 Nyalume 说点什么吧～" aria-label="聊天输入" title="Enter 发送，Shift+Enter 换行" autocomplete="off"></textarea>
+        <textarea id="input" rows="3" placeholder="今天的心事，或想一起完成的小任务，都可以告诉我喵…" aria-label="聊天输入" title="Enter 发送，Shift+Enter 换行" autocomplete="off"></textarea>
         <div class="add-wrap">
           <button id="add-btn" type="button" title="添加：图片 / 文件 / 文件夹">＋</button>
           <div id="add-menu">
@@ -1856,6 +1744,7 @@
         </div>
         <button id="send">发送</button>
       </div>
+      <div id="composer-caption"><span>Enter 发送 · Shift + Enter 换行</span><span id="draft-status" role="status">草稿仅存于当前浏览器</span></div>
       <div id="chat-floats">
         <div id="cat-tap-wrap">
           <button id="cat-tap-btn" type="button" title="敲敲猫猫头" aria-label="敲敲猫猫头">
@@ -1890,6 +1779,14 @@
       </aside>
     </main>
   </div>
+  <dialog id="command-dialog" aria-labelledby="command-heading">
+    <div class="command-head"><h2 id="command-heading">想去哪里？</h2><button id="command-close" type="button" aria-label="关闭快捷入口">Esc ✕</button></div>
+    <input id="command-search" type="search" placeholder="搜索入口，如：专注、壁纸、设置…" aria-label="搜索快捷入口" autocomplete="off">
+    <div id="command-list"></div>
+    <div class="command-foot">↑ ↓ 选择 · Enter 打开 · Esc 关闭</div>
+  </dialog>
+  <div id="ui-notice" role="status" hidden></div>
+  <script src="/static/companion.js"></script>
   <script>
     const log = document.getElementById("log");
     let followLatest = true;
@@ -2959,6 +2856,50 @@
       });
     }
 
+    function addReplyOptions(wrap, interaction = {}) {
+      const choices = Array.isArray(interaction?.choices) && interaction.choices.length === 3 ? interaction.choices : [];
+      if(!choices.length && !interaction?.story && !interaction?.fantasy && !interaction?.fantasy_warning)return;
+      const box = document.createElement('fieldset'); box.className = 'reply-options';
+      const legend = document.createElement('legend'); legend.textContent = '你想怎么回应？'; box.appendChild(legend);
+      const story = interaction?.fantasy || interaction?.story;
+      if (story?.title) {
+        const note = document.createElement('div'); note.className = 'reply-story';
+        const title = document.createElement('strong'); title.textContent = (interaction?.fantasy ? '奇幻手记 · ' : '小窝故事 · ') + story.title;
+        const goal = document.createElement('small');
+        const status = {active: '她的小愿望', paused: '故事已暂停', completed: '这一章已完成'}[story.status] || '她的小愿望';
+        goal.textContent = status + '：' + (story.goal || '');
+        if (interaction?.fantasy) goal.textContent += ' · ' + story.bond + ' · ' + story.location;
+        note.append(title, goal); box.appendChild(note);
+      }
+      if (interaction?.fantasy_warning) {
+        const warning = document.createElement('small'); warning.textContent = interaction.fantasy_warning;
+        box.appendChild(warning);
+      }
+      let selected = null;
+      const name = 'reply-choice-' + Math.random().toString(36).slice(2);
+      const submit = document.createElement('button'); submit.type = 'button';
+      submit.className = 'reply-choice-send'; submit.textContent = '发送这个回应'; submit.disabled = true;
+      for (const choice of choices) {
+        if (!choice || typeof choice.label !== 'string' || typeof choice.text !== 'string') continue;
+        const label = document.createElement('label'); label.className = 'reply-choice-card';
+        const radio = document.createElement('input'); radio.type = 'radio'; radio.name = name; radio.value = choice.text;
+        const copy = document.createElement('span');
+        const title = document.createElement('strong'); title.textContent = choice.label;
+        const desc = document.createElement('small'); desc.textContent = choice.text; desc.title = choice.text;
+        copy.append(title, desc); label.append(radio, copy); box.appendChild(label);
+        radio.onchange = () => { selected = choice.text; submit.disabled = false; };
+      }
+      const hint = document.createElement('small'); hint.className = 'reply-choice-hint';
+      hint.textContent = '也可以在下方直接输入自己的回答。';
+      submit.onclick = () => {
+        if (state.busy || !selected) return;
+        box.disabled = true;
+        void send(selected);
+      };
+      if(choices.length)box.appendChild(submit);
+      box.appendChild(hint); wrap.appendChild(box);
+    }
+
     function addReplyActions(wrap, msgId, getText, timeText) {
       const meta = document.createElement("div");
       meta.className = "reply-meta";
@@ -2990,7 +2931,7 @@
       wrap.appendChild(meta);
     }
 
-    function append(role, text, msgId, ts, attachments, pending, runTrace) {
+    function append(role, text, msgId, ts, attachments, pending, runTrace, interaction) {
       const div = document.createElement("div");
       div.className = "msg " + role + (role === "assistant" ? " reply" : "");
       if (role === "user") {
@@ -3023,6 +2964,7 @@
           addRunSummary(div, runTrace, traceText.textContent ? detail : null);
         }
         addReplyActions(div, msgId, () => text, fmtStamp(ts));
+        addReplyOptions(div, interaction);
         noteMsg(div, state.speaker, text);
       }
       if (role === "user") {
@@ -3150,6 +3092,135 @@
         + (report.memory_warning ? '<br>' + esc(report.memory_warning) : '') + '</div>';
     }
 
+    let planBusy = false, planArchive = false, planBefore = 0;
+    function planArt(plan) {
+      return '<div class="plan-art" style="--plan-color:' + esc(plan.color) + '">'
+        + (plan.portrait ? '<img class="plan-portrait" src="/api/pet/plan/portrait" alt="Nyalume 的 2D 形象"><small class="plan-image-missing" hidden>Nyalume 的形象文件暂时不在这里，成长纪念已保留。</small>'
+          : '<span aria-hidden="true">' + esc(plan.art) + '</span>') + '</div>';
+    }
+    async function loadPetPlan() {
+      const panel = document.getElementById('pet-plan-panel');
+      if (planBusy) return;
+      planBusy = true;
+      panel.querySelectorAll('button, select').forEach(b => b.disabled = true);
+      const oldScroll = panel.scrollTop;
+      try {
+        const [plan, themes, collection] = await Promise.all([
+          api('/api/pet/plan'), api('/api/pet/plan/themes'),
+          planArchive ? api('/api/pet/plan/collection?before=' + planBefore) : Promise.resolve([]),
+        ]);
+        panel.innerHTML = '<h3>' + (planArchive ? '小窝 · 纪念架' : '她的小计划' + (plan?.id ? ' · ' + esc(plan.title) : '')) + '</h3>';
+        const nav = document.createElement('button');
+        nav.type = 'button'; nav.className = 'side-mini-btn';
+        nav.textContent = planArchive ? '返回当前计划' : '打开纪念架';
+        nav.onclick = () => { planArchive = !planArchive; planBefore = 0; panel.scrollTop = 0; void loadPetPlan(); };
+        panel.appendChild(nav);
+        const add = (host, label, method, body) => {
+          const button = document.createElement('button');
+          button.type = 'button'; button.className = 'side-mini-btn'; button.textContent = label;
+          button.onclick = async () => {
+            if (planBusy) return;
+            planBusy = true;
+            panel.querySelectorAll('button, select').forEach(b => b.disabled = true);
+            try {
+              await api('/api/pet/plan' + (method === 'POST' ? '/start' : ''), {
+                method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(typeof body === 'function' ? body() : body),
+              });
+              planBusy = false;
+              await loadPetPlan();
+            } catch (error) {
+              document.getElementById('pet-plan-feedback').textContent = error.message;
+            } finally {
+              planBusy = false;
+              panel.querySelectorAll('button, select').forEach(b => b.disabled = false);
+            }
+          };
+          host.appendChild(button);
+          return button;
+        };
+        if (planArchive) {
+          panel.insertAdjacentHTML('beforeend', '<p><small>完成的小计划都留在这里。标记喜欢，会影响她下次挑选主题。</small></p>');
+          if (!collection.length) panel.insertAdjacentHTML('beforeend', '<p>这里还空着，等一个小计划慢慢完成吧。</p>');
+          for (const item of collection) {
+            const card = document.createElement('article');
+            card.className = 'plan-keepsake';
+            card.innerHTML = '<h4>' + esc(item.title + ' · ' + item.plant) + '</h4>' + planArt(item)
+              + '<small>' + esc(item.stage_day) + ' · 在 ' + item.company_count + ' 个阶段留下了陪伴</small>'
+              + '<p>' + esc(item.text) + '</p>';
+            add(card, item.liked ? '♥ 已喜欢 · 取消' : '♡ 喜欢这个计划', 'PATCH', {id: item.id, liked: !item.liked});
+            panel.appendChild(card);
+          }
+          if (collection.length === 20) {
+            const more = document.createElement('button');
+            more.type = 'button'; more.className = 'side-mini-btn'; more.textContent = '更早的纪念';
+            more.onclick = () => { planBefore = collection.at(-1).id; panel.scrollTop = 0; void loadPetPlan(); };
+            panel.appendChild(more);
+          }
+          if (planBefore) {
+            const latest = document.createElement('button');
+            latest.type = 'button'; latest.className = 'side-mini-btn'; latest.textContent = '回到最新纪念';
+            latest.onclick = () => { planBefore = 0; panel.scrollTop = 0; void loadPetPlan(); };
+            panel.appendChild(latest);
+          }
+        } else {
+          if (!plan?.id) {
+            panel.insertAdjacentHTML('beforeend', '<p>想给小窝添一点新东西。选个主题，也可以让我自己想。</p>');
+          } else {
+            panel.insertAdjacentHTML('beforeend', planArt(plan)
+              + '<ol class="plan-steps">' + plan.stages.map((label, i) =>
+                '<li class="' + (i <= plan.stage ? 'reached' : '') + '"' + (i === plan.stage ? ' aria-current="step"' : '') + '>' + esc(label) + '</li>').join('') + '</ol>'
+              + '<p>' + esc(plan.text) + '</p>'
+              + (plan.plant ? '<small>' + esc((plan.chosen_by === 'user' ? '你选的：' : '她自己选的：') + plan.plant) + '</small>' : '')
+              + '<p><small>' + (plan.paused ? '已暂停。恢复后按自己的节奏继续。' : '虚拟小计划 · 每个活跃日期走一小步，离线不扣分。') + '</small></p>'
+              + (plan.accompanied ? '<p class="plan-company" role="status">' + esc(plan.company_text) + '</p>' : ''));
+          }
+          const actions = document.createElement('div'); actions.className = 'companion-actions';
+          panel.appendChild(actions);
+          for (const choice of (plan?.choices || [])) add(actions, '选' + choice, 'PATCH', {id: plan.id, choice});
+          if (plan?.id) {
+            if (!plan.accompanied) add(actions, plan.stage === 3 ? '一起看看成果' : '陪她一会儿', 'PATCH', {id: plan.id, accompany: true});
+            add(actions, plan.liked ? '♥ 已喜欢 · 取消' : '♡ 喜欢这个计划', 'PATCH', {id: plan.id, liked: !plan.liked});
+            if (plan.stage < 3) add(actions, plan.paused ? '继续这个小计划' : '暂停小计划', 'PATCH', {id: plan.id, paused: !plan.paused});
+          }
+          if (!plan?.id || plan.stage === 0 || plan.stage === 3) {
+            const pick = document.createElement('div'); pick.className = 'plan-theme-picker';
+            const label = document.createElement('label'); label.textContent = plan?.stage === 0 ? '换个念头 ' : '下一个小计划 ';
+            const select = document.createElement('select'); select.setAttribute('aria-label', '小计划主题');
+            if (!plan?.id || plan.stage === 3) select.add(new Option('让她自己想', ''));
+            for (const theme of themes) select.add(new Option(theme.title, theme.kind));
+            if (plan?.stage === 0) select.value = plan.kind;
+            label.appendChild(select); pick.appendChild(label);
+            add(pick, plan?.stage === 0 ? '换这个主题' : '开始小计划', plan?.stage === 0 ? 'PATCH' : 'POST',
+              () => plan?.stage === 0 ? {id: plan.id, kind: select.value} : {kind: select.value || null});
+            panel.appendChild(pick);
+            panel.insertAdjacentHTML('beforeend', '<small>' + (plan?.stage === 0 ? '开始制作前可以换主题；换后重新选择，也会清除这次的陪伴和喜欢标记。' : '她会避开上一个主题，并更常选择你标记喜欢的主题。') + '</small>');
+          }
+        }
+        panel.insertAdjacentHTML('beforeend', '<p id="pet-plan-feedback" role="status"></p>');
+        panel.querySelectorAll('.plan-portrait').forEach(img => { img.onerror = () => { img.hidden = true; img.nextElementSibling.hidden = false; }; });
+        panel.scrollTop = oldScroll;
+      } catch (error) {
+        panel.textContent = '小计划暂时打不开：' + error.message;
+      } finally {
+        planBusy = false;
+      }
+    }
+    document.getElementById('pet-plan-toggle').onclick = () => {
+      const panel = document.getElementById('pet-plan-panel');
+      panel.classList.toggle('hidden');
+      document.getElementById('pet-plan-toggle').setAttribute('aria-expanded', String(!panel.classList.contains('hidden')));
+      if (!panel.classList.contains('hidden')) void loadPetPlan();
+    };
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        document.getElementById('pet-plan-panel').classList.add('hidden');
+        document.getElementById('pet-plan-toggle').setAttribute('aria-expanded', 'false');
+      }
+    });
+    setInterval(() => {
+      if (!planArchive && !document.getElementById('pet-plan-panel').classList.contains('hidden') && !document.getElementById('pet-plan-panel').contains(document.activeElement)) void loadPetPlan();
+    }, 30000);
+
     async function loadCompanion(before = 0) {
       const host = document.getElementById('companion-list');
       if (!host) return;
@@ -3163,7 +3234,8 @@
           const card = document.createElement('div');
           card.className = 'companion-card';
           const stamp = new Date(entry.updated_at * 1000).toLocaleDateString();
-          card.innerHTML = '<small>' + esc(stamp + ' · ' + labels[entry.state]) + '</small><p>' + esc(entry.content) + '</p><div class="companion-actions"></div>';
+          const label = entry.source === 'pet_story' ? '小窝故事 · 虚拟情节' : entry.source === 'pet_plan' ? '她的小计划 · 成长纪念' : labels[entry.state];
+          card.innerHTML = '<small>' + esc(stamp + ' · ' + label) + '</small><p>' + esc(entry.content) + '</p><div class="companion-actions"></div>';
           const actions = card.querySelector('.companion-actions');
           const addAction = (label, action) => {
             const button = document.createElement('button');
@@ -3197,6 +3269,25 @@
       } catch (error) { document.getElementById('companion-feedback').textContent = '共同经历读取失败：' + error.message; }
     }
 
+    document.getElementById('state-body').addEventListener('click', async event => {
+      const button = event.target.closest('[data-comp-memory]');
+      if (!button) return;
+      const id = button.dataset.compMemory, action = button.dataset.action;
+      let body = action === 'mute' ? {proactive: false} : {};
+      if (action === 'edit') {
+        const value = prompt('修正这条记忆为：');
+        if (!value?.trim()) return;
+        body = {content: value.trim()};
+      }
+      try {
+        await api('/api/companionship/memories/' + encodeURIComponent(id), {
+          method: action === 'delete' ? 'DELETE' : 'PATCH',
+          headers: {'Content-Type': 'application/json'}, body: action === 'delete' ? undefined : JSON.stringify(body)
+        });
+        await renderState();
+      } catch (error) { alert(error.message); }
+    });
+
     async function renderState() {
       if (!state.currentId) return;
       try {
@@ -3223,6 +3314,13 @@
         if (st.mode === "daily") {
           html += '<div class="state-section">日常模式</div>'
             + '<div class="summary-box">当前好感度：' + Number(st.affection) + '</div>';
+        }
+        html += '<div class="state-section">共享记忆 · 明确来源</div>';
+        for (const m of st.shared_memories || []) {
+          html += '<div class="state-item"><span>' + esc(m.content) + '<small> · ' + esc(m.scope) + ' · ' + new Date(m.updated_at * 1000).toLocaleDateString() + '</small></span>'
+            + '<button data-comp-memory="' + esc(m.id) + '" data-action="edit">修正</button>'
+            + '<button data-comp-memory="' + esc(m.id) + '" data-action="mute">不主动提</button>'
+            + '<button data-comp-memory="' + esc(m.id) + '" data-action="delete">删除</button></div>';
         }
         html += '<div class="state-section">本对话摘要（L2）</div>';
         html += st.summary
@@ -3658,14 +3756,18 @@
     function makeSessionEl(s) {
       const item = document.createElement("div");
       item.className = "session-item" + (s.id === state.currentId ? " active" : "");
-      const text = document.createElement("div");
+      const text = document.createElement("button");
+      text.type = "button";
       text.className = "session-text";
-      const title = document.createElement("div");
+      text.title = titleOf(s);
+      if (s.id === state.currentId) text.setAttribute("aria-current", "true");
+      const title = document.createElement("span");
       title.className = "session-title";
-      title.textContent = (s.pinned ? "📌 " : "") + titleOf(s);
-      const meta = document.createElement("div");
+      title.textContent = (s.pinned ? "· " : "") + titleOf(s);
+      const meta = document.createElement("span");
       meta.className = "session-meta";
-      meta.textContent = (s.message_count || 0) + " 条 · " + fmtTime(s.last_ts || s.created_at);
+      meta.textContent = (s.pinned ? "已置顶 · " : "") + (s.message_count || 0) + " 条消息"
+        + ((s.last_ts || s.created_at) ? " · " + fmtTime(s.last_ts || s.created_at) : "");
       text.append(title, meta);
       const acts = document.createElement("div");
       acts.className = "row-act";
@@ -3675,6 +3777,7 @@
       const menu = document.createElement("div");
       menu.className = "more-menu hidden";
       const menuItems = [
+        { label: s.pinned ? "取消置顶" : "置顶对话", run: () => togglePinSession(s) },
         { label: "重命名", run: () => renameSession(s) },
         { label: s.project ? "打开项目目录" : "打开工作目录", run: () => openSessionWorkspace(s) },
         ...(!s.project ? [
@@ -3700,13 +3803,13 @@
           if (m !== menu) m.classList.add("hidden");
         });
         menu.classList.toggle("hidden");
+        if (!menu.classList.contains("hidden")) positionSidebarMenu(menu, more);
       };
+      menu.addEventListener("keydown", e => {
+        if (e.key === "Escape") { e.stopPropagation(); menu.classList.add("hidden"); more.focus(); }
+      });
       moreWrap.append(more, menu);
-      acts.append(
-        actBtn(s.pinned ? "★" : "☆", s.pinned ? "取消置顶" : "置顶",
-          () => togglePinSession(s)),
-        moreWrap
-      );
+      acts.append(moreWrap);
       item.append(text, acts);
       item.addEventListener("click", () => switchTo(s.id));
       return item;
@@ -3715,6 +3818,13 @@
     function renderSessionList(container, sessions) {
       container.innerHTML = "";
       for (const s of sessions) container.appendChild(makeSessionEl(s));
+    }
+
+    function positionSidebarMenu(menu, anchor) {
+      const rect = anchor.getBoundingClientRect();
+      menu.style.left = Math.max(8, Math.min(rect.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8)) + "px";
+      menu.style.top = Math.max(8, Math.min(rect.bottom + 5, innerHeight - menu.offsetHeight - 8)) + "px";
+      menu.querySelector('button')?.focus();
     }
 
     async function togglePinSession(s) {
@@ -3865,8 +3975,10 @@
       }
       more.addEventListener("click", (e) => {
         e.stopPropagation();
+        const willOpen = menu.classList.contains("hidden");
         document.querySelectorAll(".more-menu").forEach((m) => m.classList.add("hidden"));
-        menu.classList.toggle("hidden");
+        menu.classList.toggle("hidden", !willOpen);
+        if (!menu.classList.contains("hidden")) positionSidebarMenu(menu, more);
       });
       moreWrap.append(more, menu);
       head.append(toggle, nm, moreWrap);
@@ -3931,15 +4043,20 @@
       if (!projects.length) {
         const hint = document.createElement("div");
         hint.className = "state-empty";
-        hint.textContent = "暂无项目 · 点“＋ 添加项目”";
+        hint.textContent = "把资料和对话放在一起";
         projectBox.appendChild(hint);
       } else {
         for (const p of projects) {
           projectBox.appendChild(renderProjectCard(p, sessions.filter((s) => s.project === p.id)));
         }
       }
-      renderSessionList(listBox, sessions.filter((s) => !s.project || !projIds.has(s.project)));
-      const current = sessions.find((s) => s.id === state.currentId) || sessions[0] || null;
+      const recentSessions = sessions.filter((s) => !s.project || !projIds.has(s.project));
+      renderSessionList(listBox, recentSessions);
+      document.getElementById("project-count").textContent = projects.length;
+      document.getElementById("session-count").textContent = recentSessions.length;
+      // An explicitly opened persistent/archived conversation may be outside the recent list.
+      const current = sessions.find((s) => s.id === state.currentId)
+        || (state.currentId ? {id: state.currentId, project: '', title: state.currentId === 'nyalume-daily' ? '小窝日常' : '历史会话'} : sessions[0]) || null;
       state.currentId = current ? current.id : null;
       state.currentProject = current ? current.project : "";
       chatTitle.textContent = current ? titleOf(current) : "新对话";
@@ -3999,6 +4116,8 @@
               body: JSON.stringify({ mode: p.value })
             });
             renderPerm(r.mode);
+            if (r.mode === "daily") await switchTo((await api("/api/companionship/daily-session")).id);
+            else if (state.currentId === "nyalume-daily") await switchTo((await api("/api/sessions", {method: "POST"})).id);
             await renderState();
             permMenu.classList.remove("show");
           } catch (e) { alert("模式没切过去喵：" + e.message); }
@@ -4010,7 +4129,7 @@
         state.chatMode = cur.value;
         permBtn.textContent = cur.label;
         permBtn.title = cur.value === "daily"
-          ? "日常模式：纯聊天，好感度生效，工具全部关闭"
+          ? "日常模式：陪伴聊天与虚拟小窝，好感度生效；文件、命令和联网工具关闭"
           : "工作权限：" + cur.label;
         addBtn.disabled = cur.value === "daily";
         addBtn.title = cur.value === "daily"
@@ -4020,6 +4139,7 @@
           x.classList.toggle("current", x.textContent === cur.label);
         });
       }
+      state.renderPerm = renderPerm;
       permBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         permMenu.classList.toggle("show");
@@ -4027,11 +4147,12 @@
       document.addEventListener("click", () => permMenu.classList.remove("show"));
       try {
         const r = await api("/api/permissions");
-        renderPerm(r.mode);
+        renderPerm(state.currentId === "nyalume-daily" ? "daily" : r.mode);
       } catch (e) { /* 保持默认工作区 */ }
     }
 
     async function showMessages(sessionId) {
+      NyalumeUI.sessionChanged(sessionId);
       followLatest = true;
       log.innerHTML = "";
       state.msgNodes = [];
@@ -4041,13 +4162,14 @@
       if (rows.length === 0) {
         const hint = document.createElement("div");
         hint.className = "empty-hint";
-        hint.textContent = "🐾 想让我做什么喵？直接说就行～";
+        hint.textContent = "想做点什么，或只是聊聊天？我在这里。";
         log.appendChild(hint);
+        NyalumeUI.showHome();
         return;
       }
       const els = [];
       for (const row of rows) {
-        els.push(append(row.role, row.content, row.id, row.ts, row.attachments, false, row.trace));
+        els.push(append(row.role, row.content, row.id, row.ts, row.attachments, false, row.trace, row.interaction));
       }
       markLatestAssistant();
       markLatestUser();
@@ -4057,6 +4179,10 @@
 
     async function switchTo(sessionId) {
       state.currentId = sessionId;
+      if (state.renderPerm) {
+        const mode = sessionId === "nyalume-daily" ? "daily" : (await api("/api/permissions")).mode;
+        state.renderPerm(mode);
+      }
       await showMessages(sessionId);
       await renderSessions();
       await renderState();
@@ -4064,9 +4190,10 @@
 
     async function removeSession(session) {
       const wasCurrent = session.id === state.currentId;
-      if ((session.message_count || 0) > 0
-          && !confirm("要删掉这段对话吗？里面的聊天和小记忆也会一起离开，之后找不回来啦喵。")) return;
+      if (((session.message_count || 0) > 0 || (wasCurrent && input.value.trim()))
+          && !confirm("要删掉这段对话吗？聊天、关联的小记忆、话题和草稿会一起清除，来自这里的共享记忆也会失效。之后无法在这里恢复。")) return;
       await api(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+      NyalumeUI.forgetDraft(session.id);
       if (wasCurrent) {
         state.currentId = null; // renderSessions 会归一化到列表第一个（没有就自动新建）
         await renderSessions();
@@ -4077,7 +4204,9 @@
     }
 
     async function newChat() {
-      const created = await api("/api/sessions", { method: "POST" });
+      const created = state.chatMode === "daily"
+        ? await api("/api/companionship/daily-session")
+        : await api("/api/sessions", { method: "POST" });
       state.currentId = created.id;
       await showMessages(created.id);
       await renderSessions();
@@ -4636,7 +4765,7 @@
       relayAfterStop = { text: n };
       cancelActiveRun();
     }
-    async function send() {
+    async function send(selectedReply) {
       if (state.stopped) {
         state.stopped = false;
         if (stoppedStatusEl) { stoppedStatusEl.remove(); stoppedStatusEl = null; }
@@ -4647,10 +4776,11 @@
         state.currentId = created.id;
         await renderSessions();
       }
-      const message = input.value.trim();
+      const fromChoice = typeof selectedReply === "string";
+      const message = fromChoice ? selectedReply.trim() : input.value.trim();
       if (!message) return;
-      input.value = "";
-      resizeInput();
+      if (!fromChoice) { input.value = ""; resizeInput(); }
+      NyalumeUI.saveDraft();
       state.queue.push({ id: "t" + (++taskSeq), text: message });
       renderTaskPanel();
       await drainQueue();
@@ -4669,6 +4799,9 @@
       }
     }
     async function streamMessage(message) {
+      if (state.chatMode === 'daily' && state.currentId !== 'nyalume-daily') {
+        await switchTo((await api('/api/companionship/daily-session')).id);
+      }
       if (!state.currentId) {
         const created = await api("/api/sessions", { method: "POST" });
         state.currentId = created.id;
@@ -4922,6 +5055,7 @@
       activeRequestId = requestId;
       setSendIcon("run");
       let finalText = "";
+      let replyInteraction = {};
       let curTextBlock = null;
       let segmentText = "";
       let lastMsgId = 0;
@@ -5011,6 +5145,7 @@
                   decision === "allow" ? "ok" : "fail");
               } else if (ev.type === "done") {
                 lastMsgId = ev.message_id || 0;
+                replyInteraction = ev.interaction || replyInteraction;
                 runId = ev.run_id || runId;
               } else if (ev.type === "error") {
                 errorText = ev.message || "";
@@ -5090,6 +5225,7 @@
           if (!hasProc) proc.remove();
           addRunSummary(wrap, trace, hasProc ? proc : null, Number(secs), errorText);
           addReplyActions(wrap, lastMsgId, () => finalText || body.textContent, fmtStamp(sentAt));
+          if (!errorText && (finalText.trim() || replyInteraction.choices)) addReplyOptions(wrap, replyInteraction);
           noteMsg(wrap, state.speaker, finalText || body.textContent || errorText);
           markLatestAssistant();
           markLatestUser();
@@ -5748,10 +5884,22 @@ async function loadConfigForm() {
     });
 
     function initSidebarSections() {
+      const closeMenus = () => document.querySelectorAll('#sidebar .more-menu').forEach(menu => menu.classList.add('hidden'));
+      document.getElementById('sidebar-scroll').addEventListener('scroll', closeMenus);
+      window.addEventListener('resize', closeMenus);
+      document.getElementById('sidebar').addEventListener('keydown', event => {
+        if (event.key === 'Escape' && event.target.closest('.more-menu')) {
+          event.stopPropagation();
+          const menu = event.target.closest('.more-menu');
+          menu.classList.add('hidden');
+          menu.parentElement.querySelector('button').focus();
+        }
+      });
       const saved = {};
       try { Object.assign(saved, JSON.parse(localStorage.getItem("side-sec") || "{}")); } catch (e) {}
       document.querySelectorAll(".side-sec").forEach((sec) => {
-        if (saved[sec.id] === false) sec.classList.add("collapsed");
+        if (typeof saved[sec.id] === "boolean") sec.classList.toggle("collapsed", !saved[sec.id]);
+        sec.querySelector('.side-sec-head').setAttribute('aria-expanded', String(!sec.classList.contains('collapsed')));
         const mark = sec.querySelector(".side-sec-head .mark");
         if (mark) mark.textContent = sec.classList.contains("collapsed") ? "▸" : "▾";
       });
@@ -5759,10 +5907,11 @@ async function loadConfigForm() {
         headBtn.addEventListener("click", () => {
           const sec = headBtn.closest(".side-sec");
           sec.classList.toggle("collapsed");
+          headBtn.setAttribute('aria-expanded', String(!sec.classList.contains('collapsed')));
           const mark = headBtn.querySelector(".mark");
           if (mark) mark.textContent = sec.classList.contains("collapsed") ? "▸" : "▾";
           saved[sec.id] = !sec.classList.contains("collapsed");
-          localStorage.setItem("side-sec", JSON.stringify(saved));
+          try { localStorage.setItem("side-sec", JSON.stringify(saved)); } catch (_) { /* 折叠仍在当前窗口生效。 */ }
           if (sec.id === "sec-state" && !sec.classList.contains("collapsed")) {
             setTimeout(renderBackupList, 60); // 展开记忆面板时再拉备份列表，省请求
           }
@@ -5831,9 +5980,11 @@ async function loadConfigForm() {
 
     // 启动：建出/选中第一个会话并回显历史
     (async function init() {
+      if (new URLSearchParams(location.search).get('plan') === '1') document.getElementById('pet-plan-toggle').click();
       initSidebarSections();
       await renderSessions();
       const wantSession = new URLSearchParams(location.search).get("session");
+      document.getElementById("full-chat-link").href = wantSession ? '/?session=' + encodeURIComponent(wantSession) : '/';
       if (wantSession) {
         try {
           await switchTo(wantSession); // 桌宠拖文件夹建项目后直达对应会话
@@ -5852,13 +6003,16 @@ async function loadConfigForm() {
       await initPersona();
       await initDailyNyalume();
       await initPermission();
+      if (state.chatMode === "daily" && !wantSession) await switchTo((await api("/api/companionship/daily-session")).id);
       await initWallpaper();
       await initFirstRunGuide();
+      if (new URLSearchParams(location.search).get('home') === '1') NyalumeUI.showHome();
       requestAnimationFrame(() => {
         log.scrollTop = log.scrollHeight;
         updateFloatButtons();
+        if (document.body.classList.contains('quick-chat')) document.getElementById('input').focus();
       });
-    })();
+    })().catch(error => NyalumeUI.startupError(error));
   </script>
 </body>
 </html>

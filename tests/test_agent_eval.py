@@ -56,15 +56,16 @@ def test_batch_work_gets_batching_discipline():
     assert "不要重复" in hint
 
 
-def test_daily_mode_has_no_tools_and_updates_affection(monkeypatch):
+def test_daily_mode_only_has_virtual_plan_tool_and_keeps_affection(monkeypatch):
     session_id = "eval-daily"
     memory.set_daily_affection(session_id, 50)
     tools.set_permission_mode("daily")
     captured = {}
 
     def fake_chat_stream(messages, tools=None, **kwargs):
-        captured["tools"] = tools
-        captured["prompt"] = messages[0]["content"]
+        # 后续生成回应选项的无工具调用不能覆盖主对话的权限快照。
+        captured.setdefault("tools", tools)
+        captured.setdefault("prompt", messages[0]["content"])
         yield {"kind": "content", "text": "今天也陪着主人喵。\n"}
         yield {"kind": "content", "text": "[daily_affection:+3]"}
 
@@ -74,10 +75,10 @@ def test_daily_mode_has_no_tools_and_updates_affection(monkeypatch):
     finally:
         tools.set_permission_mode("workspace")
     shown = "".join(e.get("text", "") for e in events if e["type"] == "text")
-    assert captured["tools"] is None
-    assert "纯聊天模式" in captured["prompt"]
+    assert [tool["function"]["name"] for tool in captured["tools"]] == ["pet_plan"]
+    assert "桌面小窝" in captured["prompt"]
     assert "daily_affection" not in shown
-    assert memory.get_daily_affection(session_id) == 53
+    assert memory.get_daily_affection(memory.daily_session()) == 50
 
 
 def test_agent_eval_executes_tool_then_finishes(monkeypatch):
@@ -99,6 +100,49 @@ def test_agent_eval_executes_tool_then_finishes(monkeypatch):
     assert any(e.get("type") == "tool" and e.get("name") == "calculator" for e in events)
     assert any(e.get("type") == "tool_result" and "42" in e.get("result", "") for e in events)
     assert any(e.get("type") == "done" for e in events)
+
+
+def test_direct_pet_action_finishes_from_tool_receipt(monkeypatch):
+    calls = []
+
+    def fake_chat_stream(messages, tools=None, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            yield from _tool_call("pet_status", {})
+        elif len(calls) == 2:
+            yield from _tool_call("pet_perform", {"action": "dance", "value": "IRIS OUT"})
+        else:
+            raise AssertionError("动作发出后不应再等模型")
+
+    monkeypatch.setattr(agent.llm, "chat_stream", fake_chat_stream)
+    monkeypatch.setattr(agent, "execute_tool", lambda name, args: (
+        "桌宠已接收 dance 指令：IRIS OUT" if name == "pet_perform" else '{"ok":true}'))
+    events = list(agent.run_stream("eval-pet-fast", "跳舞吧"))
+    assert len(calls) == 2
+    assert [event["type"] for event in events[-3:]] == ["tool_result", "text", "done"]
+    assert "已接收跳舞指令" in events[-2]["text"]
+    assert memory.session_messages("eval-pet-fast")[-1]["content"] == events[-2]["text"]
+
+
+def test_pet_action_with_followup_keeps_model_round(monkeypatch):
+    calls = []
+
+    def fake_chat_stream(messages, tools=None, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            yield from _tool_call("pet_status", {})
+        elif len(calls) == 2:
+            yield from _tool_call("pet_perform", {"action": "dance", "value": "IRIS OUT"})
+        else:
+            yield {"kind": "content", "text": "动作已发出，接着说说编舞。"}
+
+    monkeypatch.setattr(agent.llm, "chat_stream", fake_chat_stream)
+    monkeypatch.setattr(agent, "execute_tool", lambda name, args: (
+        "桌宠已接收 dance 指令：IRIS OUT" if name == "pet_perform" else '{"ok":true}'))
+    events = list(agent.run_stream("eval-pet-followup", "跳舞，然后解释编舞"))
+    assert len(calls) == 3
+    assert events[-1]["type"] == "done"
+    assert any(event.get("text") == "动作已发出，接着说说编舞。" for event in events)
 
 
 def test_agent_allows_more_than_ten_productive_tool_rounds(monkeypatch):
@@ -149,6 +193,7 @@ def test_agent_eval_injects_rag_source(monkeypatch):
 
     def fake_chat_stream(messages, tools=None, **kwargs):
         captured["system"] = messages[0]["content"]
+        captured["packet"] = messages[-2]["content"]
         yield {"kind": "content", "text": "应按账龄分组统计。"}
 
     memory.doc_save(
@@ -157,8 +202,9 @@ def test_agent_eval_injects_rag_source(monkeypatch):
     try:
         monkeypatch.setattr(agent.llm, "chat_stream", fake_chat_stream)
         list(agent.run_stream(session_id, "信用卡逾期率怎么统计？"))
-        assert "RAG手册.txt" in captured["system"]
-        assert "信用卡逾期率需要按账龄分组统计" in captured["system"]
+        assert "RAG手册.txt" not in captured["system"]
+        assert "RAG手册.txt" in captured["packet"]
+        assert "信用卡逾期率需要按账龄分组统计" in captured["packet"]
     finally:
         memory.doc_delete(source, session_id)
 

@@ -455,7 +455,7 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
     api._display_hwnd = _create_layered_window()
     motions = api._motions
     index = {"i": 0}
-    state = {"drag": None, "spin": None, "last_click": 0.0, "last_pos": (0, 0)}
+    state = {"drag": None, "spin": None}
 
     def next_motion() -> None:
         if motions:
@@ -540,6 +540,9 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
                 # 连滚轮也不吞：这个钩子一次都不该挡系统输入（挡错一次就是整台电脑
                 # 鼠标键盘失灵），代价只是滚轮在她身上时底下的窗口也会跟着滚
             return False
+        if (msg == _WM_LBUTTONDOWN and not api._menu_rects
+                and api.reply_at(x, y)):
+            return False
         if api._menu_rects:  # 菜单开着时只判菜单项
             if msg in (_WM_LBUTTONDOWN, _WM_RBUTTONDOWN):
                 mx, my = x - api._x, y - api._y
@@ -594,6 +597,16 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
                         elif item_id == "chat":
                             # 只开聊天窗，桌宠继续留在桌面上：两个窗口并存
                             api.open_chat_from_menu()
+                        elif item_id == "notes":
+                            api._notes_enabled = not api._notes_enabled
+                            _save_settings(notes_enabled=api._notes_enabled)
+                        elif item_id == "home":
+                            api.open_home()
+                        elif item_id == "plan":
+                            api.open_chat(plan=True)
+                        elif item_id == "fantasy":
+                            api.open_chat(fantasy=True)
+                            api._pending = {"kind": "menu_close"}
                         elif item_id.startswith("pick:"):
                             api.pick_folder(item_id.split(":", 1)[1])
                         elif item_id == "ik":
@@ -654,21 +667,13 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
             api._grab_xy = None
             _log(f"drag end moved={drag['moved']}")
             if drag["moved"] < 6:
-                now = time.time()
-                near = abs(x - state["last_pos"][0]) < 12 and abs(y - state["last_pos"][1]) < 12
-                if now - state["last_click"] < 0.4 and near:
-                    state["last_click"] = 0.0
-                    next_motion()
-                else:
-                    state["last_click"] = now
-                    state["last_pos"] = (drag["x"], drag["y"])
-                    # 点位交给页面判定戳到哪儿（它才知道骨骼/网格），戳空页面自己会忽略
-                    if api._w and api._h:
-                        api._pending = {
-                            "kind": "tap",
-                            "x": round((drag["x"] - api._x) / api._w, 4),
-                            "y": round((drag["y"] - api._y) / api._h, 4),
-                        }
+                # 连续触摸都交给页面；切舞保留在动作菜单，避免双击打断互动。
+                if api._w and api._h:
+                    api._pending = {
+                        "kind": "tap",
+                        "x": round((drag["x"] - api._x) / api._w, 4),
+                        "y": round((drag["y"] - api._y) / api._h, 4),
+                    }
             return False
         elif msg == _WM_MOUSEMOVE and spin is not None:
             dx = x - spin["last"]
@@ -1172,8 +1177,10 @@ class _NativeApi:
         self._renderer_hidden = False
         self._fc = 0
         self._menu_rects: list = []
+        self._reply_target = None
         self._pending = None
         self._state = None
+        self._web_working = False
         self._drag_dx = 0
         self._drag_dy = 0
         self._spin_dx = 0  # 旋转增量，跟拖拽一样累加，别用 _pending 覆盖
@@ -1210,6 +1217,9 @@ class _NativeApi:
         mode = cfg.get("talk_mode", "normal" if cfg.get("proactive", True) else "quiet")
         self._talk_mode = mode if mode in proactive.TALK_MODES else "normal"
         self._chat = None
+        self._quick_chat = None
+        self._fantasy_chat = None
+        self._notes_enabled = bool(cfg.get("notes_enabled", True))
         self._chat_opening = False
         # 上次选的风格档；没存过就用"游戏味·浓郁"(2)：环境光低、有轮廓光，
         # 模型不容易像"柔和"那档那样被加法光洗得发灰。
@@ -1488,7 +1498,8 @@ class _NativeApi:
         if page == "talk":
             return [{"id": "page:root", "label": "← 返回"}] + [
                 {"id": f"talk:{mode}",
-                 "label": ("● " if mode == self._talk_mode else "　") + proactive.TALK_LABELS[mode]}
+                 "label": ("● " if mode == self._talk_mode else "　") + proactive.TALK_LABELS[mode]
+                          + " · " + proactive.TALK_RANGES[mode]}
                 for mode in proactive.TALK_MODES
             ]
         if page == "config":
@@ -1496,6 +1507,8 @@ class _NativeApi:
                 {"id": "page:root", "label": "← 返回"},
                 {"id": "quiet", "label": "手动安静：" + ("开" if self._quiet else "关")},
                 {"id": "page:talk", "label": "主动搭话 ▸（" + proactive.TALK_LABELS[self._talk_mode] + "）"},
+                {"id": "notes", "label": "自动留便笺：" + ("开" if self._notes_enabled else "关")},
+                {"id": "home", "label": "打开桌面小窝"},
                 {"id": "autofps", "label": "全屏自动降帧：" + ("开" if self._auto_fps else "关")},
                 {"id": "pick:model_file", "label": "导入模型（选 .pmx 文件）…"},
                 {"id": "pick:motion_file", "label": "导入动作（选 .vmd 文件）…"},
@@ -1510,6 +1523,8 @@ class _NativeApi:
             now_motion = _clip(os.path.basename(self._motions[self._motion_index])[:-4], 12)
         items = [
             {"id": "chat", "label": "打开聊天窗口"},
+            {"id": "plan", "label": "她的小计划 · 小窝纪念架"},
+            {"id": "fantasy", "label": "奇幻冒险 · 折月诸境"},
             {"id": "page:motions", "label": f"动作 ▸（{now_motion}）"},
         ]
         if len(self._models) > 1:
@@ -1527,6 +1542,37 @@ class _NativeApi:
     def grab_info(self, bone) -> None:
         """页面射线拾取完回报抓到哪根骨（'-' 表示这根骨不可抓，退回整体滞后）。"""
         _log(f"grab bone {bone}")
+
+    def reply_target(self, rect, text="") -> None:
+        """帧内归一化按钮范围；窗口拖动后命中区域仍与气泡一致。"""
+        self._reply_target = (rect, str(text)[:60], time.monotonic()) if rect and text else None
+
+    def reply_at(self, x: int, y: int) -> bool:
+        target = self._reply_target
+        if not target or not self._w or not self._h:
+            return False
+        rect, text, updated = target
+        if time.monotonic() - updated > 2:
+            return False
+        ux, uy = (x - self._x) / self._w, (y - self._y) / self._h
+        if rect[0] <= ux < rect[0] + rect[2] and rect[1] <= uy < rect[1] + rect[3]:
+            self.open_chat(reply=text)
+            return True
+        return False
+
+    def open_home(self) -> None:
+        def show():
+            try:
+                from .keepsakes import Keepsakes
+
+                root = Keepsakes().folder()
+                root.mkdir(parents=True, exist_ok=True)
+                os.startfile(str(root))
+            except OSError as e:
+                _log(f"打开小窝失败：{e}")
+                self._pending = {"kind": "say", "text": "小窝暂时打不开，请检查桌面文件夹权限。"}
+
+        threading.Thread(target=show, daemon=True).start()
 
     def update_look(self, x: int, y: int) -> None:
         """把光标位置换算成视线目标。
@@ -1588,6 +1634,8 @@ class _NativeApi:
 
     def _note_touch(self) -> None:
         """用户理她了：让"主动搭话"那层知道，别把这次当成被无视。"""
+        from nyalume.core import memory
+        memory.companion_time("interaction")
         proposer = getattr(self, "_proposer", None)
         if proposer is not None:
             proposer.note_touch(time.time())
@@ -1653,6 +1701,7 @@ class _NativeApi:
             "quiet": self._quiet,
             "effective_quiet": self._effective_quiet,
             "talk_mode": self._talk_mode,
+            "notes_enabled": self._notes_enabled,
             "display_fps": self._display_fps,
             "frame_gap_p95_ms": self._frame_gap_p95_ms,
             "last_frame_age": (round(time.perf_counter() - self._last_present, 2)
@@ -1675,8 +1724,7 @@ class _NativeApi:
         # 带上发起方的 UA：排查"谁在指挥她"用（实测有人在反复打这串固定指令）
         _log(f"pet cmd {kind} {json.dumps(payload, ensure_ascii=False)[:120]}"
              + (f" ua={ua[:48]}" if ua else ""))
-        if kind in ("dance", "idle", "say", "face", "look"):
-            self._note_touch()  # 有人（agent/用户）在指挥她 = 理她了
+        # A controller action is not evidence of direct user interaction.
         if kind == "dance":
             want = str(payload.get("name") or "").strip()
             idx = self._find_motion(want)
@@ -1755,18 +1803,32 @@ class _NativeApi:
         self._proactive = mode != "quiet"
         _save_settings(talk_mode=mode)
 
-    def open_chat(self) -> None:
+    def open_chat(self, reply: str = "", plan: bool = False, fantasy: bool = False) -> None:
         """从桌宠菜单唤起主 App 聊天窗；启动服务可能耗时，不能阻塞鼠标钩子。"""
         if self._chat_opening:
             return
         self._chat_opening = True
+        self._pet_state.bump("chat")
+        self._note_touch()
 
         def show() -> None:
             try:
-                if self._chat is None:
-                    from nyalume.frontends.pet.web_chat import WebChat
-                    self._chat = WebChat()
-                if not self._chat.show():
+                from nyalume.frontends.pet.web_chat import WebChat
+                from nyalume.core.fantasy import reply_for_invitation
+
+                if fantasy or (reply and reply_for_invitation(reply)):
+                    if self._fantasy_chat is None:
+                        self._fantasy_chat = WebChat(quick=True, fantasy=True)
+                    opened = self._fantasy_chat.show()
+                elif reply or plan:
+                    if self._quick_chat is None:
+                        self._quick_chat = WebChat(quick=True)
+                    opened = self._quick_chat.open_plan() if plan else self._quick_chat.open_reply(reply)
+                else:
+                    if self._chat is None:
+                        self._chat = WebChat()
+                    opened = self._chat.show()
+                if not opened:
                     self._pending = {"kind": "say", "text": "聊天窗口启动失败"}
             except Exception as e:
                 _log(f"打开聊天窗口失败：{type(e).__name__}: {e}")
@@ -1920,6 +1982,15 @@ class _NativeApi:
         th = max(160, int(round(css_h * dpr)))
         _log(f"box {tw}x{th}（窗口不动，位置按锚点逐帧摆）")
 
+    def proactive_displayed(self, delivery_id: str):
+        from nyalume.core import companionship
+        row = companionship.delivered(delivery_id)
+        if row:
+            proposer = getattr(self, '_proposer', None)
+            if proposer:
+                proposer.note_delivered(row['text'], time.time())
+        return bool(row)
+
     def poll_action(self):
         """页面定时来取一条待办（拖拽/点击/菜单都走这里，Python 侧永不阻塞）。"""
         # 视线跟随每轮现算：钩子和原始输入那两个热路径只记位置，不做换算
@@ -1935,6 +2006,12 @@ class _NativeApi:
             self._cursor = (0.0, 0.0)
         if self._pending is not None:
             action, self._pending = self._pending, None
+            if action.get('delivery_id'):
+                from nyalume.core import companionship
+                if (self._desk.get('busy') or self._desk.get('quiet') or self._desk.get('fullscreen')
+                        or self._desk.get('category') == '会议' or self._chat_opening
+                        or self._web_working or not self._proactive or not companionship.delivery_valid(action['delivery_id'])):
+                    return None
             return action
         if self._state is not None:
             # 状态变化优先级低于直接操作，但高于拖拽增量
@@ -2263,6 +2340,7 @@ def _state_loop(api: "_NativeApi") -> None:
             api._state = {"kind": "react", "region": "head"}
             continue
         working = bool(data.get("working"))
+        api._web_working = working
         if working != last_working:
             last_working = working
             name = "working" if working else "done"
@@ -2383,6 +2461,49 @@ def _desktop_watch(api: "_NativeApi") -> None:
         elif media.get("status") != 4:
             last_song = ""  # 停了就清掉，下次再放同一首还能报一次
         api._pet_state.tick()
+
+
+def _plan_loop(api) -> None:
+    """小计划独立于模型配置；进度落库，合适时才报一句，不补发离线通知。"""
+    from nyalume.core import small_plans, fantasy
+    from .keepsakes import Keepsakes
+
+    exported = 0
+    while True:
+        time.sleep(30)
+        try:
+            try:
+                fantasy.export_pending()
+            except OSError as exc:
+                _log(f"奇幻手记等待重试：{exc}")
+            plan = small_plans.tick()
+            desk = api._desk
+            if (plan["paused"] or api._talk_mode == "quiet" or api._pending or api._chat_opening or api._menu_rects
+                    or desk.get("quiet") or desk.get("fullscreen") or desk.get("busy")
+                    or desk.get("category") == "会议" or desk.get("idle_sec", 0) > 900
+                    or time.time() - api._pet_state.snapshot().get("last_interaction", 0) < 30):
+                continue
+            if any(chat and chat._visible and chat._alive() for chat in (api._quick_chat, api._fantasy_chat)):
+                continue
+            if api._notes_enabled:
+                # 用户已开始下一轮也不丢上次的纪念；重启后用排他创建保护已有文件。
+                for finished in small_plans.completed_after(exported):
+                    try:
+                        Keepsakes().write_plan(finished)
+                        exported = finished["id"]
+                    except OSError as e:
+                        _log(f"成长纪念保存失败：{e}")
+                        break
+            notice = small_plans.claim_notice(plan, commit=False)
+            if notice:
+                from nyalume.core import companionship
+                did = companionship.prepare_delivery({"text": notice}, plan=plan)
+                api._pending = {"kind": "say", "text": notice, "delivery_id": did}
+                proposer = getattr(api, "_proposer", None)
+                if proposer:
+                    proposer.next_allowed_at = max(proposer.next_allowed_at, time.time() + 60)
+        except Exception as e:
+            _log(f"小计划暂时不可用：{e}")
 
 
 def _stdin_commands(win, vmd_root: str, api=None) -> None:
@@ -2833,6 +2954,7 @@ def main() -> int:
     threading.Thread(target=_state_loop, args=(api,), daemon=True).start()
     threading.Thread(target=_fps_watch, args=(api,), daemon=True).start()
     threading.Thread(target=_desktop_watch, args=(api,), daemon=True).start()
+    threading.Thread(target=_plan_loop, args=(api,), daemon=True).start()
     # 主动搭话读取聊天设置写入的同一份 .env（独立 3D 进程需自行加载）。
     try:
         from nyalume.core import llm as _llm_config  # noqa: F401
@@ -2855,6 +2977,10 @@ def main() -> int:
         # 桌宠退出时收掉自己拉起的聊天窗（运行期两个窗口是并存的，不是交接）
         if api._chat is not None:
             api._chat.close()
+        if api._quick_chat is not None:
+            api._quick_chat.close()
+        if api._fantasy_chat is not None:
+            api._fantasy_chat.close()
     return 0
 
 

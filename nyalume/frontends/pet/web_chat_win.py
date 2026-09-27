@@ -57,13 +57,15 @@ def main() -> int:
     p.add_argument("--url", required=True)
     p.add_argument("--hidden", action="store_true")
     args = p.parse_args()
+    quick = urllib.parse.parse_qs(urllib.parse.urlparse(args.url).query).get("quick") == ["1"]
+    fantasy = urllib.parse.urlparse(args.url).path == "/fantasy"
 
     win = webview.create_window(
-        "Nyalume · 对话",
+        "Nyalume · 奇幻冒险" if fantasy else "Nyalume · 桌边闲聊" if quick else "Nyalume · 对话",
         args.url,
-        width=1180,
-        height=820,
-        min_size=(560, 640),
+        width=480 if quick else 1180,
+        height=560 if quick else 820,
+        min_size=(380, 420) if quick else (560, 640),
         hidden=args.hidden,
         background_color="#fff7fa",
         text_select=True,
@@ -82,6 +84,11 @@ def main() -> int:
                     win.hide()
                 elif cmd == "reload":
                     win.load_url(args.url)
+                elif cmd.startswith("navigate "):
+                    target = cmd.split(" ", 1)[1]
+                    if urllib.parse.urlparse(target).netloc == urllib.parse.urlparse(args.url).netloc:
+                        args.url = target
+                        win.load_url(target)
                 elif cmd.startswith("session "):
                     sid = cmd.split(" ", 1)[1].strip()
                     if sid:

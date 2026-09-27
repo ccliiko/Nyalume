@@ -25,6 +25,8 @@ def test_head_pose_reaches_physics_in_same_frame(tmp_path, monkeypatch):
     probe = """
     window.rig = {
       get helper() { return helper; }, get model() { return model; },
+      touchAt(region, at) { clock.elapsedTime = at; window.__touch(region); return {...touch}; },
+      get touch() { return {...touch}; },
       nearEnd() { mainAction.time = mainClip.duration - END_FADE; },
       step(x, y) {
         lookTx = x; lookTy = y;
@@ -90,6 +92,20 @@ def test_head_pose_reaches_physics_in_same_frame(tmp_path, monkeypatch):
             assert page.evaluate("rig.helper.enabled.physics")
             assert page.evaluate("checkFrames()") < 1e-6
             assert page.evaluate("resets") == 2
+            assert page.evaluate("rig.touchAt('head', 100).kind") == 'notice'
+            assert page.evaluate("rig.touchAt('head', 101).kind") == 'relax'
+            assert page.evaluate("rig.touchAt('head', 102).kind") == 'relax'
+            assert page.evaluate("rig.touchAt('head', 110).kind") == 'notice'
+            page.evaluate("rig.touchAt('head', 110.2)")
+            assert page.evaluate("rig.touchAt('head', 110.4).kind") == 'dodge'
+            assert page.evaluate("checkFrames()") < 1e-6  # 躲避的头部偏移也进入本帧物理
+            assert page.evaluate("checkFrames()") < 1e-6
+            assert page.evaluate("rig.touch.kind") == 'linger'
+            page.evaluate("checkFrames(); checkFrames(); checkFrames()")
+            assert page.evaluate("rig.touch.kind") == 'idle'
+            assert page.evaluate("rig.touch.dodge") < 0.001
+            page.evaluate("window.__idleBeat()")
+            assert page.evaluate("rig.touch.kind") == 'idle'  # 她自己动不会变成用户摸过
             page.screenshot(path=str(tmp_path / "head-physics.png"))
             assert not errors
         finally:

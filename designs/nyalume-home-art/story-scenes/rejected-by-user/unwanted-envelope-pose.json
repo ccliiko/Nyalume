@@ -1,0 +1,310 @@
+{
+  "3": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "绘星海_清新风格 StarSea_pastel _v5.safetensors"
+    }
+  },
+  "11": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "3",
+        0
+      ],
+      "clip": [
+        "3",
+        1
+      ],
+      "lora_name": "z3画风_illv0.1.safetensors",
+      "strength_model": 0.4,
+      "strength_clip": 0.4
+    }
+  },
+  "9": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "11",
+        0
+      ],
+      "clip": [
+        "11",
+        1
+      ],
+      "lora_name": "【光影系列画风第六期】鬼针草-Illustriou_NoobAI_1.0.safetensors",
+      "strength_model": 0.65,
+      "strength_clip": 0.65
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "9",
+        1
+      ],
+      "text": "masterpiece, best quality, very aesthetic, (holding letter:1.4), (white envelope:1.35), pink heart seal on envelope, (both hands presenting the envelope in front of her chest:1.25), elbows bent, hands visible holding the two lower corners, bashful smile, looking at viewer, waist up, entire envelope in frame, 1girl, solo, young adult woman, 22 years old, petite adult proportions, cute anime face, (silver white hair:1.3), (very long single side ponytail:1.3), straight bangs, (pink purple eyes:1.2), recognizable consistent character, natural adult feminine figure, (dusty pink capelet:1.3), cream blouse, scalloped collar, pink neck ribbon, brown envelope shaped crossbody satchel with a small heart clasp, cozy reading nook, dark walnut bookshelf, soft neutral indoor light, balanced exposure, natural skin color, silver white hair, eye level medium portrait, clean anime color illustration"
+    }
+  },
+  "8": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "9",
+        1
+      ],
+      "text": "worst quality, low quality, lowres, bad anatomy, bad hands, extra fingers, fused fingers, missing fingers, extra arms, extra legs, detached limbs, broken wrist, (2girls:1.4), multiple people, duplicate character, collage, panels, split screen, mirrored person, (text:1.2), speech bubble, lettering, watermark, logo, (child:1.4), loli, underage, toddler, chibi, baby proportions, mature woman, aged face, photorealistic, 3d render, pinup, seductive pose, cleavage focus, nude, nipples, underwear, orange fruit, orange slice, tangerine, hair ornament, animal ears, twin tails, double ponytail, short hair, color cast, monochrome, oversaturated, neon lighting, overexposure, washed out colors, bad anatomy, extra limbs, cropped card, hands behind back, hand on shoulder, flowers in hair, hair ornament, hand out of frame, cellphone, smartphone, electronic device, black rectangle, outstretched arm, low angle"
+    }
+  },
+  "20": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 864,
+      "height": 1152,
+      "batch_size": 1
+    }
+  },
+  "6": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "9",
+        0
+      ],
+      "positive": [
+        "7",
+        0
+      ],
+      "negative": [
+        "8",
+        0
+      ],
+      "latent_image": [
+        "20",
+        0
+      ],
+      "seed": 9274703,
+      "steps": 30,
+      "cfg": 5.5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 1
+    }
+  },
+  "2": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "6",
+        0
+      ],
+      "vae": [
+        "3",
+        2
+      ]
+    }
+  },
+  "12": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "bbox/face_yolov8m.pt"
+    }
+  },
+  "14": {
+    "class_type": "FaceDetailer",
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "model": [
+        "9",
+        0
+      ],
+      "clip": [
+        "9",
+        1
+      ],
+      "vae": [
+        "3",
+        2
+      ],
+      "positive": [
+        "30",
+        0
+      ],
+      "negative": [
+        "8",
+        0
+      ],
+      "bbox_detector": [
+        "12",
+        0
+      ],
+      "guide_size": 512,
+      "guide_size_for": true,
+      "max_size": 1024,
+      "seed": 0,
+      "steps": 30,
+      "cfg": 5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 0.28,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.5,
+      "bbox_dilation": 10,
+      "bbox_crop_factor": 3,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 0,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 40,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 8,
+      "tiled_encode": false,
+      "tiled_decode": false
+    }
+  },
+  "13": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "bbox/hand_yolov8s.pt"
+    }
+  },
+  "25": {
+    "class_type": "BboxDetectorSEGS",
+    "inputs": {
+      "bbox_detector": [
+        "13",
+        0
+      ],
+      "image": [
+        "14",
+        0
+      ],
+      "threshold": 0.4,
+      "dilation": 4,
+      "crop_factor": 2.5,
+      "drop_size": 6,
+      "labels": "all"
+    }
+  },
+  "26": {
+    "class_type": "ImpactSEGSNMSFilter",
+    "inputs": {
+      "segs": [
+        "25",
+        0
+      ],
+      "iou_threshold": 0.3
+    }
+  },
+  "23": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "9",
+        1
+      ],
+      "text": "masterpiece, best quality, very aesthetic, (holding letter:1.4), (white envelope:1.35), pink heart seal on envelope, (both hands presenting the envelope in front of her chest:1.25), elbows bent, hands visible holding the two lower corners, bashful smile, looking at viewer, waist up, entire envelope in frame, 1girl, solo, young adult woman, 22 years old, petite adult proportions, cute anime face, (silver white hair:1.3), (very long single side ponytail:1.3), straight bangs, (pink purple eyes:1.2), recognizable consistent character, natural adult feminine figure, (dusty pink capelet:1.3), cream blouse, scalloped collar, pink neck ribbon, brown envelope shaped crossbody satchel with a small heart clasp, cozy reading nook, dark walnut bookshelf, soft neutral indoor light, balanced exposure, natural skin color, silver white hair, eye level medium portrait, clean anime color illustration, anatomically correct hands, five fingers, natural wrist, preserve original gesture and held object"
+    }
+  },
+  "24": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "9",
+        1
+      ],
+      "text": "face, extra fingers, fused fingers, missing fingers, bad hands, mutated hands, extra hands, chibi, small person, miniature, deformed, blurry, lowres,"
+    }
+  },
+  "27": {
+    "class_type": "DetailerForEach",
+    "inputs": {
+      "image": [
+        "14",
+        0
+      ],
+      "segs": [
+        "26",
+        0
+      ],
+      "model": [
+        "9",
+        0
+      ],
+      "clip": [
+        "9",
+        1
+      ],
+      "vae": [
+        "3",
+        2
+      ],
+      "positive": [
+        "23",
+        0
+      ],
+      "negative": [
+        "24",
+        0
+      ],
+      "guide_size": 384,
+      "guide_size_for": false,
+      "max_size": 1024,
+      "seed": 1,
+      "steps": 30,
+      "cfg": 5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 0.26,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 8,
+      "tiled_encode": false,
+      "tiled_decode": false
+    }
+  },
+  "5": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "27",
+        0
+      ],
+      "filename_prefix": "nyalume_story_scenes/postcard"
+    }
+  },
+  "30": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "9",
+        1
+      ],
+      "text": "best quality, 1girl, solo, young adult woman, 22 years old, petite adult proportions, cute anime face, (silver white hair:1.3), (very long single side ponytail:1.3), straight bangs, (pink purple eyes:1.2), recognizable consistent character, natural adult feminine figure, bashful happy smile, slight blush, expectant eyes, looking at viewer, delicate anime lineart"
+    }
+  },
+  "31": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "2",
+        0
+      ],
+      "filename_prefix": "nyalume_story_scenes/base_postcard"
+    }
+  }
+}

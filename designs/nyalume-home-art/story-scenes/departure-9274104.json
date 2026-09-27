@@ -1,0 +1,310 @@
+{
+  "3": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "绘星海_清新风格 StarSea_pastel _v5.safetensors"
+    }
+  },
+  "11": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "3",
+        0
+      ],
+      "clip": [
+        "3",
+        1
+      ],
+      "lora_name": "z3画风_illv0.1.safetensors",
+      "strength_model": 0.4,
+      "strength_clip": 0.4
+    }
+  },
+  "9": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "11",
+        0
+      ],
+      "clip": [
+        "11",
+        1
+      ],
+      "lora_name": "【光影系列画风第六期】鬼针草-Illustriou_NoobAI_1.0.safetensors",
+      "strength_model": 0.65,
+      "strength_clip": 0.65
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "9",
+        1
+      ],
+      "text": "masterpiece, best quality, very aesthetic, (sitting on a low entryway bench:1.2), (bending forward to tie shoelaces:1.35), both hands holding the two shoelace ends on one shoe, one foot on the floor and the other foot slightly raised, looking up toward viewer, playful impatient smile, full body with shoes visible, 1girl, solo, young adult woman, 22 years old, petite adult proportions, cute anime face, (silver white hair:1.3), (very long single side ponytail:1.3), straight bangs, (pink purple eyes:1.2), recognizable consistent character, natural adult feminine figure, cream and navy sailor collar short jacket, pale pink pleated skirt, opaque skirt covering hips, teal shoelaces on white sneakers, short white socks, small canvas shoulder bag with a bunny plush charm on the bench, (from above:1.2), three-quarter high angle, diagonal composition, warm ivory entryway, open doorway with spring sunlight, ponytail hanging beside shoulder, ready packed bag, ivory and coral with navy clothing accents, natural peach skin tone, neutral silver white hair, lively slice of life anime illustration"
+    }
+  },
+  "8": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "9",
+        1
+      ],
+      "text": "worst quality, low quality, lowres, bad anatomy, bad hands, extra fingers, fused fingers, missing fingers, extra arms, extra legs, detached limbs, broken wrist, (2girls:1.4), multiple people, duplicate character, collage, panels, split screen, mirrored person, (text:1.2), speech bubble, lettering, watermark, logo, (child:1.4), loli, underage, toddler, chibi, baby proportions, mature woman, aged face, photorealistic, 3d render, pinup, seductive pose, cleavage focus, nude, nipples, underwear, orange fruit, orange slice, tangerine, hair ornament, animal ears, twin tails, double ponytail, short hair, blue color cast, blue skin, purple skin, missing shoes, high heels"
+    }
+  },
+  "20": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 896,
+      "height": 1120,
+      "batch_size": 1
+    }
+  },
+  "6": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "9",
+        0
+      ],
+      "positive": [
+        "7",
+        0
+      ],
+      "negative": [
+        "8",
+        0
+      ],
+      "latent_image": [
+        "20",
+        0
+      ],
+      "seed": 9274104,
+      "steps": 30,
+      "cfg": 8,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 1
+    }
+  },
+  "2": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "6",
+        0
+      ],
+      "vae": [
+        "3",
+        2
+      ]
+    }
+  },
+  "12": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "bbox/face_yolov8m.pt"
+    }
+  },
+  "14": {
+    "class_type": "FaceDetailer",
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "model": [
+        "9",
+        0
+      ],
+      "clip": [
+        "9",
+        1
+      ],
+      "vae": [
+        "3",
+        2
+      ],
+      "positive": [
+        "30",
+        0
+      ],
+      "negative": [
+        "8",
+        0
+      ],
+      "bbox_detector": [
+        "12",
+        0
+      ],
+      "guide_size": 512,
+      "guide_size_for": true,
+      "max_size": 1024,
+      "seed": 0,
+      "steps": 30,
+      "cfg": 5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 0.28,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.5,
+      "bbox_dilation": 10,
+      "bbox_crop_factor": 3,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 0,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 40,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 8,
+      "tiled_encode": false,
+      "tiled_decode": false
+    }
+  },
+  "13": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "bbox/hand_yolov8s.pt"
+    }
+  },
+  "25": {
+    "class_type": "BboxDetectorSEGS",
+    "inputs": {
+      "bbox_detector": [
+        "13",
+        0
+      ],
+      "image": [
+        "14",
+        0
+      ],
+      "threshold": 0.4,
+      "dilation": 4,
+      "crop_factor": 2.5,
+      "drop_size": 6,
+      "labels": "all"
+    }
+  },
+  "26": {
+    "class_type": "ImpactSEGSNMSFilter",
+    "inputs": {
+      "segs": [
+        "25",
+        0
+      ],
+      "iou_threshold": 0.3
+    }
+  },
+  "23": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "9",
+        1
+      ],
+      "text": "masterpiece, best quality, very aesthetic, (sitting on a low entryway bench:1.2), (bending forward to tie shoelaces:1.35), both hands holding the two shoelace ends on one shoe, one foot on the floor and the other foot slightly raised, looking up toward viewer, playful impatient smile, full body with shoes visible, 1girl, solo, young adult woman, 22 years old, petite adult proportions, cute anime face, (silver white hair:1.3), (very long single side ponytail:1.3), straight bangs, (pink purple eyes:1.2), recognizable consistent character, natural adult feminine figure, cream and navy sailor collar short jacket, pale pink pleated skirt, opaque skirt covering hips, teal shoelaces on white sneakers, short white socks, small canvas shoulder bag with a bunny plush charm on the bench, (from above:1.2), three-quarter high angle, diagonal composition, warm ivory entryway, open doorway with spring sunlight, ponytail hanging beside shoulder, ready packed bag, ivory and coral with navy clothing accents, natural peach skin tone, neutral silver white hair, lively slice of life anime illustration, anatomically correct hands, five fingers, natural wrist, preserve original gesture and held object"
+    }
+  },
+  "24": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "9",
+        1
+      ],
+      "text": "face, extra fingers, fused fingers, missing fingers, bad hands, mutated hands, extra hands, chibi, small person, miniature, deformed, blurry, lowres,"
+    }
+  },
+  "27": {
+    "class_type": "DetailerForEach",
+    "inputs": {
+      "image": [
+        "14",
+        0
+      ],
+      "segs": [
+        "26",
+        0
+      ],
+      "model": [
+        "9",
+        0
+      ],
+      "clip": [
+        "9",
+        1
+      ],
+      "vae": [
+        "3",
+        2
+      ],
+      "positive": [
+        "23",
+        0
+      ],
+      "negative": [
+        "24",
+        0
+      ],
+      "guide_size": 384,
+      "guide_size_for": false,
+      "max_size": 1024,
+      "seed": 1,
+      "steps": 30,
+      "cfg": 5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 0.26,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 8,
+      "tiled_encode": false,
+      "tiled_decode": false
+    }
+  },
+  "5": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "27",
+        0
+      ],
+      "filename_prefix": "nyalume_story_scenes/departure"
+    }
+  },
+  "30": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "9",
+        1
+      ],
+      "text": "best quality, 1girl, solo, young adult woman, 22 years old, petite adult proportions, cute anime face, (silver white hair:1.3), (very long single side ponytail:1.3), straight bangs, (pink purple eyes:1.2), recognizable consistent character, natural adult feminine figure, playful impatient smile, looking up at viewer, bright lively eyes, delicate anime lineart"
+    }
+  },
+  "31": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "2",
+        0
+      ],
+      "filename_prefix": "nyalume_story_scenes/base_departure"
+    }
+  }
+}

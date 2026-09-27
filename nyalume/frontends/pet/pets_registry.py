@@ -101,6 +101,13 @@ def frame_paths(pet: dict, group: str) -> list[str]:
     ]
 
 
+def nyalume_portrait() -> str | None:
+    """纪念物固定使用 Nyalume 本人的 2D 形象，不回退成其他皮肤。"""
+    pet = get_pet("nyalume")
+    frames = frame_paths(pet, "idle") if pet["id"] == "nyalume" else []
+    return frames[0] if frames else None
+
+
 def cheer_phrases(pet: dict) -> list[str]:
     """任务完成台词；皮肤没配置时使用默认句。"""
     phrases = pet.get("cheer") or DEFAULT_PET["cheer"]

@@ -8,6 +8,7 @@ import datetime
 import hashlib
 import json
 import re
+import math
 
 # 仓库根（nyalume/core/memory.py 的上三级），默认数据文件仍放在项目根目录
 _PROJECT_ROOT = os.path.dirname(
@@ -41,6 +42,20 @@ def init_db() -> None:
                 created_at REAL,
                 daily_affection INTEGER DEFAULT 50
             );
+            CREATE TABLE IF NOT EXISTS focus_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                goal TEXT NOT NULL,
+                duration INTEGER NOT NULL,
+                remaining REAL NOT NULL,
+                deadline REAL,
+                status TEXT NOT NULL CHECK(status IN ('active','paused','ready','completed','cancelled')),
+                outcome TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                finished_at REAL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS one_open_focus
+                ON focus_sessions((1)) WHERE status IN ('active','paused','ready');
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sync_id TEXT,
@@ -77,6 +92,26 @@ def init_db() -> None:
                 key TEXT PRIMARY KEY,
                 value TEXT
             );
+            CREATE TABLE IF NOT EXISTS companion_memories (
+                id TEXT PRIMARY KEY, fact_key TEXT NOT NULL, content TEXT NOT NULL,
+                source_text TEXT NOT NULL, source_message INTEGER, session_id TEXT NOT NULL,
+                scope TEXT NOT NULL CHECK(scope IN ('shared','daily')),
+                created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                state TEXT NOT NULL DEFAULT 'active', proactive INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS active_companion_fact
+                ON companion_memories(fact_key) WHERE state='active';
+            CREATE TABLE IF NOT EXISTS companion_topics (
+                id TEXT PRIMARY KEY, content TEXT NOT NULL, memory_ids TEXT NOT NULL DEFAULT '[]',
+                source_message INTEGER, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                state TEXT NOT NULL DEFAULT 'open', last_mentioned REAL,
+                waiting INTEGER NOT NULL DEFAULT 0, mention_count INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS companion_deliveries (
+                id TEXT PRIMARY KEY, text TEXT NOT NULL, topic_id TEXT, memory_ids TEXT NOT NULL,
+                created_at REAL NOT NULL, delivered_at REAL,
+                session_id TEXT NOT NULL DEFAULT 'nyalume-daily', plan_id INTEGER, plan_stage INTEGER
+            );
             CREATE TABLE IF NOT EXISTS companion_entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kind TEXT NOT NULL CHECK(kind IN ('promise', 'event')),
@@ -89,6 +124,22 @@ def init_db() -> None:
                 confirmed_at REAL,
                 completed_at REAL,
                 event_key TEXT UNIQUE
+            );
+            CREATE TABLE IF NOT EXISTS pet_plans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stage INTEGER NOT NULL DEFAULT 0,
+                plant TEXT NOT NULL DEFAULT '',
+                chosen_by TEXT NOT NULL DEFAULT '',
+                paused INTEGER NOT NULL DEFAULT 0,
+                stage_day TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                noticed_stage INTEGER NOT NULL DEFAULT -1
+            );
+            CREATE TABLE IF NOT EXISTS fantasy_chapters (
+                revision INTEGER PRIMARY KEY,
+                payload TEXT NOT NULL,
+                exported_path TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS tool_audit (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,12 +182,27 @@ def init_db() -> None:
             );
             """
         )
+        plan_cols = {row["name"] for row in conn.execute("PRAGMA table_info(pet_plans)")}
+        delivery_cols = {row['name'] for row in conn.execute('PRAGMA table_info(companion_deliveries)')}
+        for name, definition in (('session_id', "TEXT NOT NULL DEFAULT 'nyalume-daily'"),
+                                 ('plan_id', 'INTEGER'), ('plan_stage', 'INTEGER')):
+            if name not in delivery_cols:
+                conn.execute(f'ALTER TABLE companion_deliveries ADD COLUMN {name} {definition}')
+        for name, definition in (("kind", "TEXT NOT NULL DEFAULT 'garden'"),
+                                 ("company", "INTEGER NOT NULL DEFAULT 0"),
+                                 ("liked", "INTEGER NOT NULL DEFAULT 0")):
+            if name not in plan_cols:
+                conn.execute(f"ALTER TABLE pet_plans ADD COLUMN {name} {definition}")
         # 旧库迁移：notes 表没有 tag 列时补上
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(notes)")}
         if "tag" not in cols:
             conn.execute("ALTER TABLE notes ADD COLUMN tag TEXT DEFAULT ''")
         if "session_id" not in cols:
             conn.execute("ALTER TABLE notes ADD COLUMN session_id TEXT DEFAULT ''")
+        for name, definition in (("scope", "TEXT NOT NULL DEFAULT 'session'"),
+                                 ("source", "TEXT NOT NULL DEFAULT 'legacy_unverified'")):
+            if name not in cols:
+                conn.execute(f"ALTER TABLE notes ADD COLUMN {name} {definition}")
         doc_cols = {row["name"] for row in conn.execute("PRAGMA table_info(documents)")}
         if "session_id" not in doc_cols:
             conn.execute("ALTER TABLE documents ADD COLUMN session_id TEXT DEFAULT ''")
@@ -158,6 +224,8 @@ def init_db() -> None:
         msg_cols = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
         if "attachments" not in msg_cols:
             conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT DEFAULT '[]'")
+        if "interaction" not in msg_cols:
+            conn.execute("ALTER TABLE messages ADD COLUMN interaction TEXT DEFAULT '{}'")
         if "sync_id" not in msg_cols:
             conn.execute("ALTER TABLE messages ADD COLUMN sync_id TEXT")
         if "sync_id" not in cols:
@@ -224,15 +292,17 @@ def ensure_session(session_id: str, project: str = "") -> None:
 
 
 def save_message(
-    session_id: str, role: str, content: str, attachments: list[str] | None = None
-) -> None:
+    session_id: str, role: str, content: str, attachments: list[str] | None = None,
+    interaction: dict | None = None,
+) -> int:
     ensure_session(session_id)
     attach_json = json.dumps(list(attachments or []), ensure_ascii=False)
     with _conn() as conn:
         cur = conn.execute(
-            "INSERT INTO messages (sync_id, session_id, role, content, attachments, ts) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), session_id, role, content, attach_json, time.time()),
+            "INSERT INTO messages (sync_id, session_id, role, content, attachments, ts, interaction) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), session_id, role, content, attach_json, time.time(),
+             json.dumps(interaction or {}, ensure_ascii=False)),
         )
     return cur.lastrowid
 
@@ -250,15 +320,17 @@ def delete_messages_after(session_id: str, message_id: int) -> None:
         )
 
 
-def load_history(session_id: str, limit: int = 20) -> list[dict]:
+def load_history(session_id: str, limit: int = 20, *, before_id: int | None = None,
+                 redact: bool = False) -> list[dict]:
     """读取最近 N 条消息（含 user/assistant），用于拼 prompt。"""
     with _conn() as conn:
         rows = conn.execute(
-            "SELECT role, content FROM messages WHERE session_id = ? "
-            "AND role IN ('user','assistant') ORDER BY id DESC LIMIT ?",
-            (session_id, limit),
+            "SELECT role, content, ts FROM messages WHERE session_id = ? "
+            "AND role IN ('user','assistant') AND (? IS NULL OR id < ?) ORDER BY id DESC LIMIT ?",
+            (session_id, before_id, before_id, limit),
         ).fetchall()
-    return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+    return [{"role": r["role"], "content": companion_redact(r["content"], at=r["ts"])
+             if redact else r["content"]} for r in reversed(rows)]
 
 
 def last_message_id(session_id: str) -> int:
@@ -282,13 +354,13 @@ def message_count(session_id: str) -> int:
 
 # ---------- 便签工具（L3 长期记忆） ----------
 
-def note_save(content: str, tag: str = "", session_id: str = "") -> str:
+def note_save(content: str, tag: str = "", session_id: str = "", *, source: str = 'user_tool') -> str:
     tag = (tag or "").strip()
     with _conn() as conn:
         conn.execute(
-            "INSERT INTO notes (sync_id, session_id, content, tag, ts) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), session_id, content, tag, time.time()),
+            "INSERT INTO notes (sync_id, session_id, content, tag, ts, source) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), session_id, content, tag, time.time(), source),
         )
     reply = f"已保存便签：{content}"
     if tag:
@@ -323,13 +395,11 @@ def get_recent_notes(limit: int = 3, session_id: str = "") -> list[dict]:
     """取最近 N 条便签，用于每轮注入上下文（L3 自动召回）。"""
     with _conn() as conn:
         rows = conn.execute(
-            "SELECT id, content, tag FROM notes WHERE session_id = ? "
+            "SELECT id, content, tag, ts, scope, source FROM notes WHERE session_id = ? "
             "ORDER BY id DESC LIMIT ?",
             (session_id, limit),
         ).fetchall()
-    return [
-        {"id": r["id"], "content": r["content"], "tag": r["tag"]} for r in rows
-    ]
+    return [dict(row) for row in rows]
 
 
 def note_delete(note_id: int, session_id: str = "") -> bool:
@@ -710,7 +780,7 @@ def save_summary(session_id: str, content: str, up_to_message_id: int) -> None:
         )
 
 
-def pending_messages(session_id: str, keep: int = 20, chunk: int = 60) -> list[dict]:
+def pending_messages(session_id: str, keep: int = 20, chunk: int = 60, *, redact: bool = False) -> list[dict]:
     """窗口之外、还没进摘要的旧消息（按 id 升序，最多 chunk 条）。"""
     ensure_session(session_id)
     with _conn() as conn:
@@ -724,14 +794,15 @@ def pending_messages(session_id: str, keep: int = 20, chunk: int = 60) -> list[d
     oldest_kept = min(row["id"] for row in newest)
     with _conn() as conn:
         rows = conn.execute(
-            """SELECT id, role, content FROM messages
+            """SELECT id, role, content, ts FROM messages
                WHERE session_id = ? AND role IN ('user','assistant')
                  AND id < ? AND id > COALESCE(
                      (SELECT up_to_message_id FROM summaries WHERE session_id = ?), 0)
                ORDER BY id ASC LIMIT ?""",
             (session_id, oldest_kept, session_id, chunk),
         ).fetchall()
-    return [dict(row) for row in rows]
+    return [{"id": r["id"], "role": r["role"], "content": companion_redact(r["content"], at=r["ts"])
+             if redact else r["content"]} for r in rows]
 
 
 # ---------- 记忆归档进度（自动便签抽到第几条消息） ----------
@@ -1081,15 +1152,17 @@ def mark_undo_applied(op_id: str) -> None:
         )
 
 
-def session_messages(session_id: str, limit: int = 200) -> list[dict]:
+def session_messages(session_id: str, limit: int = 200, *, latest: bool = False) -> list[dict]:
     """取某会话完整消息（按时间正序），供 WebUI 切换会话时回显历史。"""
     ensure_session(session_id)
     with _conn() as conn:
         rows = conn.execute(
-            "SELECT id, role, content, attachments, ts FROM messages WHERE session_id = ? "
-            "AND role IN ('user','assistant') ORDER BY id ASC LIMIT ?",
+            "SELECT id, role, content, attachments, ts, interaction FROM messages WHERE session_id = ? "
+            "AND role IN ('user','assistant') ORDER BY id " + ("DESC" if latest else "ASC") + " LIMIT ?",
             (session_id, limit),
         ).fetchall()
+    if latest:
+        rows = list(reversed(rows))
     result = []
     for row in rows:
         item = dict(row)
@@ -1099,6 +1172,12 @@ def session_messages(session_id: str, limit: int = 200) -> list[dict]:
             item["attachments"] = []
         if not isinstance(item["attachments"], list):
             item["attachments"] = []
+        try:
+            item["interaction"] = json.loads(item.get("interaction") or "{}")
+        except (ValueError, TypeError):
+            item["interaction"] = {}
+        if not isinstance(item["interaction"], dict):
+            item["interaction"] = {}
         result.append(item)
     return result
 
@@ -1110,8 +1189,8 @@ def duplicate_session_until(
     target = create_session(project=project)
     with _conn() as conn:
         conn.execute(
-            """INSERT INTO messages (session_id, role, content, attachments, ts)
-               SELECT ?, role, content, attachments, ts FROM messages
+            """INSERT INTO messages (session_id, role, content, attachments, ts, interaction)
+               SELECT ?, role, content, attachments, ts, interaction FROM messages
                WHERE session_id = ? AND id <= ? ORDER BY id ASC""",
             (target, source_session, int(up_to_message_id)),
         )
@@ -1121,6 +1200,18 @@ def duplicate_session_until(
 def delete_session(session_id: str) -> None:
     """删除会话及其独立的消息、摘要、便签和检索文档。"""
     with _conn() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        # Keep the same tombstones as memory deletion so copied old context cannot restore facts.
+        conn.execute("UPDATE companion_memories SET state='deleted',updated_at=? WHERE session_id=?",
+                     (time.time(), session_id))
+        conn.execute('DELETE FROM companion_deliveries WHERE session_id=?', (session_id,))
+        conn.execute('DELETE FROM companion_topics WHERE source_message IN '
+                     '(SELECT id FROM messages WHERE session_id=?)', (session_id,))
+        if session_id == DAILY_SESSION_ID:
+            # All continuity topics belong to the daily conversation, including orphaned old rows.
+            conn.execute('DELETE FROM companion_topics')
+            conn.execute("DELETE FROM settings WHERE key='companion_last_chat'")
+        conn.execute('DELETE FROM companion_entries WHERE session_id=?', (session_id,))
         conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM summaries WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM notes WHERE session_id = ?", (session_id,))
@@ -1200,6 +1291,134 @@ def update_daily_nyalume(
             tuple(value for _, value in changes) + (day,),
         )
     return get_daily_nyalume(day)
+
+
+DAILY_SESSION_ID = 'nyalume-daily'
+
+
+def daily_session() -> str:
+    # New persistent conversation; legacy histories and affection remain untouched.
+    ensure_session(DAILY_SESSION_ID)
+    return DAILY_SESSION_ID
+
+
+def companion_memories(*, daily: bool = True) -> list[dict]:
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM companion_memories WHERE state='active' AND (scope='shared' OR ?) "
+            "AND (source_message IS NULL OR EXISTS (SELECT 1 FROM messages m "
+            "WHERE m.id=companion_memories.source_message AND m.session_id=companion_memories.session_id "
+            "AND m.role='user')) "
+            "ORDER BY updated_at DESC LIMIT 30", (int(daily),)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def save_companion_memory(key: str, content: str, source_text: str, message_id: int,
+                          *, scope: str = 'shared') -> str:
+    """Only explicit daily user messages are eligible; no model extraction or legacy promotion."""
+    if scope not in ('shared', 'daily') or not key.strip() or not content.strip():
+        raise ValueError('无效记忆')
+    now = time.time()
+    with _conn() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        source = conn.execute("SELECT * FROM messages WHERE id=? AND session_id=? AND role='user'",
+                              (message_id, DAILY_SESSION_ID)).fetchone()
+        if not source or source['content'] != source_text:
+            raise ValueError('记忆必须来自本轮日常用户原话')
+        old = conn.execute("SELECT * FROM companion_memories WHERE fact_key=? AND state='active'", (key,)).fetchone()
+        if old and old['content'] == content:
+            return old['id']
+        conn.execute("UPDATE companion_memories SET state='superseded',updated_at=? WHERE fact_key=? AND state='active'",
+                     (now, key))
+        if old:
+            _invalidate_memory_topics(conn, old['id'], now)
+        mid = 'mem-' + uuid.uuid4().hex[:12]
+        conn.execute("INSERT INTO companion_memories "
+                     "(id,fact_key,content,source_text,source_message,session_id,scope,created_at,updated_at) "
+                     "VALUES (?,?,?,?,?,?,?,?,?)",
+                     (mid, key, content, source_text, message_id, DAILY_SESSION_ID, scope, now, now))
+    return mid
+
+
+def _invalidate_memory_topics(conn, mid: str, now: float) -> None:
+    for row in conn.execute("SELECT id,memory_ids FROM companion_topics"):
+        if mid in json.loads(row['memory_ids']):
+            conn.execute("UPDATE companion_topics SET state='blocked',updated_at=? WHERE id=?", (now, row['id']))
+
+
+def update_companion_memory(mid: str, *, content: str | None = None, delete: bool = False,
+                            proactive: bool | None = None) -> bool:
+    """User-facing edit/delete; tombstones prevent archived facts from being promoted again."""
+    now = time.time()
+    with _conn() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute("SELECT * FROM companion_memories WHERE id=? AND state='active'", (mid,)).fetchone()
+        if not row:
+            return False
+        if content is not None and not content.strip():
+            raise ValueError('记忆不能为空')
+        if delete or content is not None:
+            conn.execute("UPDATE companion_memories SET state=?,updated_at=? WHERE id=?",
+                         ('deleted' if delete else 'superseded', now, mid))
+            _invalidate_memory_topics(conn, mid, now)
+            if not delete:
+                conn.execute("INSERT INTO companion_memories "
+                             "(id,fact_key,content,source_text,source_message,session_id,scope,created_at,updated_at,proactive) "
+                             "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                             ('mem-' + uuid.uuid4().hex[:12], row['fact_key'], content.strip(), '用户在记忆面板修正',
+                              None, row['session_id'], row['scope'], now, now,
+                              row['proactive'] if proactive is None else int(proactive)))
+        elif proactive is not None:
+            conn.execute('UPDATE companion_memories SET proactive=?,updated_at=? WHERE id=?',
+                         (int(proactive), now, mid))
+            if not proactive:
+                _invalidate_memory_topics(conn, mid, now)
+    return True
+
+
+def companion_time(kind: str, now: float | None = None) -> None:
+    if kind not in ('chat', 'interaction'):
+        raise ValueError('未知互动时间')
+    set_setting('companion_last_' + kind, str(time.time() if now is None else now))
+
+
+def companion_times(now: float | None = None) -> dict:
+    now = time.time() if now is None else now
+    result = {'now': now, 'local_date': datetime.datetime.fromtimestamp(now).isoformat()}
+    for kind in ('chat', 'interaction'):
+        try:
+            stamp = float(get_setting('companion_last_' + kind))
+            valid = math.isfinite(stamp) and 0 < stamp <= now
+        except (TypeError, ValueError):
+            stamp, valid = None, False
+        result[kind] = {'timestamp': stamp if valid else None,
+                        'elapsed_seconds': now - stamp if valid else None}
+    return result
+
+
+def companion_redact(text: str, *, at: float | None = None) -> str:
+    with _conn() as conn:
+        stale = conn.execute("SELECT content,source_text FROM companion_memories WHERE state!='active' "
+                             "AND (? IS NULL OR updated_at >= ?)", (at, at)).fetchall()
+        active = conn.execute("SELECT content FROM companion_memories WHERE state='active'").fetchall()
+        valid = {row['id'] for row in conn.execute("SELECT id FROM companion_memories WHERE state='active' AND proactive=1")}
+        blocked = {row['id'] for row in conn.execute("SELECT id FROM companion_topics WHERE state='blocked'")}
+        for row in conn.execute('SELECT text,topic_id,memory_ids FROM companion_deliveries WHERE delivered_at IS NOT NULL ORDER BY delivered_at DESC LIMIT 50'):
+            if row['topic_id'] in blocked or any(mid not in valid for mid in json.loads(row['memory_ids'])):
+                text = text.replace(row['text'], '[关联话题或记忆已失效]')
+    # Protect complete current values, including the correction message saved just before
+    # its fact was updated. Timestamps additionally exempt messages after invalidation.
+    protected = {value for row in active for value in
+                 (row['content'], row['content'].split('：', 1)[-1]) if value}
+    parts = re.split('(' + '|'.join(re.escape(v) for v in sorted(protected, key=len, reverse=True)) + ')', text) \
+        if protected else [text]
+    for index in range(0, len(parts), 2):
+        for row in stale:
+            value_part = row['content'].split('：', 1)[-1]
+            for value in (row['content'], row['source_text'], value_part if len(value_part) >= 2 else ''):
+                if value:
+                    parts[index] = parts[index].replace(value, '[旧记忆已修正或删除]')
+    return ''.join(parts)
 
 
 init_db()

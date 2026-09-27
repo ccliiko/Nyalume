@@ -2,6 +2,9 @@
 
 import os
 import threading
+import time
+import json
+import logging
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -14,6 +17,33 @@ load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
 
 
 LLM_TIMEOUT_SECONDS = 90.0
+
+
+def record_usage(usage, started: float, first_token_ms=None) -> None:
+    try:
+        _record_usage(usage, started, first_token_ms)
+    except Exception as error:
+        # Metrics failure must not discard a response or mask cancellation.
+        logging.getLogger(__name__).warning('Usage recording failed: %s', type(error).__name__)
+
+
+def _record_usage(usage, started: float, first_token_ms=None) -> None:
+    """Store actual provider counters; unavailable cache counters stay null."""
+    from . import memory
+    data = usage.model_dump() if hasattr(usage, 'model_dump') else usage or {}
+    details = data.get('prompt_tokens_details') or {}
+    cached = details.get('cached_tokens', data.get('prompt_cache_hit_tokens'))
+    row = {'model': get_model(), 'provider': os.getenv('LLM_PROVIDER', 'configured'),
+           'timestamp': time.time(), 'usage': data, 'cached_tokens': cached,
+           'duration_ms': round((time.perf_counter() - started) * 1000, 2),
+           'first_token_ms': first_token_ms}
+    # Bounded diagnostics contain counters only, no prompts or credentials.
+    with memory._conn() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        old = conn.execute("SELECT value FROM settings WHERE key='llm_usage'").fetchone()
+        rows = json.loads(old['value']) if old else []
+        conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('llm_usage',?)",
+                     (json.dumps((rows + [row])[-50:]),))
 
 
 def get_client() -> OpenAI:
@@ -55,7 +85,9 @@ def chat_once(
     if timeout is not None:
         kwargs["timeout"] = max(1.0, float(timeout))
     kwargs.update(_effort_options())
+    started = time.perf_counter()
     resp = get_client().chat.completions.create(**kwargs)
+    record_usage(getattr(resp, 'usage', None), started)
     return resp.model_dump()
 
 
@@ -70,12 +102,16 @@ def chat_stream(
     - {"kind": "content", "text": "..."}       正文增量
     - {"kind": "tool_delta", "index", "id", "name", "arguments"}  工具调用增量
     """
-    kwargs = {"model": get_model(), "messages": messages, "stream": True}
+    kwargs = {"model": get_model(), "messages": messages, "stream": True,
+              "stream_options": {"include_usage": True}}
     if tools:
         kwargs["tools"] = tools
     if timeout is not None:
         kwargs["timeout"] = max(1.0, float(timeout))
     kwargs.update(_effort_options())
+    started = time.perf_counter()
+    first_token_ms = None
+    usage = None
     stream = get_client().chat.completions.create(**kwargs)
     watcher_done = threading.Event()
 
@@ -89,6 +125,8 @@ def chat_stream(
         threading.Thread(target=close_when_cancelled, daemon=True).start()
     try:
         for chunk in stream:
+            if getattr(chunk, 'usage', None) is not None:
+                usage = chunk.usage
             if cancel_event is not None and cancel_event.is_set():
                 break
             if not chunk.choices:
@@ -97,6 +135,8 @@ def chat_stream(
             reasoning = getattr(delta, "reasoning_content", None) or getattr(
                 delta, "reasoning", None
             )
+            if first_token_ms is None and (reasoning or delta.content or delta.tool_calls):
+                first_token_ms = round((time.perf_counter() - started) * 1000, 2)
             if reasoning:
                 yield {"kind": "reasoning", "text": reasoning}
                 continue
@@ -116,6 +156,7 @@ def chat_stream(
         if cancel_event is None or not cancel_event.is_set():
             raise
     finally:
+        record_usage(usage, started, first_token_ms)
         watcher_done.set()
         try:
             stream.close()

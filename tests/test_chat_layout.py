@@ -53,6 +53,18 @@ def chat_page():
 
     def route_request(route):
         path = urlparse(route.request.url).path
+        if path in ("/static/companion.css", "/static/companion.js"):
+            asset = Path(__file__).resolve().parents[1] / "nyalume/frontends/web" / path.lstrip("/")
+            route.fulfill(content_type="text/css" if path.endswith(".css") else "application/javascript",
+                          body=asset.read_text(encoding="utf-8"))
+            return
+        if path == "/api/pet/plan/portrait":
+            asset = Path(__file__).resolve().parents[1] / "user_pets/nyalume/idle.png"
+            if asset.is_file():
+                route.fulfill(content_type="image/png", body=asset.read_bytes())
+            else:
+                route.fulfill(status=404, body="missing portrait")
+            return
         if path == "/":
             route.fulfill(content_type="text/html", body=html)
             return
@@ -130,6 +142,7 @@ def chat_page():
             }
         else:
             result = {
+                "/api/focus": {"current": None, "recent": [], "today": {"count": 0, "seconds": 0}, "server_time": time.time()},
                 "/api/projects": [], "/api/undo": {"ops": []},
                 "/api/pet/state": {"ok": True, "模型": "测试桌宠", "当前动作": "待机",
                                    "心情": "开心", "风格": "柔和·浓郁", "安静模式": True},
@@ -326,12 +339,12 @@ def test_skill_manager_shows_status_and_permissions(chat_page):
     assert not errors
 
 
-def test_sidebar_sections_reserve_space_and_only_extend_down(chat_page):
+def test_sidebar_compact_sections_and_fixed_footer(chat_page, tmp_path):
     page, errors, _ = chat_page
     projects = page.locator("#sec-projects").bounding_box()
     recent = page.locator("#sec-recent").bounding_box()
-    assert projects["height"] >= 180
-    assert recent["height"] >= 180
+    assert projects["height"] < 140
+    assert recent["height"] < 180
     assert recent["y"] >= projects["y"] + projects["height"] - 1
 
     page.locator("#sec-state .side-sec-head").click()
@@ -343,6 +356,51 @@ def test_sidebar_sections_reserve_space_and_only_extend_down(chat_page):
     assert page.locator("#sec-state .side-sec-head").bounding_box()["height"] == 36
     expect(page.locator("#backup-list")).to_contain_text("准备 Agent 面试")
     expect(page.locator("#backup-list")).not_to_contain_text("agent_20260908")
+    footer = page.locator(".sidebar-foot").bounding_box()
+    page.locator("#sidebar-scroll").evaluate("el => el.scrollTop = el.scrollHeight")
+    assert page.locator(".sidebar-foot").bounding_box() == footer
+    assert footer["y"] + footer["height"] <= page.viewport_size["height"]
+    page.locator("#sidebar-scroll").evaluate("el => el.scrollTop = 0")
+    page.locator("#sec-state .side-sec-head").click()
+    expect(page.locator("#sec-state .side-sec-head")).to_have_attribute("aria-expanded", "false")
+    page.locator("#home-nav").click()
+    page.screenshot(path=str(tmp_path / "sidebar-home.png"))
+    print("PREVIEW", tmp_path / "sidebar-home.png")
+    assert not errors
+
+
+def test_sidebar_keyboard_long_list_menu_and_reload(chat_page, tmp_path):
+    page, errors, _ = chat_page
+    page.locator('#session-list .session-text').first.focus()
+    page.keyboard.press('Enter')
+    expect(page.locator('#log .msg.user')).to_have_count(2)
+    title = page.locator('#session-list .session-title').first
+    width = title.bounding_box()['width']
+    page.locator('#session-list .session-item').first.hover()
+    assert title.bounding_box()['width'] == width
+    page.locator('#sec-state .side-sec-head').click()
+    expect(page.locator('#sec-state .side-sec-head')).to_have_attribute('aria-expanded', 'true')
+    page.reload()
+    expect(page.locator('#sec-state .side-sec-head')).to_have_attribute('aria-expanded', 'true')
+    page.locator('#sec-state .side-sec-head').click()
+    page.evaluate("renderSessionList(listBox, Array.from({length: 30}, (_, i) => ({id: 'demo', title: '一段很长的对话标题，用来验证菜单和滚动 ' + i, message_count: i})))")
+    footer = page.locator('.sidebar-foot').bounding_box()
+    page.locator('#sidebar-scroll').evaluate('el => el.scrollTop = el.scrollHeight')
+    page.locator('#session-list .act-btn').last.click()
+    menu = page.locator('#session-list .more-menu:not(.hidden)')
+    expect(menu).to_be_visible()
+    box = menu.bounding_box()
+    assert box['y'] >= 0 and box['y'] + box['height'] <= page.viewport_size['height']
+    expect(menu).to_contain_text('置顶对话')
+    page.keyboard.press('Escape')
+    expect(menu).to_have_count(0)
+    assert page.locator('.sidebar-foot').bounding_box() == footer
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.locator('#sidebar-toggle').click()
+    expect(page.locator('#config-btn')).to_be_visible()
+    page.screenshot(path=str(tmp_path / 'sidebar-mobile.png'))
+    print('PREVIEW', tmp_path / 'sidebar-mobile.png')
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
     assert not errors
 
 
@@ -443,9 +501,36 @@ def test_daily_mode_disables_files_and_shows_affection(chat_page):
     assert not errors
 
 
+def test_shared_memory_controls_and_daily_session(chat_page):
+    page, errors, _ = chat_page
+    requests = []
+    page.route('**/api/state*', lambda route: route.fulfill(content_type='application/json', body=json.dumps(
+        {'summary': '', 'notes': [], 'docs': [], 'reminders': [], 'mode': 'daily', 'affection': 50,
+         'shared_memories': [{'id': 'mem-test', 'content': '称呼：小林', 'scope': 'shared', 'updated_at': time.time()}]})))
+    def edit(route):
+        requests.append(json.loads(route.request.post_data or '{}'))
+        route.fulfill(content_type='application/json', body='{"ok":true}')
+    page.route('**/api/companionship/memories/mem-test', edit)
+    page.locator('#perm-btn').click()
+    page.get_by_role('button', name='日常模式', exact=True).click()
+    page.locator('#sec-state .side-sec-head').click()
+    expect(page.locator('#state-body')).to_contain_text('称呼：小林')
+    with page.expect_response('**/api/companionship/memories/mem-test'):
+        page.locator('[data-comp-memory="mem-test"][data-action="mute"]').click()
+    assert requests == [{'proactive': False}]
+    page.evaluate("fetch('/api/permissions', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'workspace'})})")
+    page.goto('http://nyalume.test/?session=nyalume-daily')
+    expect(page.locator('#perm-btn')).to_have_text('日常模式')
+    expect(page.locator('#add-btn')).to_be_disabled()
+    with page.expect_response('**/api/companionship/daily-session'):
+        page.locator('#new-btn').click()
+    expect(page.locator('#perm-btn')).to_have_text('日常模式')
+    assert not errors
+
+
 def test_openai_provider_preset_fills_endpoint_and_model(chat_page):
     page, errors, _ = chat_page
-    expect(page.locator("#input")).to_have_attribute("placeholder", "和 Nyalume 说点什么吧～")
+    expect(page.locator("#input")).to_have_attribute("placeholder", "今天的心事，或想一起完成的小任务，都可以告诉我喵…")
     page.locator("#config-btn").click()
     expect(page.locator("#cfg-help")).to_have_text("?")
     expect(page.locator("#nav-discipline")).to_have_count(0)

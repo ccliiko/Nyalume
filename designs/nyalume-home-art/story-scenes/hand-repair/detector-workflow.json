@@ -1,0 +1,151 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "绘星海_清新风格 StarSea_pastel _v5.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "clip": [
+        "1",
+        1
+      ],
+      "lora_name": "z3画风_illv0.1.safetensors",
+      "strength_model": 0.4,
+      "strength_clip": 0.4
+    }
+  },
+  "3": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "model": [
+        "2",
+        0
+      ],
+      "clip": [
+        "2",
+        1
+      ],
+      "lora_name": "【光影系列画风第六期】鬼针草-Illustriou_NoobAI_1.0.safetensors",
+      "strength_model": 0.65,
+      "strength_clip": 0.65
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "3",
+        1
+      ],
+      "text": "masterpiece, best quality, close-up of one small slender right hand, back of hand visible, resting flat on top of a wooden bench, all five fingers naturally extended toward the left edge, four long fingers gently together with clear separation at the tips, thumb angled naturally away from palm, visible knuckles, relaxed supportive pose, wrist continues under cream sailor sleeve cuff on the right, accurate perspective, delicate anime lineart, peach skin, soft cel shading"
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "3",
+        1
+      ],
+      "text": "worst quality, malformed hand, extra fingers, missing fingers, fused fingers, twisted fingers, extra thumb, broken wrist, detached hand, duplicated hand, fingers tucked under sleeve, hidden hand, sleeve covering hand, bad anatomy, blurry, photorealistic, 3d render"
+    }
+  },
+  "6": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "nyalume_hand_detector_source.png"
+    }
+  },
+  "7": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "bbox/hand_yolov8s.pt"
+    }
+  },
+  "8": {
+    "class_type": "BboxDetectorSEGS",
+    "inputs": {
+      "bbox_detector": [
+        "7",
+        0
+      ],
+      "image": [
+        "6",
+        0
+      ],
+      "threshold": 0.15,
+      "dilation": 32,
+      "crop_factor": 4.0,
+      "drop_size": 4,
+      "labels": "all"
+    }
+  },
+  "9": {
+    "class_type": "DetailerForEach",
+    "inputs": {
+      "image": [
+        "6",
+        0
+      ],
+      "segs": [
+        "8",
+        0
+      ],
+      "model": [
+        "3",
+        0
+      ],
+      "clip": [
+        "3",
+        1
+      ],
+      "vae": [
+        "1",
+        2
+      ],
+      "guide_size": 512,
+      "guide_size_for": false,
+      "max_size": 1024,
+      "seed": 9275604,
+      "steps": 30,
+      "cfg": 6.0,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "positive": [
+        "4",
+        0
+      ],
+      "negative": [
+        "5",
+        0
+      ],
+      "denoise": 0.75,
+      "feather": 10,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": false,
+      "tiled_decode": false
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "9",
+        0
+      ],
+      "filename_prefix": "nyalume_handfix/detectorfix_v3"
+    }
+  }
+}

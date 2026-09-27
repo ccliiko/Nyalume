@@ -52,7 +52,7 @@ def test_history_messages_recover_matching_trace(monkeypatch):
         "run_id": "run-1", "started_at": 100.2, "duration_ms": 2000,
         "status": "completed", "spans": [{"kind": "tool", "name": "file_write"}],
     }]
-    monkeypatch.setattr(server.memory, "session_messages", lambda _session_id: rows)
+    monkeypatch.setattr(server.memory, "session_messages", lambda _session_id, **kwargs: rows)
     monkeypatch.setattr(server.tracing, "list_runs", lambda _session_id, limit=100: runs)
     restored = server.get_session_messages("session-1")
     assert restored[1]["trace"]["run_id"] == "run-1"

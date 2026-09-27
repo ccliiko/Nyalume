@@ -1,0 +1,112 @@
+{
+  "dessert-9274101": {
+    "prompt_id": "cb5d84d4-adb8-4e7a-8d84-8e6e67237cf1",
+    "scene": "dessert",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "star-9274102": {
+    "prompt_id": "b362f0f7-50d7-4bbe-8b5f-30ee1e0d2732",
+    "scene": "star",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "dessert-9274201": {
+    "prompt_id": "fdf4c7c9-2e4d-4b99-9725-4b60a9c16a89",
+    "scene": "dessert",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "dessert-9274301": {
+    "prompt_id": "2d5835c9-dda1-4715-a007-df155ce3782c",
+    "scene": "dessert",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "star-9274302": {
+    "prompt_id": "892185e3-a7dd-4eae-8463-a1fbeadbbc41",
+    "scene": "star",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "postcard-9274103": {
+    "prompt_id": "83a18665-cf6b-4021-a849-b5d00fb7c0e7",
+    "scene": "postcard",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "departure-9274104": {
+    "prompt_id": "fa12847d-7f57-4622-a44d-8846d0a99f60",
+    "scene": "departure",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6",
+    "status": "cancelled before generation; neutral lighting revision"
+  },
+  "gaming-9274105": {
+    "prompt_id": "3980943a-55b7-4b49-b1be-4764795f6ae8",
+    "scene": "gaming",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6",
+    "status": "cancelled before generation; neutral lighting revision"
+  },
+  "dessert-9274401": {
+    "prompt_id": "8376967e-0d3e-439f-8a09-3cdd2aefe006",
+    "scene": "dessert",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "star-9274402": {
+    "prompt_id": "6890a078-fac5-419f-aa5a-819722adbe22",
+    "scene": "star",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6",
+    "status": "cancelled before generation; star-9274302 selected after visual review"
+  },
+  "postcard-9274403": {
+    "prompt_id": "6a0695bc-cd71-43e8-8ee0-eb900290dce2",
+    "scene": "postcard",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "departure-9274404": {
+    "prompt_id": "26854135-33fb-407a-a1c1-e89e5b38b208",
+    "scene": "departure",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "gaming-9274405": {
+    "prompt_id": "8a3390b7-d3d9-4e82-a700-7608da702746",
+    "scene": "gaming",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "postcard-9274503": {
+    "prompt_id": "1385550e-d02f-4d65-8093-cf8fafea3bf2",
+    "scene": "postcard",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "departure-9274604": {
+    "prompt_id": "075445c7-a740-44b0-a00b-e93ce3eb6084",
+    "scene": "departure",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "postcard-9274703": {
+    "prompt_id": "7d0d6f58-5fe2-49b7-a8dc-8eadc3f8677f",
+    "scene": "postcard",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "departure-9274804": {
+    "prompt_id": "206109cb-ecb0-4cf9-82b7-f110cb2d178e",
+    "scene": "departure",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "postcard-9274903": {
+    "prompt_id": "5c415a27-6150-4ac0-bbcc-a5f6f726f073",
+    "scene": "postcard",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6",
+    "status": "retired after CUDA context reset; use newer seed retry"
+  },
+  "postcard-9275003": {
+    "prompt_id": "aec7281f-051a-498c-939f-959e0e090765",
+    "scene": "postcard",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6",
+    "status": "retired after CUDA context reset; use newer seed retry"
+  },
+  "departure-9274904": {
+    "prompt_id": "c78debf3-caf3-4ece-adc9-2ef121e9fb78",
+    "scene": "departure",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  },
+  "postcard-9275004": {
+    "prompt_id": "c68a58f3-36b4-4bc6-a51e-cc3f116b2b10",
+    "scene": "postcard",
+    "source_sha256": "9a9aae4e3b9ca885650cf7a73ff3cc7c357d0da283a6ec3f605290dacc5f53b6"
+  }
+}

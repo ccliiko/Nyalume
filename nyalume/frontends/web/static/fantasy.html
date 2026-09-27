@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nyalume · 奇幻冒险</title>
+<style>
+  *{box-sizing:border-box}body{margin:0;color:#40394e;background:#f7f4fb;font:15px/1.75 "Microsoft YaHei",sans-serif}
+  main{max-width:760px;margin:auto;padding:22px 20px calc(var(--composer-height,160px) + 30px)}header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  h1{font-size:22px;margin:0}small,.muted{color:#84788f}button,textarea{font:inherit}button{border:1px solid #d8cce5;border-radius:10px;padding:7px 13px;background:#fff;color:#655079;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}button.primary{background:#79618e;color:white;border-color:#79618e}
+  #summary{margin:12px 0 22px;font-size:13px;color:#756682}.message{white-space:pre-wrap;overflow-wrap:anywhere;margin:15px 0;padding:18px;border:1px solid #e6ddec;border-radius:15px;background:#fff}
+  #plan{margin-bottom:20px;border-left:3px solid #c8b3db;padding:8px 14px;background:#f0eaf6;border-radius:6px;font-size:13px;overflow-wrap:anywhere}#plan summary{cursor:pointer;font-weight:600}#plan p{margin:8px 0;white-space:pre-wrap}
+  #worldbook{margin-bottom:20px;border:1px solid #ded2e8;border-radius:12px;padding:10px 14px;background:#fff;font-size:13px;overflow-wrap:anywhere}#worldbook summary{cursor:pointer;font-weight:600}#worldbook p{margin:8px 0;white-space:pre-wrap}
+  .user{background:#eee7f6;margin-left:40px}.speaker{display:block;color:#897695;font-size:12px;margin-bottom:6px}
+  fieldset{border:0;padding:0;margin:18px 0}legend{font-weight:600;margin-bottom:8px}.choice{display:flex;gap:10px;border:1px solid #ded2e8;border-radius:12px;background:white;padding:10px;margin:8px 0;cursor:pointer}
+  .choice:has(input:checked){border-color:#977caf;background:#f0e9f8}.choice input{align-self:flex-start;margin-top:7px;accent-color:#79618e}.choice strong,.choice small{display:block}
+  #composer{position:fixed;bottom:0;left:0;right:0;background:#f7f4fbf5;border-top:1px solid #e6ddec;padding:12px max(16px,calc((100vw - 720px)/2));backdrop-filter:blur(8px)}
+  textarea{display:block;width:100%;resize:vertical;min-height:60px;max-height:180px;border:1px solid #d8cce5;border-radius:12px;padding:10px;color:inherit;background:white}
+  .actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:8px}#empty{padding:36px 8px;text-align:center}#empty h2{font-size:19px}
+  #feedback{margin-bottom:10px;padding:12px 14px;border:1px solid #baa3d0;border-radius:12px;background:#eee5f7;box-shadow:0 3px 14px #67507715}
+  #feedback[data-state=error]{background:#fff0ec;border-color:#cb846e}#feedback[data-state=done]{background:#eaf3ed;border-color:#92b79f}
+  .feedback-head{display:flex;align-items:center;gap:10px}#status{font-size:14px;font-weight:600;overflow-wrap:anywhere;flex:1}#elapsed{font-size:12px;color:#756682;white-space:nowrap}
+  #indicator{width:16px;height:16px;flex:none;border-radius:50%;background:#9275ac}#feedback[data-state=busy] #indicator{background:transparent;border:2px solid #c9b5d9;border-top-color:#73558c;animation:spin 1s linear infinite}
+  #feedback[data-state=error] #indicator{background:#ba6a50}#feedback[data-state=done] #indicator{background:#72977f}
+  #feedback-actions{display:flex;gap:8px;margin-top:9px}#progress{font-size:12px;margin-top:7px;color:#756682}#progress summary{cursor:pointer}#steps{padding-left:20px;margin:5px 0 0;max-height:95px;overflow:auto;overflow-wrap:anywhere}
+  @keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){#feedback[data-state=busy] #indicator{animation:none}}
+  [hidden]{display:none!important}button:focus-visible,textarea:focus-visible,.choice:focus-within{outline:2px solid #977caf;outline-offset:2px}
+</style>
+</head>
+<body>
+<main>
+  <header><div><h1>✦ 折月诸境</h1><small>Nyalume 的奇幻手记</small></div><button id="pause" disabled>暂停冒险</button></header>
+  <p id="summary">正在翻开手记……</p>
+  <details id="worldbook" hidden><summary id="worldbook-title">世界底稿</summary><div id="worldbook-copy"></div></details>
+  <details id="plan" hidden><summary>她在惦记什么</summary><div id="plan-copy"></div></details>
+  <details id="diagnostics" hidden><summary>查看最近运行记录</summary><div id="diagnostic-copy" class="muted"></div></details>
+  <section id="log" aria-label="冒险记录"></section>
+  <section id="empty" hidden><h2>小窝之外，还有未曾抵达的世界。</h2><p class="muted">陪她拆开第一封来信，决定你们的下一步。</p><button id="start" class="primary">开启第一章</button></section>
+  <fieldset id="choices" hidden><legend>你想怎么回应？</legend><div id="cards"></div><button id="choose" class="primary" disabled>发送这个回应</button></fieldset>
+</main>
+<form id="composer">
+  <section id="feedback" aria-label="当前进展" hidden>
+    <div class="feedback-head"><span id="indicator" aria-hidden="true"></span><span id="status" role="status" aria-live="polite"></span><span id="elapsed" aria-hidden="true"></span></div>
+    <details id="progress" hidden><summary>查看这次进展</summary><ol id="steps"></ol></details>
+    <div id="feedback-actions" hidden><button id="retry" type="button" hidden>重试这一段</button><button id="dismiss" type="button">收起提示</button></div>
+  </section>
+  <textarea id="input" aria-label="你的回应" placeholder="也可以直接写下自己的做法……" maxlength="4000"></textarea>
+  <div class="actions"><button id="stop" type="button" hidden>停止生成</button><button id="send" class="primary" disabled>发送</button></div>
+</form>
+<script>
+  const $ = id => document.getElementById(id);
+  let sid='', chapter={}, busy=false, selected='', requestId='', controller=null;
+  let lastAttempt=null, startedAt=0, timer=null;
+  new ResizeObserver(()=>document.documentElement.style.setProperty('--composer-height',$('composer').offsetHeight+'px')).observe($('composer'));
+  function showStatus(text,state='busy',canRetry=false) {
+    $('feedback').hidden=false;$('feedback').dataset.state=state;$('status').textContent=text;
+    $('retry').hidden=!canRetry;$('feedback-actions').hidden=busy;
+    if(state==='busy' && $('steps').lastElementChild?.textContent!==text){
+      const step=document.createElement('li');step.textContent=text;$('steps').appendChild(step);
+      while($('steps').children.length>6)$('steps').firstElementChild.remove();
+    }
+    $('progress').hidden=!$('steps').children.length;
+  }
+  function updateElapsed(){
+    const seconds=Math.floor((Date.now()-startedAt)/1000);
+    $('elapsed').textContent=(busy?'已等待 ':'用时 ')+(seconds<60?seconds+'秒':Math.floor(seconds/60)+'分'+seconds%60+'秒');
+  }
+  async function api(url, options={}) {
+    const response=await fetch(url,options);
+    if(!response.ok){let detail;try{detail=(await response.json()).detail}catch{}throw new Error(detail||'请求失败，请稍后重试。')}
+    return response.json();
+  }
+  function message(role,text) {
+    const el=document.createElement('article');el.className='message '+role;
+    const name=document.createElement('span');name.className='speaker';name.textContent=role==='user'?'你':'Nyalume';
+    el.append(name,document.createTextNode(text));$('log').appendChild(el);
+    return el;
+  }
+  function controls() {
+    const paused=chapter.status==='paused';
+    $('pause').disabled=!sid;$('pause').textContent=paused?'继续冒险':'暂停冒险';
+    $('send').disabled=!sid||busy||paused;$('start').disabled=!sid||busy||paused;
+    $('retry').disabled=!sid||busy||paused;
+    $('choices').disabled=busy||paused;$('choose').disabled=!selected||busy||paused;
+    $('stop').hidden=!busy;
+  }
+  async function load() {
+    const data=await api('/api/fantasy');sid=data.session_id;chapter=data.chapter||{};
+    $('diagnostics').hidden=!data.last_run;$('diagnostic-copy').replaceChildren();
+    if(data.last_run){
+      const run=data.last_run,names={worldbook:'世界底稿',chapter:'章节存档',chat_stream:'章节生成',check_chapter:'章节预检',recall_chapters:'查阅旧手记'};
+      const status={running:'进行中',completed:'已完成',error:'未完成',cancelled:'已停止'};
+      const lines=[new Date(run.started_at*1000).toLocaleString()+' · '+(status[run.status]||run.status)+' · '+Math.round(run.duration_ms/1000)+'秒',
+        ...(run.spans||[]).map(s=>(names[s.name]||s.name)+' · '+(s.status==='error'?'未通过':'已结束')+' · '+Math.round(s.duration_ms/1000)+'秒'+(s.reason?'：'+s.reason:''))];
+      if(run.error_type)lines.push('错误类型：'+run.error_type);
+      for(const line of lines){const p=document.createElement('p');p.textContent=line;$('diagnostic-copy').appendChild(p)}
+    }
+    $('log').replaceChildren();
+    for(const row of data.messages||[])if(['user','assistant'].includes(row.role))message(row.role,row.content);
+    const last=(data.messages||[]).filter(row=>row.role==='assistant').at(-1);
+    if(chapter.narrative && last?.content!==chapter.narrative)message('assistant',chapter.narrative);
+    $('empty').hidden=!!chapter.narrative;
+    $('start').textContent=chapter.worldbook?'继续开启第一章':'开启第一章';
+    $('summary').textContent=chapter.narrative
+      ? [chapter.title,chapter.bond,chapter.location,chapter.status==='paused'?'已暂停':chapter.status==='completed'?'本篇已完成':'冒险进行中'].filter(Boolean).join(' · ')
+      : chapter.worldbook?'世界底稿与初始背包已保存。现在可以开启第一章。':'三个方向，或你自己的答案。章节会留在小窝的「奇幻手记」里。';
+    const book=chapter.worldbook;$('worldbook').hidden=!book;$('worldbook-copy').replaceChildren();
+    if(book){
+      $('worldbook-title').textContent='世界底稿 · '+book.name;
+      for(const line of [book.premise,'越界规则：'+book.boundary_rule,
+                         'Nyalume 的目标：'+book.nyalume_goal,'开场地点：'+book.starting_location,
+                         '初始随身物品：'+book.starting_items.join('、'),
+                         ...book.entries.map(entry=>entry.name+'：'+entry.content)]){
+        const p=document.createElement('p');p.textContent=line;$('worldbook-copy').appendChild(p);
+      }
+    }
+    $('plan-copy').replaceChildren();$('plan').hidden=!chapter.plan?.aim;
+    for(const [key,label] of [['aim','她的目标'],['next_step','下一步'],['waiting_for','等你决定'],['lesson','这次记住了']]){
+      if(!chapter.plan?.[key])continue;
+      const line=document.createElement('p');line.textContent=label+'：'+chapter.plan[key];$('plan-copy').appendChild(line);
+    }
+    $('cards').replaceChildren();selected='';
+    const choices=chapter.choices||[];$('choices').hidden=!choices.length;
+    for(const choice of choices){
+      const label=document.createElement('label');label.className='choice';
+      const radio=document.createElement('input');radio.type='radio';radio.name='direction';radio.value=choice.text;
+      const copy=document.createElement('span'),title=document.createElement('strong'),desc=document.createElement('small');
+      title.textContent=choice.label;desc.textContent=choice.text;copy.append(title,desc);label.append(radio,copy);$('cards').appendChild(label);
+      radio.onchange=()=>{selected=choice.text;controls()};
+    }
+    controls();
+  }
+  async function stop() {
+    if(!requestId)return;
+    try {await api('/api/runs/'+encodeURIComponent(requestId)+'/cancel',{method:'POST'})}
+    catch(error){showStatus('停止请求未送达：'+error.message,'error');return}
+    controller?.abort();
+  }
+  async function send(text, fromInput=false) {
+    text=text.trim();if(!text||busy||!sid||chapter.status==='paused')return;
+    busy=true;controls();lastAttempt={text,fromInput};$('steps').replaceChildren();$('progress').open=false;
+    startedAt=Date.now();updateElapsed();timer=setInterval(updateElapsed,1000);
+    showStatus(chapter.worldbook||chapter.narrative?'她正在续写这一段……':'她正在创建世界底稿……');
+    requestId=crypto.randomUUID ? crypto.randomUUID() : 'fantasy-'+Date.now()+'-'+Math.random().toString(16).slice(2);
+    controller=new AbortController();
+    const startingRevision=chapter.revision||0,pendingMessage=message('user',text);let errorText='',completed=false;
+    try {
+      const response=await fetch('/api/fantasy/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({session_id:sid,message:text,request_id:requestId}),signal:controller.signal});
+      if(!response.ok){let detail;try{detail=(await response.json()).detail}catch{}throw new Error(detail||'暂时无法续写，请稍后重试。')}
+      const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
+      while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let end;
+        while((end=buffer.indexOf('\n\n'))>=0){const frame=buffer.slice(0,end);buffer=buffer.slice(end+2);
+          for(const line of frame.split('\n'))if(line.startsWith('data: ')){
+            const event=JSON.parse(line.slice(6));
+            if(event.type==='error')throw new Error(event.message);
+            if(event.type==='cancelled')throw new Error('已停止，本段未写入手记。');
+            if(event.type==='status')showStatus(event.message);
+            if(event.type==='done'){completed=true;errorText=event.interaction?.fantasy_warning||''}
+          }
+        }
+      }
+      if(!completed)throw new Error('连接已结束，本段尚未完成，可以重试。');
+      if(fromInput && $('input').value.trim()===text)$('input').value='';
+    }catch(error){errorText=error.name==='AbortError'?'已停止。':error.message}
+    finally{
+      busy=false;requestId='';controller=null;clearInterval(timer);timer=null;updateElapsed();
+      if(!completed)pendingMessage.remove();
+      try{
+        await load();
+        if(!completed && chapter.revision>startingRevision && chapter.user_response===text){
+          completed=true;errorText='';
+          if(fromInput && $('input').value.trim()===text)$('input').value='';
+        }
+      }catch(error){errorText=errorText||error.message}
+      controls();showStatus(errorText||'已记入奇幻手记。',errorText?'error':'done',!completed);
+    }
+  }
+  $('composer').onsubmit=event=>{event.preventDefault();void send($('input').value,true)};
+  $('input').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();void send($('input').value,true)}};
+  $('choose').onclick=()=>void send(selected);
+  $('start').onclick=()=>void send('请开启第一章奇幻冒险，让我决定如何参与。');
+  $('stop').onclick=()=>void stop();
+  $('retry').onclick=()=>{if(lastAttempt)void send(lastAttempt.text,lastAttempt.fromInput)};
+  $('dismiss').onclick=()=>{$('feedback').hidden=true};
+  $('pause').onclick=async()=>{
+    $('pause').disabled=true;
+    try{
+      chapter=await api('/api/fantasy',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({paused:chapter.status!=='paused'})});
+      if(busy&&chapter.status==='paused')await stop();
+      if(!busy)await load();
+      showStatus(chapter.status==='paused'?'已暂停，也不会主动邀请。':'已恢复，等你决定下一步。','done');
+    }catch(error){showStatus(error.message,'error')}finally{controls()}
+  };
+  window.addEventListener('focus',()=>{if(!busy)void load().catch(error=>{showStatus(error.message,'error')})});
+  void load().catch(error=>{showStatus(error.message,'error')});
+</script>
+</body></html>

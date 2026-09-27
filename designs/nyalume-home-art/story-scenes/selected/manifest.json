@@ -1,0 +1,117 @@
+[
+  {
+    "name": "01-dessert",
+    "title": "甜点等你回来",
+    "candidate": "dessert-9274401",
+    "size": [
+      1152,
+      864
+    ],
+    "cfg": 5.5,
+    "seed": 9274401,
+    "checkpoint": "绘星海_清新风格 StarSea_pastel _v5.safetensors",
+    "loras": [
+      {
+        "name": "z3画风_illv0.1.safetensors",
+        "model_weight": 0.4
+      },
+      {
+        "name": "【光影系列画风第六期】鬼针草-Illustriou_NoobAI_1.0.safetensors",
+        "model_weight": 0.65
+      }
+    ],
+    "controlnet": null
+  },
+  {
+    "name": "02-letter",
+    "title": "今天也想被你夸",
+    "candidate": "postcard-9274703",
+    "size": [
+      864,
+      1152
+    ],
+    "cfg": 5.5,
+    "seed": 9274703,
+    "checkpoint": "绘星海_清新风格 StarSea_pastel _v5.safetensors",
+    "loras": [
+      {
+        "name": "z3画风_illv0.1.safetensors",
+        "model_weight": 0.4
+      },
+      {
+        "name": "【光影系列画风第六期】鬼针草-Illustriou_NoobAI_1.0.safetensors",
+        "model_weight": 0.65
+      }
+    ],
+    "controlnet": null
+  },
+  {
+    "name": "03-departure",
+    "title": "出发前五分钟",
+    "candidate": "departure-9274804",
+    "size": [
+      896,
+      1120
+    ],
+    "cfg": 5.5,
+    "seed": 9274804,
+    "checkpoint": "绘星海_清新风格 StarSea_pastel _v5.safetensors",
+    "loras": [
+      {
+        "name": "z3画风_illv0.1.safetensors",
+        "model_weight": 0.4
+      },
+      {
+        "name": "【光影系列画风第六期】鬼针草-Illustriou_NoobAI_1.0.safetensors",
+        "model_weight": 0.65
+      }
+    ],
+    "controlnet": "OpenPoseXL2.safetensors"
+  },
+  {
+    "name": "04-star",
+    "title": "见习星术师",
+    "candidate": "star-9274302",
+    "size": [
+      832,
+      1248
+    ],
+    "cfg": 8,
+    "seed": 9274302,
+    "checkpoint": "绘星海_清新风格 StarSea_pastel _v5.safetensors",
+    "loras": [
+      {
+        "name": "z3画风_illv0.1.safetensors",
+        "model_weight": 0.4
+      },
+      {
+        "name": "【光影系列画风第六期】鬼针草-Illustriou_NoobAI_1.0.safetensors",
+        "model_weight": 0.65
+      }
+    ],
+    "controlnet": null
+  },
+  {
+    "name": "05-gaming",
+    "title": "再玩一局",
+    "candidate": "gaming-9274405",
+    "size": [
+      1248,
+      832
+    ],
+    "cfg": 5.5,
+    "seed": 9274405,
+    "checkpoint": "绘星海_清新风格 StarSea_pastel _v5.safetensors",
+    "loras": [
+      {
+        "name": "z3画风_illv0.1.safetensors",
+        "model_weight": 0.4
+      },
+      {
+        "name": "【光影系列画风第六期】鬼针草-Illustriou_NoobAI_1.0.safetensors",
+        "model_weight": 0.65
+      }
+    ],
+    "controlnet": null
+  }
+]

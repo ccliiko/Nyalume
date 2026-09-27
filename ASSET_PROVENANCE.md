@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | `user_pets/nyalume/` 桌宠帧 | StarSea pastel v5 + z3 画风 LoRA + 鬼针草 Illustrious/NoobAI LoRA，部分早期帧仅记录 StarSea pastel v5 | **未批准**：模型来源或商业条款未完整保存，不能进入付费发行包 |
 | `nyalume/frontends/web/static/daily_nyalume/` 每日卡片 | 部分设计记录了参考图和分层过程，但未完整记录生成服务、模型版本和适用条款 | **待补证**：在来源补全或重新生成前，不作为可商用素材 |
+| `designs/nyalume-home-art/images/` 独立插画素材 | 用户本机 double_lora_BA 工作流，StarSea pastel v5 + z3 0.4 + 鬼针草 0.65；精确 API 图见 `docs/home-art-workflows/` | **待补证**：沿用上述模型条款核验状态 |
 | 程序绘制的无素材占位猫 | `nyalume/frontends/pet/renderer.py` 中的程序图形 | **允许**：项目自有代码生成，不依赖外部角色素材 |
 | 用户自行导入的皮肤和壁纸 | 用户提供 | **由用户负责**：不得随官方商业包再次分发，除非取得书面授权 |
 | 3D 桌宠自制 `idle.vmd` | 项目脚本生成的自然站姿动作 | **允许**：项目自有动作数据 |

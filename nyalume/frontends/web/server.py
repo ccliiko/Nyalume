@@ -17,9 +17,10 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from nyalume.core import companionship, daily_nyalume, memory, personas, reminders, skills, tracing
+from nyalume.core import companionship, daily_nyalume, focus, memory, personas, reminders, skills, tracing, small_plans, fantasy
 from nyalume.core.agent import run_stream
 from nyalume.core.vision import describe_image as _vd
 from nyalume.core.vision import vision_configured
@@ -40,6 +41,7 @@ from nyalume.core.tools import (
 from nyalume.frontends.pet.pets_registry import (
     frame_paths,
     get_pet,
+    nyalume_portrait,
     load_config,
     save_config,
 )
@@ -83,6 +85,45 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Nyalume", lifespan=lifespan)
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+class FocusStartIn(BaseModel):
+    goal: str
+    minutes: int
+
+
+class FocusUpdateIn(BaseModel):
+    action: str
+    outcome: str = ""
+    note: str = ""
+
+
+@app.get("/api/focus")
+def focus_snapshot():
+    return focus.snapshot()
+
+
+@app.post("/api/focus")
+def focus_start(body: FocusStartIn):
+    try:
+        return focus.start(body.goal, body.minutes)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.patch("/api/focus/{entry_id}")
+def focus_update(entry_id: int, body: FocusUpdateIn):
+    try:
+        return focus.update(entry_id, body.action, body.outcome, body.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.delete("/api/focus/{entry_id}")
+def focus_delete(entry_id: int):
+    return focus.delete(entry_id)
+
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 _IMG_EXTS = _IMAGE_EXTS | {".mp4", ".webm", ".mov"}
 _activity_lock = threading.Lock()
@@ -121,6 +162,7 @@ def activity_state():
 def pet_tap(payload: dict):
     """把聊天窗的敲猫猫头动作捎给桌宠；计数仍由前端本地保存。"""
     global _pet_tap_seq, _pet_meow_seq
+    memory.companion_time('interaction')
     with _activity_lock:
         _pet_tap_seq += 1
         if bool(payload.get("meowed")):
@@ -1029,7 +1071,7 @@ def set_permissions(body: PermissionIn):
 @app.get("/api/sessions")
 def list_sessions():
     """会话列表：标题取第一句用户消息，按最近活动倒序。"""
-    return memory.list_sessions()
+    return [row for row in memory.list_sessions() if row["id"] != fantasy.SESSION_ID]
 
 
 @app.get("/api/search/sessions")
@@ -1038,14 +1080,14 @@ def search_sessions(q: str = "", limit: int = 20):
     q = (q or "").strip()
     if not q:
         return []
-    return memory.search_sessions(q, max(1, min(50, limit)))
+    return [row for row in memory.search_sessions(q, max(1, min(50, limit))) if row["id"] != fantasy.SESSION_ID]
 
 
 @app.post("/api/sessions")
 def new_session(body: SessionCreateIn | None = None):
     """新建会话（可挂到项目下），返回 {"id": ...}。"""
     project = (body.project if body else "") or ""
-    return {"id": memory.create_session(project=project)}
+    return {"id": memory.daily_session() if not project and permission_mode() == "daily" else memory.create_session(project=project)}
 
 
 @app.put("/api/sessions/{session_id}")
@@ -1063,7 +1105,7 @@ def update_session(session_id: str, body: SessionUpdateIn):
 @app.get("/api/sessions/{session_id}/messages")
 def get_session_messages(session_id: str):
     """切换会话时回显历史消息（正序）。"""
-    rows = memory.session_messages(session_id)
+    rows = memory.session_messages(session_id, latest=True)
     runs = sorted(
         tracing.list_runs(session_id, limit=100), key=lambda item: item["started_at"]
     )
@@ -1224,6 +1266,45 @@ def undo_action(op_id: str):
 @app.post("/api/chat")
 def chat(body: ChatIn):
     """SSE 流式聊天；遇到 approval 事件会挂起等用户点按钮再继续。"""
+    if body.session_id == fantasy.SESSION_ID:
+        raise HTTPException(status_code=400, detail="请使用奇幻冒险入口")
+    if permission_mode() == "daily":
+        body.session_id = memory.daily_session()
+    return _chat_response(body, run_stream)
+
+
+@app.get("/fantasy")
+def fantasy_page():
+    return FileResponse(os.path.join(STATIC_DIR, "fantasy.html"))
+
+
+@app.get("/api/fantasy")
+def fantasy_state():
+    runs = tracing.list_runs(fantasy.SESSION_ID, limit=1)
+    latest = {**runs[0], 'spans': runs[0]['spans'][-8:]} if runs else None
+    return {"session_id": fantasy.SESSION_ID, "chapter": fantasy.current(),
+            "messages": fantasy.history(limit=60), "last_run": latest}
+
+
+class FantasyControlIn(BaseModel):
+    paused: bool
+
+
+@app.patch("/api/fantasy")
+def fantasy_control(body: FantasyControlIn):
+    return fantasy.set_paused(body.paused)
+
+
+@app.post("/api/fantasy/chat")
+def fantasy_chat(body: ChatIn):
+    if body.session_id != fantasy.SESSION_ID:
+        raise HTTPException(status_code=400, detail="奇幻剧情不能写入工作会话")
+    if not body.message.strip() or len(body.message) > 4000:
+        raise HTTPException(status_code=400, detail="请填写 1–4000 字的回应")
+    return _chat_response(body, fantasy.run_stream, working=False)
+
+
+def _chat_response(body, runner, *, working=True):
 
     run_lock = _session_run_lock(body.session_id)
     if not run_lock.acquire(blocking=False):
@@ -1232,16 +1313,21 @@ def chat(body: ChatIn):
     run_request_id = run_request_id or uuid.uuid4().hex
     cancel_event = threading.Event()
     with _RUNS_LOCK:
+        if run_request_id in _RUN_CANCEL_EVENTS:
+            run_lock.release()
+            raise HTTPException(status_code=409, detail="请求编号已经在使用，请重新发送")
         _RUN_CANCEL_EVENTS[run_request_id] = cancel_event
 
     def event_stream():
         gen = None
-        _change_activity(1)
+        if working:
+            _change_activity(1)
         try:
-            gen = run_stream(body.session_id, body.message, cancel_event=cancel_event)
+            gen = runner(body.session_id, body.message, cancel_event=cancel_event)
             while True:
                 try:
-                    set_session_context(body.session_id)
+                    if working:
+                        set_session_context(body.session_id)
                     ev = next(gen)
                 except StopIteration:
                     break
@@ -1267,7 +1353,8 @@ def chat(body: ChatIn):
                     gen.close()
             except Exception:
                 pass
-            _change_activity(-1)
+            if working:
+                _change_activity(-1)
             with _RUNS_LOCK:
                 _RUN_CANCEL_EVENTS.pop(run_request_id, None)
             run_lock.release()
@@ -1312,8 +1399,10 @@ def due_reminders():
 @app.get("/api/state")
 def agent_state(session_id: str = "web-default"):
     """记忆/状态仪表盘数据：会话滚动摘要 + 最近便签 + 定时提醒。"""
-    mode = permission_mode()
+    mode = "daily" if session_id == memory.DAILY_SESSION_ID else permission_mode()
     return {
+        "shared_memories": memory.companion_memories(daily=mode == "daily"),
+        "topics": companionship.topics() if mode == "daily" else [],
         "session_id": session_id,
         "summary": memory.get_summary(session_id),
         "notes": memory.get_recent_notes(8, session_id),
@@ -1348,6 +1437,59 @@ class CompanionActionIn(BaseModel):
 @app.get("/api/companion")
 def companion_entries(before: int = 0):
     return companionship.entries(max(0, before))
+
+
+class PetPlanIn(BaseModel):
+    id: int
+    choice: str | None = None
+    paused: bool | None = None
+    kind: str | None = None
+    accompany: bool | None = None
+    liked: bool | None = None
+
+
+class PetPlanStartIn(BaseModel):
+    kind: str | None = None
+
+
+@app.get("/api/pet/plan")
+def pet_plan():
+    return small_plans.current()
+
+
+@app.post("/api/pet/plan/start")
+def start_pet_plan(body: PetPlanStartIn | None = None):
+    try:
+        return small_plans.tick(restart=True, kind=body.kind if body else None)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@app.get("/api/pet/plan/themes")
+def pet_plan_themes():
+    return small_plans.catalog()
+
+
+@app.get("/api/pet/plan/collection")
+def pet_plan_collection(before: int = 0):
+    return small_plans.collection(max(0, before))
+
+
+@app.get("/api/pet/plan/portrait")
+def pet_plan_portrait():
+    path = nyalume_portrait()
+    if not path:
+        raise HTTPException(status_code=404, detail="Nyalume 的 2D 形象文件暂时不在这里")
+    return FileResponse(path)
+
+
+@app.patch("/api/pet/plan")
+def update_pet_plan(body: PetPlanIn):
+    try:
+        return small_plans.update(body.id, choice=body.choice, paused=body.paused,
+                                 kind=body.kind, accompany=body.accompany, liked=body.liked)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @app.post("/api/companion/promises")
@@ -1729,6 +1871,54 @@ def wallpaper_file(name: str):
     if not base or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="壁纸文件不存在")
     return FileResponse(path)
+
+
+@app.get('/api/companionship/daily-session')
+def companion_daily_session():
+    return {'id': memory.daily_session()}
+
+
+class CompanionMemoryEdit(BaseModel):
+    content: str | None = None
+    proactive: bool | None = None
+
+
+@app.patch('/api/companionship/memories/{mid}')
+def edit_companion_memory(mid: str, body: CompanionMemoryEdit):
+    try:
+        ok = memory.update_companion_memory(mid, content=body.content, proactive=body.proactive)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if not ok:
+        raise HTTPException(404, '记忆不存在')
+    return {'ok': True}
+
+
+@app.delete('/api/companionship/memories/{mid}')
+def delete_companion_memory(mid: str):
+    if not memory.update_companion_memory(mid, delete=True):
+        raise HTTPException(404, '记忆不存在')
+    return {'ok': True}
+
+
+class CompanionTopicEdit(BaseModel):
+    state: str
+
+
+@app.patch('/api/companionship/topics/{tid}')
+def edit_companion_topic(tid: str, body: CompanionTopicEdit):
+    try:
+        ok = companionship.topic_control(tid, body.state)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if not ok:
+        raise HTTPException(404, '话题不存在')
+    return {'ok': True}
+
+
+@app.get('/api/llm/usage')
+def llm_usage():
+    return json.loads(memory.get_setting('llm_usage', '[]'))
 
 
 if __name__ == "__main__":

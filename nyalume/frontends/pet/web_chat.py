@@ -90,11 +90,16 @@ def start_web_server_if_needed(port: int = WEB_PORT) -> bool:
 class WebChat:
     """替代旧 Tk ChatPanel 的对外接口（show/hide/toggle/…）。"""
 
-    def __init__(self, on_event=None):
+    def __init__(self, on_event=None, quick=False, fantasy=False):
         self.on_event = on_event
+        self.quick = quick
+        self.fantasy = fantasy
+        self._reply_text = ""
+        self._plan_view = False
         self._proc = None
         self._visible = False
-        self._sid = None
+        from nyalume.core import memory
+        self._sid = None if fantasy else memory.daily_session()
         self._fresh = False
         self._errlog = os.path.join(
             tempfile.gettempdir(), "nyalume_webchat_err.log"
@@ -126,10 +131,58 @@ class WebChat:
         return self._proc is not None and self._proc.poll() is None
 
     def _window_url(self) -> str:
+        from urllib.parse import urlencode
+
         url = f"http://127.0.0.1:{WEB_PORT}"
+        if self.fantasy:
+            return url + "/fantasy?quick=1"
+        params = {"quick": "1"} if self.quick else {}
+        if self._plan_view:
+            params["plan"] = "1"
         if self._sid:
-            url += "?session=" + self._sid
-        return url
+            params["session"] = self._sid
+        return url + ("?" + urlencode(params) if params else "")
+
+    def open_reply(self, text: str) -> bool:
+        """把她的原话放进真实会话历史，用户直接接话即可。"""
+        from nyalume.core import memory, fantasy
+
+        chapter = fantasy.reply_for_invitation(text)
+        if chapter:
+            self.fantasy = True
+        revision = chapter['revision'] if chapter else 0
+        was_plan = self._plan_view
+        self._plan_view = False
+        if text == self._reply_text and self._sid and getattr(self, '_reply_revision', 0) == revision:
+            if not self.show():
+                return False
+            if was_plan and not self._fresh:
+                self._send("navigate " + self._window_url())
+            return True
+        self._sid = fantasy.SESSION_ID if chapter else memory.daily_session()
+        self._reply_text = text
+        self._reply_revision = revision
+        # Proactive text was already saved by the renderer delivery acknowledgement.
+        # A bubble from another local action is saved once when explicitly opened.
+        if not chapter:
+            with memory._conn() as conn:
+                already = conn.execute('SELECT 1 FROM companion_deliveries WHERE text=? AND delivered_at IS NOT NULL LIMIT 1', (text,)).fetchone()
+            history = memory.load_history(self._sid, 1)
+            if not already and (not history or history[-1] != {'role': 'assistant', 'content': text}):
+                memory.save_message(self._sid, 'assistant', text)
+        if not self.show():
+            return False
+        if not self._fresh:
+            self._send("navigate " + self._window_url())
+        return True
+
+    def open_plan(self) -> bool:
+        self._plan_view = True
+        if not self.show():
+            return False
+        if not self._fresh:
+            self._send("navigate " + self._window_url())
+        return True
 
     def show(self) -> bool:
         if not self._alive():
@@ -198,7 +251,7 @@ class WebChat:
             self._plog(
                 f"child exited early rc={self._proc.returncode}, open browser"
             )
-            webbrowser.open(f"http://127.0.0.1:{WEB_PORT}")
+            webbrowser.open(self._window_url())
             self._visible = False
 
     def hide(self) -> None:

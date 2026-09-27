@@ -28,7 +28,7 @@ def isolated_journal(tmp_path, monkeypatch):
 
 def test_promise_requires_confirmation_and_survives_restart(monkeypatch):
     client = TestClient(server.app)
-    tools.set_session_context("a")
+    tools.set_session_context(memory.daily_session())
     draft = json.loads(tools.execute_tool("companion_journal", {"action": "propose", "content": "一起整理照片"}))
     assert draft["state"] == "proposed"
     assert "一起整理照片" not in life.prompt_context()
@@ -44,8 +44,9 @@ def test_promise_requires_confirmation_and_survives_restart(monkeypatch):
     assert client.patch(f"/api/companion/{draft['id']}", json={"action": "complete"}).json() == completed
     memory.init_db()  # 重建连接/初始化不能丢失之前的记录
     monkeypatch.setattr(agent, "resolve_persona_id", lambda: "nyalume")
-    assert "一起整理照片" in agent._system_prompt(mode="daily")
-    assert "用户确认完成" in agent._system_prompt()
+    assert "一起整理照片" not in agent._system_prompt(mode="daily")
+    assert "用户确认完成" in life.prompt_context()
+    assert "一起整理照片" not in agent._system_prompt()
     monkeypatch.setattr(agent, "resolve_persona_id", lambda: "assistant")
     assert "一起整理照片" not in agent._system_prompt()
     assert client.delete(f"/api/companion/{draft['id']}").json()["ok"]

@@ -114,6 +114,7 @@ class PetApp:
         )
         self.window.bind_context(self._popup_menu)
     def _pet_double_clicked(self) -> None:
+        memory.companion_time("interaction")
         if self.window:
             self.window.poke()
         if not self.chat.show():
@@ -124,6 +125,7 @@ class PetApp:
         """单击不同部位：本地即时台词与短表情，不保存关系数值。"""
         if not self.window:
             return
+        memory.companion_time("interaction")
         self.window.poke()
         line = interactions.pick_line(region, self.session_id)
         self.window.cheer(line)

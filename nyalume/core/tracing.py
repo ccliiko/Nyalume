@@ -1,4 +1,4 @@
-"""本地 SQLite 运行记录；只保存元数据，不记录对话、工具参数或结果正文。"""
+"""本地运行记录：阶段、耗时和校验原因，不记录完整对话、工具参数或结果正文。"""
 
 import json
 import logging
@@ -12,10 +12,15 @@ from . import memory
 logger = logging.getLogger(__name__)
 
 
+@contextmanager
 def _connect():
     connection = sqlite3.connect(memory.DB_PATH, timeout=1)
     connection.row_factory = sqlite3.Row
-    return connection
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
 
 
 def list_runs(session_id: str = "", limit: int = 20) -> list[dict]:

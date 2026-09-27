@@ -318,18 +318,18 @@ def test_proactive_reply_parsing():
     from nyalume.frontends.pet.pet3d import proactive as P
 
     ok = P.parse_reply('随便说点什么 {"action": "say", "text": "要不要歇会儿～"} 完了')
-    assert ok == {"action": "say", "text": "要不要歇会儿～"}
+    assert ok == {"action": "say", "text": "要不要歇会儿～", "topic_id": None, "memory_ids": []}
     assert P.parse_reply('{"action": "face", "text": "shy"}')["action"] == "face"
     assert P.parse_reply('{"action": "say"}') is None      # say 没给台词
     assert P.parse_reply('{"action": "rm -rf /"}') is None  # 不在白名单
     assert P.parse_reply('{"action": "face", "text": "未知表情"}') is None
     assert P.parse_reply('{"action": "look", "text": "斜前方"}') is None
-    assert len(P.parse_reply('{"action": "say", "text": "abcdefghijklmnopqrstuvwxyz"}')["text"]) == 25
+    assert P.parse_reply('{"action": "say", "text": "abcdefghijklmnopqrstuvwxyz"}') is None
     assert P.parse_reply("我什么也不想干") is None
 
 
 def test_proactive_budget_and_ignore_escalation():
-    """打扰预算：安静模式/全屏挡住；连续被无视两次就静默一小时。"""
+    """打扰预算：安静/全屏挡住；没人回应逐步放慢，触碰恢复。"""
     from nyalume.frontends.pet.pet3d import proactive as P
 
     pr = P.Proposer(chat=lambda _m: '{"action": "say", "text": "嗨"}')
@@ -345,17 +345,24 @@ def test_proactive_budget_and_ignore_escalation():
     assert pr.blocked(desk, state, night) == ""  # 深夜也让她说话（没声音，不吵）
 
     act = pr.propose(desk, state, "剪辑（已经 30 分钟）", now)
-    assert act == {"action": "say", "text": "嗨"}
+    assert act == {"action": "say", "text": "嗨", "topic_id": None, "memory_ids": []}
+    assert not pr.pending_ack
+    pr.note_delivered(act["text"], now)
     assert pr.sent == 1 and pr.tokens > 0
     assert "还没到下次搭话" in pr.blocked(desk, state, now + 10)
 
-    # 两次没人理 → 静默
+    # 两次没人理 → 最多三倍间隔，不进入一小时静默
     pr.tick_ignored(now + P.IGNORE_AFTER + 1)
     assert pr.ignored == 1
-    pr.propose(desk, state, "剪辑（已经 60 分钟）", now + 1801)
+    pr.chat = lambda _m: '{"action": "say", "text": "云朵像棉花糖"}'
+    act = pr.propose(desk, state, "剪辑（已经 60 分钟）", now + 1801)
+    pr.note_delivered(act["text"], now + 1801)
+    lo, hi = P.TALK_MODES[pr.mode]
+    assert lo * 2 <= pr.next_allowed_at - (now + 1801) <= hi * 2
     pr.tick_ignored(now + 1801 + P.IGNORE_AFTER + 1)
-    assert pr.silenced_until > 0
-    assert pr.blocked(desk, state, now + 1801 + P.IGNORE_AFTER + 2) == "静默中"
+    assert pr.ignored == 2
+    assert pr.silenced_until == 0
+    assert pr.blocked(desk, state, pr.next_allowed_at + 1) == ""
 
     # 用户来理她 → 清掉被无视计数、解除静默
     pr.silenced_until = 0
@@ -382,9 +389,9 @@ def test_proactive_battery_and_idle_care_triggers():
     # 人不在（空闲 30 分钟）：平时被"人不在"挡着，但这条要放行
     away = {**ok, "idle_sec": 30 * 60}
     pr2 = P.Proposer(chat=lambda _m: '{"action": "say", "text": "你还在吗？"}')
-    assert pr2.blocked(away, state, day) == "人不在（空闲太久）"
+    assert pr2.blocked(away, state, day) == "系统空闲较久，暂缓打扰"
     assert pr2.blocked(away, state, day, allow_idle=True) == ""
-    assert pr2.worth_saying(away, state, "", day) == "idle_care"
+    assert pr2.worth_saying(away, state, "", day) == "陪伴"
     # 安静模式下照样不许说
     assert pr2.blocked({**away, "quiet": True}, state, day, allow_idle=True) != ""
 
@@ -399,12 +406,12 @@ def test_talk_mode_schedules_within_selected_range(mode, monkeypatch):
                     model_name="锁暝")
     prompt = pr.build_prompt({"category": "剪辑", "media": {"title": "测试曲目"},
                               "title": "不该发送的窗口标题"}, {}, "陪伴")
-    assert "你是锁暝" in prompt[0]["content"]
+    assert "你是 Nyalume" in prompt[0]["content"]
     assert "测试曲目" in prompt[1]["content"]
     assert "不该发送的窗口标题" not in str(prompt)
 
     now = time.mktime(time.strptime("2026-09-21 14:00", "%Y-%m-%d %H:%M"))
-    assert pr.propose({}, {}, "陪伴", now) == {"action": "say", "text": "嗨"}
+    assert pr.propose({}, {}, "陪伴", now) == {"action": "face", "text": "calm", "topic_id": None, "memory_ids": []}
     assert lo <= pr.next_allowed_at - now <= hi
     assert pr.blocked({"idle_sec": 0}, {"last_interaction": now - 1000},
                       pr.next_allowed_at - 1) == "还没到下次搭话的间隔（或刚说过）"
@@ -564,6 +571,7 @@ def test_menu_config_has_import_entries():
     api._quiet = False
     api._auto_fps = True
     api._talk_mode = "normal"
+    api._notes_enabled = True
     items = {}
     for page in range(3):
         api._menu_page = f"config:{page}"
