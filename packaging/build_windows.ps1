@@ -1,6 +1,7 @@
 ﻿param(
-    [string]$Version = "0.4.0",
-    [switch]$PersonalAssets,
+    [string]$Version = "0.4.1",
+    # 本机构建默认保留原有 2D 角色；无素材构建显式传 -PersonalAssets:$false。
+    [switch]$PersonalAssets = $true,
     # 带模型/动作的个人版：-ModelSource 下含 .pmx 的模型目录全带，动作只带 -MotionPick 白名单
     [switch]$WithModels,
     # 本机素材根：模型和动作是分开的两个目录
@@ -22,7 +23,7 @@ $buildRoot = Join-Path $projectRoot "build"
 $distRoot = Join-Path $projectRoot "dist"
 $distDir = Join-Path $distRoot "Nyalume"
 $releaseRoot = Join-Path $projectRoot "release"
-$packageName = "Nyalume-v$Version-windows-x64" + $(if ($PersonalAssets) { "-personal" } else { "" }) + $(if ($WithModels) { "-models" } else { "" })
+$packageName = "Nyalume-v$Version-windows-x64" + $(if ($PersonalAssets) { "" } else { "-no-2d" }) + $(if ($WithModels) { "-models" } else { "" })
 $releaseDir = Join-Path $releaseRoot $packageName
 $zipPath = Join-Path $releaseRoot "$packageName.zip"
 

@@ -27,7 +27,7 @@ def tree_data(source, destination):
 
 datas = tree_data(STATIC_DIR, "nyalume/frontends/web/static")
 
-if os.environ.get("NYALUME_BUNDLE_PERSONAL_ASSETS") == "1":
+if os.environ.get("NYALUME_BUNDLE_PERSONAL_ASSETS") != "0":
     manifest_path = PET_DIR / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     pet_files = {"manifest.json"}
