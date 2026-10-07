@@ -54,7 +54,7 @@ def test_one_daily_session_with_project_and_legacy_isolation(monkeypatch):
     assert '小林' in str(calls[-1])
     assert '项目秘密' not in str(calls[-1]) and '旧用户事实' not in str(calls[-1])
     assert memory.get_recent_notes(3, 'old-chat')
-    assert all(s['function']['name'] == 'pet_plan' for s in calls[-1][1]['tools'])
+    assert calls[-1][1]['tools'] is None
     tools.set_permission_mode('workspace')
     list(agent.run_stream('project-chat', '你好'))
     assert 'shared_experiences' not in str(calls[-1]) and '小林' in str(calls[-1])
@@ -184,7 +184,7 @@ def test_virtual_plan_is_saved_and_system_is_stable(monkeypatch):
     list(agent.run_stream(memory.daily_session(), '你好'))
     first_system = calls[-1][0][0]
     first = json.loads(calls[-1][0][-2]['content'].split('\n', 1)[1])
-    assert first['virtual_plans'] == json.loads(json.dumps(small_plans.current()))
+    assert 'virtual_plans' not in first
     user('叫我小林')
     memory.set_daily_affection(memory.daily_session(), 75)
     list(agent.run_stream(memory.daily_session(), '今晚好'))

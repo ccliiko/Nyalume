@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from nyalume.core import agent, memory, reminders, tools
+from nyalume.core import agent, memory, tools
 
 
 def _tool_call(name: str, arguments: dict):
@@ -56,7 +56,7 @@ def test_batch_work_gets_batching_discipline():
     assert "不要重复" in hint
 
 
-def test_daily_mode_only_has_virtual_plan_tool_and_keeps_affection(monkeypatch):
+def test_daily_mode_has_no_tools_and_keeps_affection(monkeypatch):
     session_id = "eval-daily"
     memory.set_daily_affection(session_id, 50)
     tools.set_permission_mode("daily")
@@ -75,7 +75,7 @@ def test_daily_mode_only_has_virtual_plan_tool_and_keeps_affection(monkeypatch):
     finally:
         tools.set_permission_mode("workspace")
     shown = "".join(e.get("text", "") for e in events if e["type"] == "text")
-    assert [tool["function"]["name"] for tool in captured["tools"]] == ["pet_plan"]
+    assert captured["tools"] is None
     assert "桌面小窝" in captured["prompt"]
     assert "daily_affection" not in shown
     assert memory.get_daily_affection(memory.daily_session()) == 50
@@ -234,18 +234,3 @@ def test_agent_eval_denies_unapproved_outside_write(monkeypatch, tmp_path):
         assert not outside.exists()
     finally:
         memory.set_setting("workspace_root", "")
-
-
-def test_agent_eval_one_shot_reminder_finishes(monkeypatch):
-    def fake_chat_stream(messages, tools=None, **kwargs):
-        yield {"kind": "content", "text": "提醒已经设置。"}
-
-    before = {item["id"] for item in reminders.list_reminders(enabled_only=False)}
-    try:
-        monkeypatch.setattr(agent.llm, "chat_stream", fake_chat_stream)
-        events = list(agent.run_stream("eval-reminder", "1分钟后提醒我测试"))
-        assert any(e.get("type") == "done" for e in events)
-    finally:
-        for item in reminders.list_reminders(enabled_only=False):
-            if item["id"] not in before:
-                reminders.delete_reminder(item["id"])

@@ -93,25 +93,6 @@ def test_agent_options_share_one_response_and_survive_reload(monkeypatch, mode):
         assert not interaction.story()
 
 
-def test_daily_plan_tool_applies_real_choice_without_exposing_other_tools(monkeypatch):
-    first = small_plans.tick(kind='garden')
-    tools.set_permission_mode('daily')
-    rounds = []
-    def model(messages, tools=None, **kwargs):
-        rounds.append(1)
-        assert [t['function']['name'] for t in tools] == ['pet_plan']
-        if len(rounds) == 1:
-            yield {'kind': 'tool_delta', 'index': 0, 'id': 'plan-choice', 'name': 'pet_plan',
-                   'arguments': json.dumps({'action': 'choose', 'plan_id': first['id'], 'choice': '薄荷'})}
-        else:
-            assert any('薄荷' in m.get('content', '') for m in messages if m['role'] == 'tool')
-            yield {'kind': 'content', 'text': '那就种薄荷。[daily_affection:+1]'}
-    monkeypatch.setattr(agent.llm, 'chat_stream', model)
-    events = list(agent.run_stream('choose-mint', '我选薄荷'))
-    assert events[-1]['type'] == 'done'
-    assert small_plans.current()['plant'] == '薄荷'
-    assert small_plans.current()['chosen_by'] == 'user'
-    assert '日常模式' in tools.execute_tool('pet_perform', {'action': 'dance', 'value': '舞'})
 
 
 def test_daily_missing_choices_allow_natural_end_without_extra_call(monkeypatch):

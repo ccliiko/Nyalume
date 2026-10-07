@@ -594,6 +594,9 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
                             api._menu_rects = menu_snapshot  # 换风格常要连点，菜单留着
                         elif item_id.startswith("talk:"):
                             api.set_talk_mode(item_id.split(":", 1)[1])
+                        elif item_id.startswith("interact:"):
+                            api._note_touch()
+                            api.pet_command({'action': 'interact', 'name': item_id.split(':', 1)[1]})
                         elif item_id == "chat":
                             # 只开聊天窗，桌宠继续留在桌面上：两个窗口并存
                             api.open_chat_from_menu()
@@ -602,8 +605,6 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
                             _save_settings(notes_enabled=api._notes_enabled)
                         elif item_id == "home":
                             api.open_home()
-                        elif item_id == "plan":
-                            api.open_chat(plan=True)
                         elif item_id == "fantasy":
                             api.open_chat(fantasy=True)
                             api._pending = {"kind": "menu_close"}
@@ -1502,6 +1503,11 @@ class _NativeApi:
                           + " · " + proactive.TALK_RANGES[mode]}
                 for mode in proactive.TALK_MODES
             ]
+        if page == 'interactions':
+            return [{'id': 'page:root', 'label': '← 返回'}] + [
+                {'id': 'interact:' + kind, 'label': label} for kind, label in
+                [('pat', '摸摸头 ♡'), ('wave', '打个招呼'), ('nod', '点点头'), ('cheer', '一起加油 ✨')]
+            ]
         if page == "config":
             return paginate([
                 {"id": "page:root", "label": "← 返回"},
@@ -1523,7 +1529,7 @@ class _NativeApi:
             now_motion = _clip(os.path.basename(self._motions[self._motion_index])[:-4], 12)
         items = [
             {"id": "chat", "label": "打开聊天窗口"},
-            {"id": "plan", "label": "她的小计划 · 小窝纪念架"},
+            {"id": "page:interactions", "label": "陪她玩一会儿 ▸"},
             {"id": "fantasy", "label": "奇幻冒险 · 折月诸境"},
             {"id": "page:motions", "label": f"动作 ▸（{now_motion}）"},
         ]
@@ -1725,6 +1731,12 @@ class _NativeApi:
         _log(f"pet cmd {kind} {json.dumps(payload, ensure_ascii=False)[:120]}"
              + (f" ua={ua[:48]}" if ua else ""))
         # A controller action is not evidence of direct user interaction.
+        if kind == 'interact':
+            name = str(payload.get('name') or '')
+            if name not in ('pat', 'wave', 'nod', 'cheer'):
+                return {'ok': False, 'error': '未知互动'}
+            self._pending = {'kind': 'interact', 'name': name}
+            return {'ok': True, 'name': name}
         if kind == "dance":
             want = str(payload.get("name") or "").strip()
             idx = self._find_motion(want)
@@ -1803,7 +1815,7 @@ class _NativeApi:
         self._proactive = mode != "quiet"
         _save_settings(talk_mode=mode)
 
-    def open_chat(self, reply: str = "", plan: bool = False, fantasy: bool = False) -> None:
+    def open_chat(self, reply: str = "", fantasy: bool = False) -> None:
         """从桌宠菜单唤起主 App 聊天窗；启动服务可能耗时，不能阻塞鼠标钩子。"""
         if self._chat_opening:
             return
@@ -1820,10 +1832,10 @@ class _NativeApi:
                     if self._fantasy_chat is None:
                         self._fantasy_chat = WebChat(quick=True, fantasy=True)
                     opened = self._fantasy_chat.show()
-                elif reply or plan:
+                elif reply:
                     if self._quick_chat is None:
                         self._quick_chat = WebChat(quick=True)
-                    opened = self._quick_chat.open_plan() if plan else self._quick_chat.open_reply(reply)
+                    opened = self._quick_chat.open_reply(reply)
                 else:
                     if self._chat is None:
                         self._chat = WebChat()
@@ -2463,47 +2475,15 @@ def _desktop_watch(api: "_NativeApi") -> None:
         api._pet_state.tick()
 
 
-def _plan_loop(api) -> None:
-    """小计划独立于模型配置；进度落库，合适时才报一句，不补发离线通知。"""
-    from nyalume.core import small_plans, fantasy
-    from .keepsakes import Keepsakes
-
-    exported = 0
+def _archive_loop() -> None:
+    """保留奇幻手记导出失败后的重试，不再推进固定小计划。"""
+    from nyalume.core import fantasy
     while True:
         time.sleep(30)
         try:
-            try:
-                fantasy.export_pending()
-            except OSError as exc:
-                _log(f"奇幻手记等待重试：{exc}")
-            plan = small_plans.tick()
-            desk = api._desk
-            if (plan["paused"] or api._talk_mode == "quiet" or api._pending or api._chat_opening or api._menu_rects
-                    or desk.get("quiet") or desk.get("fullscreen") or desk.get("busy")
-                    or desk.get("category") == "会议" or desk.get("idle_sec", 0) > 900
-                    or time.time() - api._pet_state.snapshot().get("last_interaction", 0) < 30):
-                continue
-            if any(chat and chat._visible and chat._alive() for chat in (api._quick_chat, api._fantasy_chat)):
-                continue
-            if api._notes_enabled:
-                # 用户已开始下一轮也不丢上次的纪念；重启后用排他创建保护已有文件。
-                for finished in small_plans.completed_after(exported):
-                    try:
-                        Keepsakes().write_plan(finished)
-                        exported = finished["id"]
-                    except OSError as e:
-                        _log(f"成长纪念保存失败：{e}")
-                        break
-            notice = small_plans.claim_notice(plan, commit=False)
-            if notice:
-                from nyalume.core import companionship
-                did = companionship.prepare_delivery({"text": notice}, plan=plan)
-                api._pending = {"kind": "say", "text": notice, "delivery_id": did}
-                proposer = getattr(api, "_proposer", None)
-                if proposer:
-                    proposer.next_allowed_at = max(proposer.next_allowed_at, time.time() + 60)
-        except Exception as e:
-            _log(f"小计划暂时不可用：{e}")
+            fantasy.export_pending()
+        except OSError as exc:
+            _log(f"奇幻手记等待重试：{exc}")
 
 
 def _stdin_commands(win, vmd_root: str, api=None) -> None:
@@ -2954,7 +2934,7 @@ def main() -> int:
     threading.Thread(target=_state_loop, args=(api,), daemon=True).start()
     threading.Thread(target=_fps_watch, args=(api,), daemon=True).start()
     threading.Thread(target=_desktop_watch, args=(api,), daemon=True).start()
-    threading.Thread(target=_plan_loop, args=(api,), daemon=True).start()
+    threading.Thread(target=_archive_loop, daemon=True).start()
     # 主动搭话读取聊天设置写入的同一份 .env（独立 3D 进程需自行加载）。
     try:
         from nyalume.core import llm as _llm_config  # noqa: F401

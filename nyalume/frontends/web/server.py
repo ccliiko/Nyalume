@@ -16,11 +16,13 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from nyalume.core import companionship, daily_nyalume, focus, memory, personas, reminders, skills, tracing, small_plans, fantasy
+from nyalume import __version__
+
+from nyalume.core import companionship, daily_nyalume, focus, memory, personas, pursuit, skills, tracing, fantasy
 from nyalume.core.agent import run_stream
 from nyalume.core.vision import describe_image as _vd
 from nyalume.core.vision import vision_configured
@@ -83,7 +85,7 @@ async def lifespan(_: FastAPI):
     print('[world] stopped')
 
 
-app = FastAPI(title="Nyalume", lifespan=lifespan)
+app = FastAPI(title="Nyalume", version=__version__, lifespan=lifespan)
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -203,7 +205,7 @@ def daily_nyalume_portrait(profile_key: str):
         raise HTTPException(status_code=404, detail="没有这个今日 Nyalume")
     card = os.path.join(STATIC_DIR, "daily_nyalume", f"{profile_key}.png")
     if os.path.isfile(card):
-        return FileResponse(card, media_type="image/png")
+        return FileResponse(card, media_type="image/png", headers={"Cache-Control": "no-cache"})
     pet = get_pet(load_config().get("pet") or "nyalume")
     group, index = profile["portrait"]
     paths = frame_paths(pet, group)
@@ -591,9 +593,6 @@ class PersonaIn(BaseModel):
     persona: str
 
 
-class ReminderIn(BaseModel):
-    content: str
-    cron: str
 
 
 class WallpaperIn(BaseModel):
@@ -661,6 +660,7 @@ _APPROVAL_LOCK = threading.Lock()
 _RUNS_LOCK = threading.Lock()
 _SESSION_RUN_LOCKS: dict[str, threading.Lock] = {}
 _RUN_CANCEL_EVENTS: dict[str, threading.Event] = {}
+_CANCELLED_REQUESTS: dict[str, float] = {}
 _WALLPAPER_CONFIG_LOCK = threading.RLock()
 
 
@@ -690,12 +690,24 @@ def _wait_approval(
 
 
 @app.post("/api/runs/{request_id}/cancel")
-def cancel_run(request_id: str):
+def cancel_run(request_id: str, wait: bool = False):
     """Cooperatively stop the active model stream and cancellable tools."""
     with _RUNS_LOCK:
         cancel_event = _RUN_CANCEL_EVENTS.get(request_id)
+        _CANCELLED_REQUESTS[request_id] = time.monotonic() + 60
+        for key, expiry in list(_CANCELLED_REQUESTS.items()):
+            if expiry < time.monotonic():
+                _CANCELLED_REQUESTS.pop(key, None)
     if cancel_event is not None:
         cancel_event.set()
+    if wait and cancel_event is not None:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            with _RUNS_LOCK:
+                if request_id not in _RUN_CANCEL_EVENTS:
+                    return {"ok": True, "active": False}
+            time.sleep(0.05)
+        raise HTTPException(status_code=409, detail="上一轮仍在停止中，请稍后确认编辑")
     return {"ok": True, "active": cancel_event is not None}
 
 
@@ -1026,7 +1038,13 @@ def _log_doc_event(session_id: str, subject: str, result: str) -> None:
 
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+    with open(os.path.join(STATIC_DIR, 'index.html'), encoding='utf-8') as entry:
+        html = entry.read()
+    for name in ('companion.css', 'companion.js'):
+        version = os.stat(os.path.join(STATIC_DIR, name)).st_mtime_ns
+        path = '/static/' + name
+        html = re.sub(re.escape(path) + r'(?:\?[^"]*)?(?=")', path + '?v=' + str(version), html)
+    return HTMLResponse(html, headers={'Cache-Control': 'no-cache'})
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -1215,8 +1233,18 @@ def branch_session(session_id: str, body: BranchIn):
 
 @app.delete("/api/sessions/{session_id}/messages")
 def delete_messages_after(session_id: str, message_id: int):
-    """编辑重发：删除该消息之后的历史（磁盘文件不动）。"""
-    memory.delete_messages_after(session_id, message_id)
+    """编辑重发：删除这条提问及其后续历史（磁盘文件不动）。"""
+    lock = _session_run_lock(session_id)
+    if not lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="请等待上一轮停止后再编辑")
+    try:
+        with memory._conn() as conn:
+            row = conn.execute("SELECT id FROM messages WHERE session_id=? AND role='user' ORDER BY id DESC LIMIT 1", (session_id,)).fetchone()
+        if not row or row["id"] != message_id:
+            raise HTTPException(status_code=400, detail="只能编辑最近一次对话")
+        memory.delete_messages_after(session_id, message_id, include_self=True)
+    finally:
+        lock.release()
     return {"ok": True}
 
 
@@ -1317,12 +1345,16 @@ def _chat_response(body, runner, *, working=True):
             run_lock.release()
             raise HTTPException(status_code=409, detail="请求编号已经在使用，请重新发送")
         _RUN_CANCEL_EVENTS[run_request_id] = cancel_event
+        if _CANCELLED_REQUESTS.pop(run_request_id, 0) > time.monotonic():
+            cancel_event.set()
 
     def event_stream():
         gen = None
         if working:
             _change_activity(1)
         try:
+            if cancel_event.is_set():
+                return
             gen = runner(body.session_id, body.message, cancel_event=cancel_event)
             while True:
                 try:
@@ -1355,9 +1387,9 @@ def _chat_response(body, runner, *, working=True):
                 pass
             if working:
                 _change_activity(-1)
+            run_lock.release()
             with _RUNS_LOCK:
                 _RUN_CANCEL_EVENTS.pop(run_request_id, None)
-            run_lock.release()
 
     return StreamingResponse(
         event_stream(),
@@ -1366,39 +1398,92 @@ def _chat_response(body, runner, *, working=True):
     )
 
 
-@app.get("/api/reminders")
-def list_reminders():
-    """列出全部定时提醒。"""
-    return reminders.list_reminders()
+# ---------- 持续追求的目标 ----------
+
+class PursuitStartIn(BaseModel):
+    goal: str
+    session_id: str = "web-default"
 
 
-@app.post("/api/reminders")
-def create_reminder(body: ReminderIn):
-    """创建定时提醒（cron 5 段表达式）。"""
-    try:
-        rid = reminders.add_reminder(body.content, body.cron)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return {"ok": True, "id": rid}
+@app.post("/api/pursuit/start")
+def start_pursuit(body: PursuitStartIn):
+    if permission_mode() == "daily":
+        raise HTTPException(status_code=400, detail="目标模式需要工作权限，请先切回工作模式")
+    goal = body.goal.strip()
+    if not goal or len(goal) > 500:
+        raise HTTPException(status_code=400, detail="目标需要 1-500 字")
+    active = pursuit.get_active_pursuit()
+    if active and active["status"] in ("planning", "running"):
+        raise HTTPException(status_code=409, detail="已有一个追求中的目标，请先停止或等待完成")
+    p = pursuit.create_pursuit(goal, body.session_id)
+    return {"ok": True, "pursuit": p}
 
 
-@app.delete("/api/reminders/{reminder_id}")
-def cancel_reminder(reminder_id: int):
-    ok = reminders.delete_reminder(reminder_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"没有提醒 #{reminder_id}")
-    return {"ok": True}
+@app.get("/api/pursuit/active")
+def get_active_pursuit():
+    p = pursuit.get_active_pursuit()
+    if not p:
+        return {"active": False}
+    return {"active": True, "pursuit": p}
 
 
-@app.get("/api/reminders/due")
-def due_reminders():
-    """前端轮询：只读返回到期提醒；触发权（落库/删一次性）归桌宠调度器。"""
-    return reminders.check_due(claim=False)
+@app.get("/api/pursuit/{pursuit_id}")
+def get_pursuit_detail(pursuit_id: str):
+    p = pursuit.get_pursuit(pursuit_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="目标不存在")
+    return p
+
+
+@app.post("/api/pursuit/{pursuit_id}/stop")
+def stop_pursuit(pursuit_id: str):
+    cancel_pursuit_run(pursuit_id)
+    p = pursuit.stop_pursuit(pursuit_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="目标不存在")
+    return {"ok": True, "pursuit": p}
+
+
+@app.post("/api/pursuit/{pursuit_id}/run")
+def run_pursuit_stream(pursuit_id: str):
+    """SSE 流式运行追求目标的自主循环。"""
+    p = pursuit.get_pursuit(pursuit_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="目标不存在")
+    if p["status"] not in ("planning", "paused"):
+        raise HTTPException(status_code=409, detail=f"目标状态 {p['status']}，无法启动")
+
+    if permission_mode() == "daily":
+        raise HTTPException(status_code=400, detail="目标模式需要工作权限")
+    session_id = p.get("session_id") or "web-default"
+    def runner(sid, message, cancel_event=None):
+        yield from pursuit.run_pursuit(pursuit_id, sid, cancel_event=cancel_event)
+    return _chat_response(ChatIn(session_id=session_id, message=p["goal"],
+                                 request_id="pursuit-" + pursuit_id), runner)
+
+
+@app.post("/api/pursuit/{pursuit_id}/cancel")
+def cancel_pursuit_run(pursuit_id: str):
+    """取消正在运行的追求。"""
+    with _RUNS_LOCK:
+        cancel_event = _RUN_CANCEL_EVENTS.get("pursuit-" + pursuit_id)
+    if cancel_event:
+        cancel_event.set()
+    return {"ok": True, "active": cancel_event is not None}
+
+
+
+
+
+
+
+
+
 
 
 @app.get("/api/state")
 def agent_state(session_id: str = "web-default"):
-    """记忆/状态仪表盘数据：会话滚动摘要 + 最近便签 + 定时提醒。"""
+    """记忆面板数据：用户记忆、对话摘要、便签和资料。"""
     mode = "daily" if session_id == memory.DAILY_SESSION_ID else permission_mode()
     return {
         "shared_memories": memory.companion_memories(daily=mode == "daily"),
@@ -1407,7 +1492,6 @@ def agent_state(session_id: str = "web-default"):
         "summary": memory.get_summary(session_id),
         "notes": memory.get_recent_notes(8, session_id),
         "docs": memory.doc_list(session_id),
-        "reminders": reminders.list_reminders(),
         "persona": personas.resolve_persona_id(),
         "persona_name": personas.current_persona_name(),
         "mode": mode,
@@ -1439,57 +1523,26 @@ def companion_entries(before: int = 0):
     return companionship.entries(max(0, before))
 
 
-class PetPlanIn(BaseModel):
-    id: int
-    choice: str | None = None
-    paused: bool | None = None
-    kind: str | None = None
-    accompany: bool | None = None
-    liked: bool | None = None
 
 
-class PetPlanStartIn(BaseModel):
-    kind: str | None = None
 
 
-@app.get("/api/pet/plan")
-def pet_plan():
-    return small_plans.current()
 
 
-@app.post("/api/pet/plan/start")
-def start_pet_plan(body: PetPlanStartIn | None = None):
-    try:
-        return small_plans.tick(restart=True, kind=body.kind if body else None)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
-@app.get("/api/pet/plan/themes")
-def pet_plan_themes():
-    return small_plans.catalog()
 
 
-@app.get("/api/pet/plan/collection")
-def pet_plan_collection(before: int = 0):
-    return small_plans.collection(max(0, before))
 
 
-@app.get("/api/pet/plan/portrait")
-def pet_plan_portrait():
+@app.get("/api/pet/portrait")
+def pet_portrait():
     path = nyalume_portrait()
     if not path:
         raise HTTPException(status_code=404, detail="Nyalume 的 2D 形象文件暂时不在这里")
     return FileResponse(path)
 
 
-@app.patch("/api/pet/plan")
-def update_pet_plan(body: PetPlanIn):
-    try:
-        return small_plans.update(body.id, choice=body.choice, paused=body.paused,
-                                 kind=body.kind, accompany=body.accompany, liked=body.liked)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @app.post("/api/companion/promises")
@@ -1538,7 +1591,10 @@ def create_backup(body: BackupIn):
 @app.post("/api/backups/restore")
 def restore_backup(body: BackupIn):
     try:
-        path = memory.restore_backup(body.name)
+        with _RUNS_LOCK:
+            if _RUN_CANCEL_EVENTS:
+                raise HTTPException(409, '请先停止正在进行的回复，再恢复备份')
+            path = memory.restore_backup(body.name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True, "path": path}
@@ -1740,6 +1796,21 @@ def delete_note(note_id: int, session_id: str = ""):
     return {"ok": True}
 
 
+class NoteEdit(BaseModel):
+    content: str
+
+
+@app.patch('/api/notes/{note_id}')
+def edit_note(note_id: int, body: NoteEdit, session_id: str = ''):
+    try:
+        ok = memory.note_edit(note_id, body.content, session_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if not ok:
+        raise HTTPException(404, '便签不存在')
+    return {'ok': True}
+
+
 @app.get("/api/wallpaper/settings")
 def get_wallpaper_settings():
     """聊天窗壁纸设置（关窗后保留，由服务端持久化）。"""
@@ -1881,12 +1952,28 @@ def companion_daily_session():
 class CompanionMemoryEdit(BaseModel):
     content: str | None = None
     proactive: bool | None = None
+    category: str | None = None
+    title: str | None = None
+    summary: str | None = None
+    keywords: list[str] | None = None
+    scope: str | None = None
+
+
+@app.post('/api/companionship/memories')
+def create_companion_memory(body: CompanionMemoryEdit):
+    try:
+        mid = memory.create_companion_memory(body.content or '', category=body.category or 'user',
+            title=body.title or '', summary=body.summary or '', keywords=body.keywords,
+            scope=body.scope or 'shared', proactive=bool(body.proactive))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {'ok': True, 'id': mid}
 
 
 @app.patch('/api/companionship/memories/{mid}')
 def edit_companion_memory(mid: str, body: CompanionMemoryEdit):
     try:
-        ok = memory.update_companion_memory(mid, content=body.content, proactive=body.proactive)
+        ok = memory.update_companion_memory(mid, **body.model_dump(exclude_none=True))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     if not ok:

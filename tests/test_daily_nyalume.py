@@ -1,6 +1,8 @@
 """今日 Nyalume：分档、每日唯一、记录和风格注入。"""
 
 from pathlib import Path
+import hashlib
+import json
 
 from nyalume.core import daily_nyalume, memory
 from nyalume.frontends.pet import interactions
@@ -43,10 +45,28 @@ def test_all_profiles_use_collectible_card_art_and_non_gold_finishes():
         response = server.daily_nyalume_portrait(profile["key"])
         assert Path(response.path).name == f"{profile['key']}.png"
         assert Path(response.path).is_file()
+        assert response.headers["cache-control"] == "no-cache"
         finishes.append(profile["finish"])
 
     assert len(set(finishes)) == len(daily_nyalume.PROFILES)
     assert not {"gold", "golden", "metallic-gold"}.intersection(finishes)
+    assert server.index().headers["cache-control"] == "no-cache"
+
+
+def test_new_card_collection_preserves_all_eleven_registered_layers():
+    root = Path(__file__).resolve().parents[1]
+    source = root / "designs/daily-nyalume-trio"
+    deployed = root / "nyalume/frontends/web/static/daily_nyalume"
+    catalog = json.loads((deployed / "catalog.js").read_text(encoding="utf-8").split(" = ", 1)[1].rstrip(";\n"))
+    assert set(catalog) == {p["key"] for p in daily_nyalume.PROFILES}
+    assert len({card["egg"] for card in catalog.values()}) == 11
+    for card in json.loads((source / "collection-manifest.json").read_text(encoding="utf-8")):
+        for original, installed in [
+            (source / card["front"], deployed / f"{card['profile']}.png"),
+            *((source / card["layers"] / f"{layer}.png", deployed / card["profile"] / f"{layer}.png")
+              for layer in ("background", "subject", "text", "lineart")),
+        ]:
+            assert hashlib.sha256(original.read_bytes()).digest() == hashlib.sha256(installed.read_bytes()).digest()
 
 
 def test_draw_once_records_and_injects_style(monkeypatch, tmp_path):

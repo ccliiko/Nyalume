@@ -43,7 +43,6 @@ from .memory import (
 )
 from .vision import describe_image as _vision_describe
 from .vision import vision_configured
-from .reminders import add_reminder, delete_reminder, list_reminders
 from . import skills as skill_manager
 from . import companionship
 
@@ -207,7 +206,7 @@ def execute_tool(name: str, arguments: dict) -> str:
     spec = _REGISTRY.get(name)
     if not spec:
         return f"未知工具：{name}（可用工具：{', '.join(_REGISTRY)}）"
-    if permission_mode() == "daily" and name != "pet_plan":
+    if permission_mode() == "daily":
         return "当前是日常模式：只进行聊天，不会调用工具；切回工作模式后可执行。"
     missing = [
         key for key in spec["required"] if arguments.get(key) in (None, "")
@@ -312,34 +311,6 @@ def _pet_check_motions() -> str:
     return json.dumps(pet_check_motions(), ensure_ascii=False)
 
 
-@register("pet_plan", "查看或更新小窝里的虚拟小计划。用户明确说选某种植物/颜色、陪伴、喜欢、暂停/恢复时执行；"
-          "start 用于用户同意开始一个新计划。不得代替用户选择、把备选项当成已选，或跳过成长阶段。"
-          "更新已有计划必须提供其 id；先读当前进度，失败时按错误解释。日常模式也可用。", {
-    "action": {"type": "string", "enum": ["status", "start", "choose", "accompany", "like", "unlike", "pause", "resume"]},
-    "plan_id": {"type": "integer", "description": "当前计划 id，更新时必填"},
-    "choice": {"type": "string", "description": "当前计划列出的植物或颜色，完整名称"},
-    "kind": {"type": "string", "enum": ["garden", "boat", "stars"], "description": "新计划主题；不填则她自己选"},
-}, required=["action"])
-def _pet_plan(action: str, plan_id: int = 0, choice: str = "", kind: str | None = None) -> str:
-    from . import small_plans
-    try:
-        if action == "status":
-            return json.dumps({"plan": small_plans.current(), "themes": small_plans.catalog()}, ensure_ascii=False)
-        if action == "start":
-            current = small_plans.current()
-            if current and current["stage"] < 3:
-                return "已有小计划正在进行，请先查看它；不能用新计划覆盖进度。"
-            plan = small_plans.tick(restart=True, kind=kind)
-        else:
-            fields = {"choose": {"choice": choice}, "accompany": {"accompany": True},
-                      "like": {"liked": True}, "unlike": {"liked": False},
-                      "pause": {"paused": True}, "resume": {"paused": False}}
-            if action not in fields or not plan_id:
-                return "请提供有效操作和当前计划 id。"
-            plan = small_plans.update(plan_id, **fields[action])
-        return json.dumps({"ok": True, "plan": plan}, ensure_ascii=False)
-    except ValueError as error:
-        return str(error)
 
 
 @register("companion_journal", "查看共同经历，或在用户想一起做某件事时提出一条小约定。"
@@ -1080,7 +1051,6 @@ def describe_tool(name: str, arguments: dict) -> str:
     args = arguments or {}
     simple = {
         "pet_status": "查看桌宠状态",
-        "pet_plan": "查看或更新她的小计划",
         "pet_check_motions": "检查桌宠动作兼容性",
         "companion_journal": "查看共同经历" if args.get("action") == "list" else "提出一个小约定",
         "pet_perform": f"桌宠动作：{args.get('action')} {args.get('value') or ''}",
@@ -1116,9 +1086,6 @@ def describe_tool(name: str, arguments: dict) -> str:
         "search_memory": f"检索记忆「{args.get('query')}」",
         "save_note": f"记便签：{args.get('content')}",
         "delete_note": f"删便签：{args.get('content')}",
-        "create_reminder": f"设定时提醒：{args.get('content')}",
-        "remind_me_in": f"设一次性提醒：{args.get('content')}",
-        "cancel_reminder": f"取消提醒 #{args.get('reminder_id')}",
     }
     return simple.get(name) or f"{name}{args}"
 
@@ -2809,103 +2776,15 @@ def _web_search(query: str, max_results: int = 5) -> str:
     return "\n".join(lines)
 
 
-# ---------- 工具 6~8：定时主动提醒（cron） ----------
 
 
-@register(
-    "create_reminder",
-    "创建一条定时主动提醒。cron 用标准 5 段表达式：分 时 日 月 周"
-    "（周：0/7=周日，1-6=周一到周六）。"
-    "常见写法：'0 9 * * *'=每天 9 点；'*/30 * * * *'=每 30 分钟；"
-    "'0 9 * * 1-5'=工作日 9 点。"
-    "用户说“提醒我/定时/每天 X 点/每隔 X 分钟”时，把自然语言翻译成 cron"
-    "后调用本工具，并在回复中告诉用户已设好、到点会主动提醒。",
-    {
-        "content": {
-            "type": "string",
-            "description": "提醒内容，例如 喝水 / 恢复 408 复习",
-        },
-        "cron": {
-            "type": "string",
-            "description": "5 段 cron 表达式，例如 0 9 * * *",
-        },
-    },
-    required=["content", "cron"],
-)
-def _create_reminder(content: str, cron: str) -> str:
-    try:
-        rid = add_reminder(content, cron, one_shot=False)
-    except ValueError as e:
-        return f"创建提醒失败：{e}"
-    return f"已设置定时提醒（#{rid}）：{content}，cron={cron}。到点 agent 会自己动，不用你再喊我。"
 
 
-@register(
-    "remind_me_in",
-    "创建一条“一次性、多少分钟/小时后提醒我”的主动提醒（例如：1 分钟后提醒我喝水）。"
-    "按分钟精度到点触发一次即结束，不是周期提醒。"
-    "只有用户明确说“每隔/每 X 分钟/每天”等周期需求时才用 create_reminder 的 */n cron，"
-    "绝不能把一次性提醒写成 */1 * * * *（那会变成每分钟都提醒）。",
-    {
-        "content": {
-            "type": "string",
-            "description": "提醒内容，例如 喝水 / 该休息了",
-        },
-        "minutes": {
-            "type": "integer",
-            "description": "多少分钟后提醒（正整数；1 小时=60）",
-        },
-    },
-    required=["content", "minutes"],
-)
-def _remind_me_in(content: str, minutes: int) -> str:
-    import datetime
-
-    try:
-        minutes = int(minutes)
-        if minutes < 1 or minutes > 60 * 24 * 30:
-            raise ValueError("分钟数需在 1 ~ 43200 之间")
-        target = datetime.datetime.now() + datetime.timedelta(minutes=minutes)
-        if target.second > 0 or target.microsecond > 0:
-            target = target.replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
-        cron = f"{target.minute} {target.hour} * * *"
-        rid = add_reminder(content, cron, one_shot=True)
-    except ValueError as e:
-        return f"创建提醒失败：{e}"
-    return (
-        f"已设好一次性提醒（#{rid}）：{minutes} 分钟后提醒「{content}」"
-        f"（约 {target.strftime('%H:%M')} 触发）。到点 agent 会自己动。"
-    )
 
 
-@register(
-    "list_reminders",
-    "查看当前所有定时主动提醒。",
-    {},
-)
-def _list_reminders() -> str:
-    rows = list_reminders()
-    if not rows:
-        return "还没有定时提醒"
-    return "\n".join(
-        f"- #{r['id']} {r['content']}（cron: {r['cron']}）" for r in rows
-    )
 
 
-@register(
-    "cancel_reminder",
-    "取消一条定时提醒（按 id）。",
-    {
-        "reminder_id": {
-            "type": "integer",
-            "description": "提醒的 id，可用 list_reminders 查看",
-        }
-    },
-    required=["reminder_id"],
-)
-def _cancel_reminder(reminder_id: int) -> str:
-    ok = delete_reminder(int(reminder_id))
-    return f"已取消提醒 #{reminder_id}" if ok else f"没有找到提醒 #{reminder_id}"
+
 
 
 # ---------- 本地 Skill 管理 ----------

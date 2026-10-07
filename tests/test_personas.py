@@ -27,7 +27,20 @@ def test_personas_have_no_relationship_state():
     assert set(personas.get_persona("assistant")) == expected
 
 
-def test_worldview_is_injected_only_for_character():
-    assert personas.WORLD_VIEW_PROMPT in personas.persona_base_prompt("nyalume")
-    assert personas.WORLD_VIEW_PROMPT not in personas.persona_base_prompt("assistant")
-    assert "不编造往事" in personas.persona_base_prompt("nyalume")
+def test_prompts_use_the_current_character_text_without_deleted_worldview():
+    assert personas.persona_base_prompt('nyalume') == personas.NYALUME_SYSTEM_PROMPT
+    assert personas.persona_base_prompt('assistant') == personas.ASSISTANT_SYSTEM_PROMPT
+    assert personas.persona_base_prompt('unknown') == personas.NYALUME_SYSTEM_PROMPT
+
+
+def test_invalid_config_and_environment_fall_back_to_a_valid_persona(tmp_path, monkeypatch):
+    config = tmp_path / 'persona.json'
+    monkeypatch.setattr(personas, 'CONFIG_PATH', str(config))
+    monkeypatch.setenv('PERSONA', 'unknown')
+    for contents in ['[]', 'null', '42', '{invalid', '{"persona":"unknown"}']:
+        config.write_text(contents, encoding='utf-8')
+        assert personas.resolve_persona_id() == personas.DEFAULT_PERSONA
+    monkeypatch.setenv('PERSONA', 'assistant')
+    assert personas.resolve_persona_id() == 'assistant'
+    assert personas.set_persona('nyalume')
+    assert personas.resolve_persona_id() == 'nyalume'

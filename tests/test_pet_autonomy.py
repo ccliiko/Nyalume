@@ -120,7 +120,9 @@ def test_reply_button_hitbox_and_history(tmp_path, monkeypatch):
     assert chat.open_reply("今天想学会折纸船")
     sid = chat._sid
     assert memory.load_history(sid) == [{"role": "assistant", "content": "今天想学会折纸船"}]
-    assert parse_qs(urlparse(chat._window_url()).query) == {"quick": ["1"], "session": [sid]}
+    query = parse_qs(urlparse(chat._window_url()).query)
+    assert query["quick"] == ["1"] and query["session"] == [sid]
+    assert query["ui"][0].isdigit()
     assert sent[-1].startswith("navigate http://127.0.0.1:")
     assert chat.open_reply("今天想学会折纸船") and chat._sid == sid
     assert memory.message_count(sid) == 1

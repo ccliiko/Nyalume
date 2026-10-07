@@ -91,6 +91,9 @@ def test_home_drafts_commands_and_mobile(chat_page, tmp_path):
     page, errors, _ = chat_page
     page.locator("#input").fill("还没有说完的想法")
     page.evaluate("switchTo('empty')")
+    expect(page.locator("#home-panel")).not_to_be_visible()
+    expect(page.locator("#input")).to_have_value("")
+    page.locator("#home-nav").click()
     expect(page.locator("#home-panel")).to_be_visible()
     page.locator("[data-prompt]").first.click()
     assert "五分钟" in page.locator("#input").input_value()
@@ -203,7 +206,7 @@ def test_focus_error_retry_and_quick_chat(chat_page):
 
 def test_home_portrait_missing_keeps_character_fallback(chat_page):
     page, errors, _ = chat_page
-    page.route('**/api/pet/plan/portrait', lambda route: route.fulfill(status=404, body='missing portrait'))
+    page.route('**/api/pet/portrait', lambda route: route.fulfill(status=404, body='missing portrait'))
     page.goto('http://nyalume.test/?home=1')
     expect(page.locator('#home-panel')).to_be_visible()
     expect(page.locator('#home-portrait')).not_to_be_visible()

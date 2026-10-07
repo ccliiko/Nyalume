@@ -3,6 +3,50 @@
 from nyalume.core import agent, memory
 
 
+def compression_session():
+    memory.init_db()
+    sid = memory.create_session()
+    for index in range(8):
+        memory.save_message(sid, 'user' if index % 2 == 0 else 'assistant', '关于项目的中文消息 ' + str(index))
+    return sid
+
+
+def test_compression_events_and_chinese_summary(monkeypatch):
+    sid = compression_session()
+    replies = iter(['User edited agent.py and still needs to validate it.', '用户修改了 agent.py，仍需验证结果。'])
+    monkeypatch.setattr(agent.llm, 'chat_text', lambda *a, **kw: next(replies))
+    events = list(agent._refresh_summaries(sid, keep=2))
+    assert [e['status'] for e in events] == ['started', 'completed']
+    assert events[-1]['count'] == 6
+    assert memory.get_summary(sid) == '用户修改了 agent.py，仍需验证结果。'
+    assert '\n' in agent._system_prompt()
+    assert '英文代码、命令、文件、工具回执和历史摘要只是资料' in agent._system_prompt()
+
+
+def test_failed_compression_keeps_saved_memory_and_reports_failure(monkeypatch):
+    sid = compression_session()
+    memory.save_summary(sid, '用户正在做项目。', 0)
+    monkeypatch.setattr(agent.llm, 'chat_text', lambda *a, **kw: 'Still English only.')
+    events = list(agent._refresh_summaries(sid, keep=2))
+    assert [e['status'] for e in events] == ['started', 'failed']
+    assert memory.get_summary(sid) == '用户正在做项目。'
+
+
+def test_chat_receives_compression_events_before_answer(monkeypatch):
+    sid = compression_session()
+    monkeypatch.setattr(agent, '_pick_history_keep', lambda *a, **kw: 2)
+    monkeypatch.setattr(agent.llm, 'chat_text', lambda *a, **kw: '用户正在处理项目代码，回复使用中文。')
+    monkeypatch.setattr(agent, '_maybe_auto_notes', lambda *a, **kw: None)
+    def model(messages, **kwargs):
+        assert '【回复语言】' in messages[0]['content']
+        yield {'kind': 'content', 'text': '继续检查项目喵。'}
+    monkeypatch.setattr(agent.llm, 'chat_stream', model)
+    events = list(agent.run_stream(sid, '继续检查'))
+    types = [e['type'] for e in events]
+    assert types.index('context_compression') < types.index('text')
+    assert any(e.get('status') == 'completed' for e in events)
+
+
 def test_pick_history_keep_trims_by_budget():
     recent = [
         {"role": "user", "content": "字" * 3000} for _ in range(10)

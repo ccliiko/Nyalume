@@ -4,6 +4,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
+.env.web
+.env.web.*
+!.env.web.example
+/web-backups/
 cloud_service/.env
 agent.db
 *.db

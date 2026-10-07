@@ -95,7 +95,6 @@ class WebChat:
         self.quick = quick
         self.fantasy = fantasy
         self._reply_text = ""
-        self._plan_view = False
         self._proc = None
         self._visible = False
         from nyalume.core import memory
@@ -137,8 +136,11 @@ class WebChat:
         if self.fantasy:
             return url + "/fantasy?quick=1"
         params = {"quick": "1"} if self.quick else {}
-        if self._plan_view:
-            params["plan"] = "1"
+        # WebView2 persists cached UI across restarts; page, script or style
+        # changes all need a fresh window URL.
+        entry = os.path.join(_REPO_ROOT, "nyalume", "frontends", "web", "static", "index.html")
+        assets = [entry] + [os.path.join(os.path.dirname(entry), name) for name in ('companion.js', 'companion.css')]
+        params["ui"] = str(max(os.stat(path).st_mtime_ns for path in assets if os.path.isfile(path)))
         if self._sid:
             params["session"] = self._sid
         return url + ("?" + urlencode(params) if params else "")
@@ -151,13 +153,9 @@ class WebChat:
         if chapter:
             self.fantasy = True
         revision = chapter['revision'] if chapter else 0
-        was_plan = self._plan_view
-        self._plan_view = False
         if text == self._reply_text and self._sid and getattr(self, '_reply_revision', 0) == revision:
             if not self.show():
                 return False
-            if was_plan and not self._fresh:
-                self._send("navigate " + self._window_url())
             return True
         self._sid = fantasy.SESSION_ID if chapter else memory.daily_session()
         self._reply_text = text
@@ -176,13 +174,6 @@ class WebChat:
             self._send("navigate " + self._window_url())
         return True
 
-    def open_plan(self) -> bool:
-        self._plan_view = True
-        if not self.show():
-            return False
-        if not self._fresh:
-            self._send("navigate " + self._window_url())
-        return True
 
     def show(self) -> bool:
         if not self._alive():
@@ -273,8 +264,6 @@ class WebChat:
     def refresh_state(self) -> None:
         pass  # 状态仪表盘由网页自己渲染/轮询
 
-    def reminder(self, text: str) -> None:
-        pass  # 网页端每 15s 轮询 /api/reminders/due，无需这里推
 
     def close(self) -> None:
         if self._alive():

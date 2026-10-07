@@ -30,7 +30,10 @@ import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import { MMDAnimationHelper } from 'three/addons/animation/MMDAnimationHelper.js';
 
 const params = new URLSearchParams(location.search);
-const modelProfile = await fetch('/model_profile').then(response => {
+const webMode = params.get('web') === '1';
+const browserHost = webMode ? window.parent.__nyalumePetBoot : null;
+function petApi() { return webMode ? browserHost?.api : window.pywebview?.api; }
+const modelProfile = webMode ? (browserHost?.profile || {}) : await fetch('/model_profile').then(response => {
   if (!response.ok) throw new Error('模型配置读取失败');
   return response.json();
 });
@@ -51,12 +54,12 @@ for (const lv of ['warn', 'error']) {
   };
 }
 setTimeout(() => {
-  const api = window.pywebview && window.pywebview.api;
+  const api = petApi();
   if (api && api.motion_loaded) {
     api.motion_loaded('[console] ' + (_consoleLog.length ? _consoleLog.slice(0, 12).join(' | ') : '干净'));
   }
 }, 4000);
-const pmx = params.get('pmx');
+const pmx = webMode ? browserHost?.pmx : params.get('pmx');
 const scale = parseFloat(params.get('scale') || modelProfile.scale || '1') || 1;
 const yawOffset = THREE.MathUtils.degToRad(parseFloat(params.get('rz') || modelProfile.rotate || '0') || 0);
 const motionUrl = params.get('motion') || '';
@@ -82,7 +85,7 @@ let FPS = Math.min(240, Math.max(10, parseFloat(params.get('fps') || '60') || 60
 const renderer = new THREE.WebGLRenderer({
   alpha: true,
   antialias: true,
-  preserveDrawingBuffer: true, // 否则 toDataURL 抓到空帧
+  preserveDrawingBuffer: !webMode, // 否则 toDataURL 抓到空帧
 });
 renderer.setClearAlpha(0);
 const basePixelRatio = Math.min(window.devicePixelRatio, 2);
@@ -227,6 +230,13 @@ let idleTimer = null;
 // 缩放：只改"她那一块"画布的大小（窗口不动），并告诉 Python 新尺寸和锚点，
 // 由 Python 把这一块贴到屏幕的对应位置。
 function applyBox() {
+  if (webMode) {
+    renderer.setSize(innerWidth, innerHeight);
+    camera.aspect = innerWidth / Math.max(1, innerHeight);
+    camera.position.z = baseCamZ / viewZoomTgt;
+    camera.updateProjectionMatrix();
+    return;
+  }
   // 画布 = 她那一块（窗口是固定铺满屏幕的透明图层，不参与）
   const w = Math.max(120, Math.round(baseW * viewZoomTgt));
   const h = Math.max(120, Math.round(baseH * viewZoomTgt));
@@ -240,7 +250,7 @@ function scheduleResize() {
   clearTimeout(resizeTimer);
   applyBox();
   resizeTimer = setTimeout(() => {
-    const api = window.pywebview && window.pywebview.api;
+    const api = petApi();
     if (api && api.request_resize) {
       api.request_resize(
         Math.round(baseW * viewZoomTgt),
@@ -390,14 +400,19 @@ function reportTickError(err) {
   if (tickErrorReported) return;
   tickErrorReported = true;
   const text = String((err && err.stack) || err).slice(0, 220);
-  const api = window.pywebview && window.pywebview.api;
+  const api = petApi();
   if (api && api.motion_loaded) api.motion_loaded('[tick 出错] ' + text);
   else console.error(err);
 }
 
+let browserPaused = false;
+let disposed = false;
+window.__setPaused = (value) => { browserPaused = Boolean(value); };
 function tick() {
+  if (disposed) return;
   try {
-    tickFrame();
+    if (!webMode || (!browserPaused && !document.hidden)) tickFrame();
+    else clock.getDelta();
   } catch (err) {
     reportTickError(err);
   } finally {
@@ -412,6 +427,18 @@ function applyLookPose(delta) {
     const lookBlend = frameBlend(0.12, delta);
     lookX += ((lookingBack ? 0 : lookTx) - lookX) * lookBlend;
     lookY += ((lookingBack ? 0 : lookTy) - lookY) * lookBlend;
+    const gestureAge = clock.elapsedTime - gesture.start;
+    if (!mainAction && gestureAge >= 0 && gestureAge < 2.4 && gesture.kind) {
+      const envelope = Math.sin(Math.PI * gestureAge / 2.4);
+      if (gesture.kind === 'wave' && lookBones.arm) {
+        lookBones.arm.rotateZ(-.7 * envelope);
+        if (lookBones.elbow) lookBones.elbow.rotateX(.3 * Math.sin(gestureAge * 12) * envelope);
+      }
+      if (lookBones.head) {
+        if (gesture.kind === 'nod') lookBones.head.rotateX(.16 * Math.sin(gestureAge * 8) * envelope);
+        else lookBones.head.rotateZ(.12 * Math.sin(gestureAge * 4) * envelope);
+      }
+    }
     // helper 在动画之后保存干净骨骼，下一帧恢复，因此这里的附加旋转不累积。
     // 眼球和头/脖子用同一个符号就行（实测用 lookdiag 报"朝前向量"验证过：
     // 光标在左 → 头前向 x 和眼球前向 x 都是负的，两个都朝画面左）。
@@ -471,29 +498,14 @@ function tickFrame() {
     leanTgt *= frameDecay(0.85, delta);
     model.rotation.z = leanZ;
     applyMorphs(delta);
-    if (bubble.visible) {
-      const life = Math.max(0.01, bubbleUntil - bubbleStart);
-      const age = t - bubbleStart;
-      if (bubbleVel.lengthSq() > 0) {
-        // 符号：往头顶上方飘，同时淡出
-        bubble.position.set(
-          bubbleVel.x * BUBBLE_SPEED * age,
-          height * 0.52 + bubbleVel.y * BUBBLE_SPEED * age,
-          1.5,
-        );
-        bubble.material.opacity = Math.max(0, 1 - age / life);
-      } else {
-        bubble.position.set(0, height * 0.52, 1.5);
-      }
-      if (t > bubbleUntil) bubble.visible = false;
-    }
   }
+
   // 收尾：还剩 END_FADE 秒就和待机交叉淡出（不留定格、不重启动物理）。
   // 物理全程开着：reset() 会把刚体瞬移到骨骼当前位置，那正是"裙摆忽然掀起"的来源。
   if (helper && mainAction && mainClip && !settling &&
       mainAction.time >= mainClip.duration - END_FADE) {
     settling = true;
-    const api = window.pywebview && window.pywebview.api;
+    const api = petApi();
     if (api && api.motion_ended) api.motion_ended(mainClip.name || '');
     // 收尾也要先回静置：待机这支动作没写到的骨头（腿/腰/头）否则会留着舞里的
     // 最后一帧 —— 跳「女」（坐姿）收尾后就一直"跪着低头"。
@@ -521,9 +533,113 @@ function tickFrame() {
       }
     }
   }
+  updateBubblePosition();
+  updateTouchParticles();
   renderer.render(scene, camera);
   boxDirty = false; // 新尺寸已经画出来了，可以继续推帧
 }
+
+
+// Screen-space layout keeps the entire bubble outside the moving head rectangle.
+function bubbleLayout(fw, fh, head, width, heightPx) {
+  const gap = 8, edge = 6;
+  const centerX = Math.max(edge, Math.min(fw - edge, (head.left + head.right) / 2));
+  const centerY = Math.max(edge, Math.min(fh - edge, (head.top + head.bottom) / 2));
+  const candidates = [
+    {side: 'above', space: head.top - gap - edge, axis: 'y'},
+    {side: 'right', space: fw - head.right - gap - edge, axis: 'x'},
+    {side: 'left', space: head.left - gap - edge, axis: 'x'},
+    {side: 'below', space: fh - head.bottom - gap - edge, axis: 'y'},
+  ].map(item => ({...item, scale: Math.max(0, Math.min(1,
+    (fw - 2 * edge) / width, (fh - 2 * edge) / heightPx,
+    item.space / (item.axis === 'y' ? heightPx : width)))}));
+  // Prefer headroom unless the resulting text would be too small to read.
+  let best = candidates[0];
+  if (best.scale < 0.6) best = candidates.reduce((a, b) => b.scale > a.scale ? b : a);
+  const w = width * best.scale, h = heightPx * best.scale;
+  let x = centerX - w / 2, y = centerY - h / 2;
+  if (best.side === 'above') y = head.top - gap - h;
+  if (best.side === 'below') y = head.bottom + gap;
+  if (best.side === 'left') x = head.left - gap - w;
+  if (best.side === 'right') x = head.right + gap;
+  return {x: Math.max(edge, Math.min(fw - edge - w, x)),
+          y: Math.max(edge, Math.min(fh - edge - h, y)), w, h};
+}
+
+const bubbleHead = new THREE.Vector3();
+let bubbleNatural = {w: 1, h: 1};
+function updateBubblePosition() {
+  if (!bubble.visible || !model) return;
+  const t = clock.elapsedTime;
+  if (t > bubbleUntil) { bubble.visible = false; return; }
+  if (lookBones?.head) lookBones.head.getWorldPosition(bubbleHead);
+  else bubbleHead.set(model.position.x, model.position.y + height * 0.85, 0);
+  const headZ = bubbleHead.z;
+  bubbleHead.project(camera);
+  const fw = renderer.domElement.width, fh = renderer.domElement.height;
+  const hx = (bubbleHead.x + 1) * fw / 2, hy = (1 - bubbleHead.y) * fh / 2;
+  const radius = height * 0.12 * pixelsPerUnit(headZ);
+  const unit = pixelsPerUnit(1.5);
+  const box = bubbleLayout(fw, fh, {left: hx - radius, right: hx + radius,
+    top: hy - radius, bottom: hy + radius}, bubbleNatural.w * unit, bubbleNatural.h * unit);
+  const age = t - bubbleStart;
+  let x = box.x + box.w / 2, y = box.y + box.h / 2;
+  if (bubbleVel.lengthSq()) {
+    x += bubbleVel.x * BUBBLE_SPEED * age * unit;
+    y -= bubbleVel.y * BUBBLE_SPEED * age * unit;
+    x = Math.max(box.w / 2, Math.min(fw - box.w / 2, x));
+    y = Math.max(box.h / 2, Math.min(fh - box.h / 2, y));
+    bubble.material.opacity = Math.max(0, 1 - age / Math.max(.01, bubbleUntil - bubbleStart));
+  }
+  bubble.scale.set(box.w / unit, box.h / unit, 1);
+  bubble.position.set((x - fw / 2) / unit, (fh / 2 - y) / unit, 1.5);
+}
+
+let gesture = {kind: '', start: 0};
+const touchParticles = [];
+const particleTextures = new Map();
+function burstTouch(symbol) {
+  if (!model) return;
+  if (!particleTextures.has(symbol)) {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 80;
+    const g = canvas.getContext('2d'); g.font = '56px "Segoe UI Emoji", "Segoe UI Symbol", sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#ef9bbc'; g.fillText(symbol, 40, 40);
+    const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
+    particleTextures.set(symbol, texture);
+  }
+  for (let i = 0; i < 5; i++) {
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map: particleTextures.get(symbol), transparent: true, depthTest: false}));
+    sprite.scale.setScalar(height * .075); scene.add(sprite);
+    const origin = new THREE.Vector3();
+    if (lookBones?.head) lookBones.head.getWorldPosition(origin);
+    else origin.set(0, height * .35, 1.5);
+    origin.z = 1.6;
+    touchParticles.push({sprite, origin, at: clock.elapsedTime, vx: (i - 2) * height * .08});
+  }
+  while (touchParticles.length > 20) {
+    const item = touchParticles.shift(); scene.remove(item.sprite); item.sprite.material.dispose();
+  }
+}
+function updateTouchParticles() {
+  for (let i = touchParticles.length - 1; i >= 0; i--) {
+    const item = touchParticles[i], age = clock.elapsedTime - item.at;
+    if (age > 1.8) { scene.remove(item.sprite); item.sprite.material.dispose(); touchParticles.splice(i, 1); continue; }
+    item.sprite.position.copy(item.origin);
+    item.sprite.position.x += item.vx * age;
+    item.sprite.position.y += height * (.1 + age * .12);
+    item.sprite.material.opacity = Math.max(0, 1 - age / 1.8);
+  }
+}
+window.__interact = function(kind) {
+  if (!model || !['pat', 'wave', 'nod', 'cheer'].includes(kind)) return false;
+  gesture = {kind, start: clock.elapsedTime}; lastTouch = Date.now();
+  if (kind === 'pat') window.__touch('head');
+  else {
+    window.__react(kind === 'wave' ? 'hand' : 'head', '');
+    burstTouch(kind === 'cheer' ? '✨' : '♡');
+  }
+  return true;
+};
 
 function showBubble(text, secs = 2.4, plain = false, drift = false, reply = false) {
   if (drift && bubbleReply && bubble.visible && clock.elapsedTime < bubbleUntil) return;
@@ -600,7 +716,8 @@ function showBubble(text, secs = 2.4, plain = false, drift = false, reply = fals
   bubble.material.map = texture;
   bubble.material.needsUpdate = true;
   const unit = height * 0.0016; // 画布像素 → 世界单位
-  bubble.scale.set(w * unit, h * unit, 1);
+  bubbleNatural = {w: w * unit, h: h * unit};
+  bubble.scale.set(bubbleNatural.w, bubbleNatural.h, 1);
   bubble.visible = true;
   bubbleStart = clock.elapsedTime;
   bubbleUntil = bubbleStart + secs;
@@ -624,7 +741,7 @@ function bubbleSecs(text) {
 // 只在气泡期间回报按钮；过期清空，Python 同时限制旧矩形存活时间。
 let hadReplyTarget = false;
 setInterval(() => {
-  const api = window.pywebview?.api;
+  const api = petApi();
   if (!api?.reply_target) return;
   const active = bubble.visible && clock.elapsedTime < bubbleUntil && bubbleReply && !menuSprite?.visible;
   if (active) {
@@ -841,6 +958,7 @@ window.__touch = function (region) {
   const stillDodging = touch.kind === 'dodge' && now < touch.until;
   touch.lastAt = now; touch.region = region;
   touch.attentionUntil = now + 4;
+  if (region === 'head' || region === 'hand') burstTouch('♡');
   lastTouch = Date.now();
   if (touch.rapid >= 3 || stillDodging) {
     if (!stillDodging) touch.side *= -1;
@@ -931,7 +1049,8 @@ function applyStyle(i) {
   lightPreset = li < 0 ? 0 : li;
   gradeIndex = gi < 0 ? 0 : gi;
   applyLightPreset(lightPreset);
-  const api = window.pywebview && window.pywebview.api;
+  if (webMode) renderer.domElement.style.filter = GRADE_FILTERS[gradeIndex].css;
+  const api = petApi();
   // 让 /pet_state 说得出当前风格，并存盘（换模型要重启，风格不能丢）
   if (api && api.style_info) api.style_info(s.name, stylePreset);
 }
@@ -949,7 +1068,7 @@ window.__style = function (i) {
 window.__styleNames = STYLE_PRESETS.map((p) => p.name);
 
 function pushFrame() {
-  const api = window.pywebview && window.pywebview.api && window.pywebview.api.set_frame;
+  const api = petApi()?.set_frame;
   if (!model || !api) return;
   // 刚改过画布尺寸（缩放）：这一帧缓冲区还是空的，推出去她就闪一下，等渲染完再说
   if (boxDirty) return;
@@ -962,7 +1081,7 @@ function pushFrame() {
   if (unacked0 > 40) return;                            // 40 帧没回音 = 桥真的堵了，先停手
   if (now - lastFrameOkAt > 2000) {
     lastFrameOkAt = now;  // 2 秒才报一次，别刷屏
-    const api2 = window.pywebview && window.pywebview.api;
+    const api2 = petApi();
     if (api2 && api2.motion_loaded) {
       api2.motion_loaded(`[push] 卡住 ${((now - lastFrameOkAt) / 1000).toFixed(1)}s`
         + ` 可见=${document.visibilityState} 画布=${renderer.domElement.width}x${renderer.domElement.height}`);
@@ -1003,14 +1122,14 @@ let lastFrameOkAt = performance.now();   // 最近一次帧成功过的时间（
 let frameSentCount = 0;                  // 成功推出去的帧数（给下面的心跳用）
 let frameAckedCount = 0;                 // 桥回话了的帧数（和 sent 的差 = 没回音的在飞帧）
 let lastFrameAt = 0;                     // 本帧发出（编码前）的时间
-let frameTimerId = setInterval(pushFrame, 1000 / FPS);
+let frameTimerId = webMode ? null : setInterval(pushFrame, 1000 / FPS);
 
 // 诊断心跳：每 10 秒看一眼"这段时间推了几帧"。正常是几百帧，明显偏少才报一次。
 // 页面被系统整体停掉时这条根本不会出现（日志里连续 20 秒没有 [beat] 就是被停）；
 // 页面活着但推不出去时会出现，还带上"在飞"的帧数和可见性。
 let lastBeatCount = 0;
 setInterval(() => {
-  const api = window.pywebview && window.pywebview.api;
+  const api = petApi();
   if (!api || !api.motion_loaded) return;
   const sent = frameSentCount - lastBeatCount;
   lastBeatCount = frameSentCount;
@@ -1128,6 +1247,8 @@ async function start(mesh, loader) {
       mesh.skeleton.bones.find((b) => b.name === '左目'),
       mesh.skeleton.bones.find((b) => b.name === '右目'),
     ].filter(Boolean),
+    arm: mesh.skeleton.bones.find(b => b.name === '右腕'),
+    elbow: mesh.skeleton.bones.find(b => b.name === '右ひじ'),
     neck: mesh.skeleton.bones.find((b) => b.name === '首'),
     head: mesh.skeleton.bones.find((b) => b.name === '頭'),
   };
@@ -1190,7 +1311,7 @@ async function start(mesh, loader) {
     const iks = (mesh.geometry.userData.MMD && mesh.geometry.userData.MMD.iks) || [];
     const clip = main || idle;
     const drv = clip ? clip.tracks.filter((t) => /ＩＫ|IK/.test(t.name)).length : 0;
-    const dapi = window.pywebview && window.pywebview.api;
+    const dapi = petApi();
     if (dapi && dapi.motion_loaded) {
       dapi.motion_loaded(`[diag] 骨=${mesh.skeleton.bones.length} 模型IK链=${iks.length}`
         + ` 解算器=${rec.ikSolver ? '有' : '无'} 动作IK轨=${drv}`
@@ -1228,25 +1349,30 @@ async function start(mesh, loader) {
       }
     }
     tip.textContent = '';
+    if (webMode) petApi()?.ready?.();
   } catch (err) {
     tip.textContent = '动作/物理加载失败：' + err;
+    if (webMode) petApi()?.failure?.(tip.textContent);
   }
 }
 
 // 给 Python 侧（stdin 命令）用的运行期动作切换：url 传空表示回到 idle
+let motionRequest = 0;
 window.__setMotion = async function (url) {
+  const request = ++motionRequest;
   if (!model || !helper || !loaderRef) return false;
   try {
     const mixer = helper.objects.get(model).mixer;
     const from = mainAction || idleAction;
     const clip = url ? await loadVmd(loaderRef, url, model) : null;
+    if (request !== motionRequest || disposed) return false;
     resetToRestPose(); // 见函数注释：不先回静置，上一支动作留在骨头上的姿势会卡住
     if (clip) {
       { // 诊断：这支动作到底建出了哪些轨（腿/根被丢掉的话这里一眼看得出）
         const tn = clip.tracks.map((t) => t.name);
         const boneOf = (n) => (n.match(/\.bones\[(.*?)\]/) || [])[1];
         const bones = [...new Set(tn.map(boneOf).filter(Boolean))];
-        const dapi = window.pywebview && window.pywebview.api;
+        const dapi = petApi();
         if (dapi && dapi.motion_loaded) {
           const miss = ['センター', '下半身', '上半身', '左足', '左ひざ', '左足首', '右足']
             .filter((b) => !bones.includes(b));
@@ -1290,7 +1416,7 @@ window.__setMotion = async function (url) {
 };
 
 function report(result) {
-  const api = window.pywebview && window.pywebview.api && window.pywebview.api.motion_loaded;
+  const api = petApi()?.motion_loaded;
   if (api) api(result);
 }
 
@@ -1395,7 +1521,7 @@ window.__menu = function (items) {
     w: rect.w - pad * 2 * fit,
     h: rowH * fit,
   }));
-  const api = window.pywebview?.api?.menu_rects;
+  const api = petApi()?.menu_rects;
   if (api) api(rects);
   return true;
 };
@@ -1403,7 +1529,7 @@ window.__menu = function (items) {
 window.__menu_close = function () {
   if (menuSprite) menuSprite.visible = false;
   // 顺手把命中矩形清掉：不然菜单关了，Python 那边还会把后续点击当菜单项
-  const api = window.pywebview && window.pywebview.api;
+  const api = petApi();
   if (api && api.menu_rects) api.menu_rects([]);
   return true;
 };
@@ -1416,7 +1542,7 @@ function settlePhysics() {
 
 // Python 只摆待办，这里定时来取 —— 反过来的通道不会被 promise 堵住
 async function pollActions() {
-  const api = window.pywebview && window.pywebview.api;
+  const api = petApi();
   if (!api || !api.poll_action) return;
   if (!styleReported && api.style_info) {
     // 页面刚加载时 pywebview 的 api 还没注入，所以开局那次 applyStyle 报不出去；
@@ -1441,8 +1567,10 @@ async function pollActions() {
     window.__setMotion(action.url || '');
   } else if (action.kind === 'tap') {
     const region = window.__tap(action.x, action.y);
-    const tapi = window.pywebview && window.pywebview.api;
+    const tapi = petApi();
     if (tapi && tapi.tap_info) tapi.tap_info(region || '-');
+  } else if (action.kind === 'interact') {
+    window.__interact(action.name);
   } else if (action.kind === 'react') {
     window.__touch(action.region); // 聊天窗里的摸头也进入同一套连续互动
   } else if (action.kind === 'fps') {
@@ -1482,7 +1610,7 @@ async function pollActions() {
   } else if (action.kind === 'ik') {
     if (helper) helper.enable('ik', Boolean(action.value));
   } else if (action.kind === 'switch_model') {
-    const m = window.pywebview && window.pywebview.api;
+    const m = petApi();
     if (m && m.switch_model) m.switch_model(action.index);
   } else if (action.kind === 'look') {
     // 光标位置 → 视线目标（右边看右、上面看上；符号在测试里校准过）
@@ -1511,7 +1639,7 @@ async function pollActions() {
       grabOff.set(0, 0, 0);
       grabTgt.set(0, 0, 0);
       window.__grabName = grabBone ? grabBone.name : null;
-      const gapi = window.pywebview && window.pywebview.api;
+      const gapi = petApi();
       if (gapi && gapi.grab_info) gapi.grab_info(grabBone ? grabBone.name : '-');
     }
     if (grabBone) {
@@ -1534,13 +1662,13 @@ async function pollActions() {
   }
 }
 
-setInterval(pollActions, 40); // 拖拽惯性要靠它跟手，别太慢
+const actionTimer = setInterval(pollActions, 40); // 拖拽惯性要靠它跟手，别太慢
 
 // 视角属于这份 PMX；最多每秒保存一次，等旋转惯性稳定后仍会补存最终角度。
 let savedView = JSON.stringify([viewZoomTgt, modelProfile.view_yaw || 0]);
 let savingView = false;
 setInterval(async () => {
-  const api = window.pywebview?.api;
+  const api = petApi();
   if (!model || !api?.view_info || savingView) return;
   const yaw = Math.round(((THREE.MathUtils.radToDeg(viewYaw) + 180) % 360 + 360) % 360 * 1000) / 1000 - 180;
   const current = JSON.stringify([viewZoomTgt, yaw]);
@@ -1557,16 +1685,70 @@ setInterval(async () => {
 // 窗口固定铺满屏幕、缩放只动画布，所以这个监听基本是空转（留着兜底）。
 addEventListener('resize', applyBox);
 
+window.__resetView = () => { viewYaw = 0; viewZoomTgt = 1; spinVel = 0; applyBox(); };
+window.__dispose = () => {
+  disposed = true; motionRequest++;
+  clearInterval(actionTimer); clearInterval(frameTimerId); clearTimeout(idleTimer);
+  if (helper && model) { try { helper.remove(model); } catch {} }
+  scene.traverse(obj => {
+    obj.geometry?.dispose();
+    for (const material of (Array.isArray(obj.material) ? obj.material : [obj.material])) {
+      if (!material) continue;
+      for (const value of Object.values(material)) if (value?.isTexture) value.dispose();
+      material.dispose();
+    }
+  });
+  renderer.dispose(); renderer.forceContextLoss();
+};
+if (webMode) {
+  const canvas = renderer.domElement;
+  canvas.style.touchAction = 'none';
+  let pointer = null;
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  canvas.addEventListener('pointerdown', e => {
+    if (pointer) return;
+    pointer = {id:e.pointerId, x:e.clientX, y:e.clientY, lastX:e.clientX, distance:0};
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', e => {
+    const rect = canvas.getBoundingClientRect();
+    lookTx = THREE.MathUtils.clamp(((e.clientX-rect.left)/rect.width*2-1)*.2,-.2,.2);
+    lookTy = THREE.MathUtils.clamp(((e.clientY-rect.top)/rect.height*2-1)*.17,-.17,.17);
+    if (!pointer || pointer.id !== e.pointerId) return;
+    pointer.distance = Math.max(pointer.distance, Math.hypot(e.clientX-pointer.x,e.clientY-pointer.y));
+    if (pointer.distance > 5) {
+      viewYaw += (e.clientX-pointer.lastX)*.008;
+      spinVel = 0;
+    }
+    pointer.lastX=e.clientX; lastTouch=Date.now();
+  });
+  canvas.addEventListener('pointerup', e => {
+    if (!pointer || pointer.id !== e.pointerId) return;
+    if (pointer.distance <= 5) {
+      const rect=canvas.getBoundingClientRect();
+      window.__tap((e.clientX-rect.left)/rect.width,(e.clientY-rect.top)/rect.height);
+    }
+    pointer=null; lastTouch=Date.now();
+  });
+  canvas.addEventListener('pointercancel',()=>{pointer=null;});
+  canvas.addEventListener('wheel',e=>{
+    e.preventDefault();viewZoomTgt=THREE.MathUtils.clamp(viewZoomTgt*Math.exp(-e.deltaY*.001),ZOOM_MIN,ZOOM_MAX);applyBox();
+  },{passive:false});
+  canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();petApi()?.failure?.('画面暂时休息了喵，请重新选择模型。');});
+}
 if (!pmx) {
   tip.textContent = '缺少 pmx 参数';
 } else {
-  const loader = new MMDLoader();
+  const manager = new THREE.LoadingManager();
+  if (webMode) manager.setURLModifier(browserHost.resolve);
+  const loader = new MMDLoader(manager);
   loader.load(
     pmx,
-    (mesh) => start(mesh, loader),
+    (mesh) => start(mesh, loader).catch(err => { tip.textContent = '模型初始化失败：' + err; petApi()?.failure?.(tip.textContent); }),
     undefined,
     (err) => {
       tip.textContent = '模型加载失败：' + err;
+      petApi()?.failure?.(tip.textContent);
     },
   );
 }

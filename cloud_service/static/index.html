@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Nyalume · 网页小窝</title><link rel="icon" type="image/png" sizes="256x256" href="/assets/nyalume-icon.png"><link rel="apple-touch-icon" href="/assets/nyalume-icon.png"><link rel="stylesheet" href="/assets/web.css"></head>
+<body>
+<aside id="sidebar">
+  <div class="brand">✧ Nyalume <small>你的网页小窝</small></div>
+  <button id="new-chat" class="primary" disabled>＋ 新的聊天</button>
+  <div class="lounge-nav"><button id="daily-open">✧ 今日 Nyalume</button><button id="adventure-open">♧ 奇幻冒险</button><button id="wallpaper-open">▧ 小窝壁纸</button></div>
+  <nav id="sessions" aria-label="聊天记录"></nav>
+  <div class="side-bottom"><button id="settings-open">⚙ Key 与陪伴记忆</button><button id="account-open">登录 / 注册</button><span id="version"></span><details class="community"><summary>与小窝保持联系</summary><p><strong>Nyalume交流群喵～</strong><br><button id="copy-qq" type="button" title="复制群号">939851001</button><br>欢迎大家来氵群喵~</p><p><a href="https://github.com/ccliiko/Nyalume" target="_blank" rel="noopener noreferrer">GitHub · Nyalume ↗</a><br>点点star谢谢喵~</p></details></div>
+</aside>
+<main>
+  <header><div><h1 id="chat-title">今天想聊些什么？</h1><span class="muted">聊天 · 陪伴 · 一点点小冒险</span></div><button id="persona-open" hidden>角色人设</button><button id="toggle-pet" aria-expanded="true">收起角色</button></header>
+  <div class="notice">这里是网页小窝喵～可以陪你聊天，也能让你导入的角色动起来！读写文件、运行代码这些工作，要去桌面版找我哦。</div>
+  <button id="older-messages" hidden>查看更早的聊天</button>
+  <details id="story-panel" hidden><summary id="story-heading">奇幻手记</summary><p id="story-location"></p><p id="story-inventory"></p><p id="story-summary"></p></details>
+  <div id="messages" aria-live="polite"><div class="welcome"><span>✧</span><h2>慢慢说，我在听喵。</h2><p>带上你自己的 API Key，和我聊聊今天吧。<br>也可以先导入模型，看看角色动起来的样子。</p></div></div>
+  <div id="story-choices" class="row"></div>
+  <form id="chat-form"><label class="sr-only" for="message">聊天消息</label><textarea id="message" maxlength="16000" placeholder="想说什么都可以喵…" rows="2"></textarea><button id="send" class="primary">发送</button><button id="stop" type="button" hidden>停止</button></form>
+  <button id="restore-draft" type="button" hidden>恢复上次输入</button>
+  <p id="chat-status" role="status" class="status">登录后，聊天记录会保存到你的小窝。</p>
+</main>
+<section id="pet-panel" aria-label="3D 角色">
+  <div class="pet-heading"><h2>3D 角色</h2><span class="badge">仅在本机</span><button id="close-pet" type="button">返回聊天</button></div>
+  <div id="stage"><div id="pet-empty"><span>♧</span><p>带一位伙伴来小窝吧喵～</p><small>导入 PMX 模型和贴图，就能在这里见面。</small></div></div>
+  <div class="pet-controls">
+    <label class="file-button">导入模型文件夹<input id="model-files" type="file" webkitdirectory multiple></label>
+    <label for="models">当前模型</label><div class="row"><select id="models" aria-label="当前模型"><option value="">还没有模型</option></select><button id="delete-model" disabled>删除</button></div>
+    <label class="file-button">导入 VMD 动作<input id="motion-files" type="file" accept=".vmd" multiple></label>
+    <div class="row"><select id="motions" aria-label="动作"><option value="">选择动作</option></select><button id="play-motion">播放</button><button id="delete-motion">删除</button></div>
+    <div class="row"><button id="idle">回到待机</button><button id="pat">摸摸头</button><button id="reset-view">重置视角</button></div>
+    <div class="row"><button id="zoom-out" aria-label="缩小角色">－</button><button id="zoom-in" aria-label="放大角色">＋</button><label><input id="physics" type="checkbox">物理效果</label></div>
+    <small>点击互动 · 拖动旋转 · 滚轮缩放<br>手机可单指旋转，用 ＋ / － 缩放。物理效果更耗性能。</small>
+    <p id="pet-status" role="status">模型、贴图和动作只留在这个浏览器里，不会上传到服务器喵。</p>
+    <div class="row"><small id="storage-size"></small><button id="clear-assets">清空资源</button></div>
+  </div>
+</section>
+<dialog id="account-dialog"><form id="account-form">
+  <div class="dialog-head"><h2>回到小窝喵</h2><button type="button" data-close="account-dialog" aria-label="关闭">×</button></div>
+  <fieldset id="auth-fields"><div class="row"><button type="button" id="login-mode" class="selected">登录</button><button type="button" id="register-mode">注册</button><button type="button" id="reset-mode">找回密码</button></div>
+  <label id="account-label">用户名或邮箱<input id="account-name" required maxlength="254" autocomplete="username"></label>
+  <label id="email-label" hidden>邮箱<input id="account-email" type="email" maxlength="254" autocomplete="email"></label>
+  <label id="code-label" hidden>验证码<input id="reset-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"><button type="button" id="request-code">发送验证码</button></label>
+  <label>密码<input id="account-password" type="password" minlength="8" maxlength="128" required autocomplete="current-password"></label>
+  <label id="confirm-password-label" hidden>再输一次密码<input id="confirm-password" type="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
+  <label id="remember-login-label" class="check"><input id="remember-login" type="checkbox">记住登录，下次直接回小窝（30 天）</label><small>仅在自己的设备上勾选；不保存密码，记住 Key 需要另行开启。</small>
+  <p class="muted">注册时先验证邮箱，再带上自己的 Key 来聊天喵～</p></fieldset>
+  <section id="profile-fields" hidden>
+    <p id="profile-email"></p><label class="check"><input id="profile-remember-login" type="checkbox">在这个浏览器自动登录</label><small>最长到本次登录的 30 天有效期结束；取消后仅当前标签页保持登录。</small>
+    <div id="verify-section" hidden><p>这是验证码上线前的小窝账号，先验证邮箱再继续喵～</p><div class="row"><input id="verify-code" inputmode="numeric" maxlength="6" placeholder="六位验证码"><button type="button" id="send-verify">发送验证码</button><button type="button" id="confirm-verify">验证邮箱</button></div></div>
+    <label>用户名<input id="profile-name" maxlength="24"></label><button type="button" id="rename-user">保存新名字</button>
+    <details><summary>修改密码</summary><label>原密码<input id="old-password" type="password" autocomplete="current-password" maxlength="128"></label><label>新密码<input id="new-password" type="password" autocomplete="new-password" maxlength="128"></label><label>再输一次新密码<input id="new-password-confirm" type="password" autocomplete="new-password" maxlength="128"></label><button type="button" id="change-password">更换密码并重新登录</button></details>
+  </section>
+  <p id="auth-status" role="status"></p><button class="primary" id="auth-submit">登录</button><button type="button" id="logout" hidden>退出当前账号</button>
+</form></dialog>
+<dialog id="settings-dialog"><form id="settings-form">
+  <div class="dialog-head"><h2>Key 与陪伴记忆</h2><button type="button" data-close="settings-dialog" aria-label="关闭">×</button></div>
+  <label>千问服务地址<input id="base-url" type="url" readonly value="https://dashscope.aliyuncs.com/compatible-mode/v1"></label>
+  <small>通过阿里云百炼中国内地（北京地域）接入千问，使用该地域的百炼 API Key。</small>
+  <label>千问模型<select id="llm-model" required><option value="qwen3.7-plus">千问 3.7 Plus · qwen3.7-plus</option><option value="qwen-plus">千问 Plus · qwen-plus</option><option value="qwen-flash">千问 Flash · qwen-flash</option><option value="qwen-max">千问 Max · qwen-max</option></select></label>
+  <small>默认使用千问 Plus；可选择其他千问模型，调用额度按你的百炼账号计费。</small>
+  <label>百炼 API Key<input id="api-key" type="password" required maxlength="512" autocomplete="off"></label>
+  <label class="check"><input id="remember-key" type="checkbox">在当前浏览器记住 Key（共用设备请勿勾选）</label>
+  <small>Key 默认只留在页面内存中；发消息时经后端转发给你选择的服务商，不写入服务器数据库或日志。勾选后会明文保存在此浏览器的站点存储中，退出账号时清除。</small>
+  <label>希望我记住的事<textarea id="memory" maxlength="12000" rows="4" placeholder="你喜欢的称呼、聊天偏好、一起约定的小事…"></textarea></label>
+  <small>这些记忆保存在你的账号中，可以随时修改或清空；每次聊天会一起发送给你选择的服务商。历史默认带入最近 20 条，并受上下文字数预算限制。冒险另带累积摘要与背包。</small>
+  <p id="settings-status" role="status"></p><button class="primary">保存</button>
+</form></dialog>
+<dialog id="daily-dialog"><div class="dialog-head"><h2>今日 Nyalume</h2><button data-close="daily-dialog" aria-label="关闭">×</button></div><p class="muted">每天一张小小祝福，不消耗你的 Key 喵。每天北京时间 0 点刷新。</p><button id="draw-daily" class="primary">看看今天的 Nyalume</button><p id="daily-status" role="status"></p><div id="daily-card"></div><details><summary>我的卡片收藏</summary><div id="daily-collection"></div><button id="more-cards" hidden>更早的卡片</button></details></dialog>
+<dialog id="adventure-dialog"><form id="adventure-form"><div class="dialog-head"><h2>奇幻冒险 · 折月诸境</h2><button type="button" data-close="adventure-dialog" aria-label="关闭">×</button></div><p>穿过破碎月轮，和 Nyalume 一起去新的异域吧。小窝一直是可以回来的地方喵。</p><label>这次想去怎样的世界？<textarea id="adventure-premise" rows="6" maxlength="16000" placeholder="例如：沿着雾海列车，寻找一封寄给未来的信……也可以粘贴自己的世界设定。"></textarea></label><label>同行角色的人设（选填）<textarea id="adventure-persona" maxlength="4000" rows="4" placeholder="名字、性格、说话习惯、喜欢或害怕的事、与你的关系……留空使用默认 Nyalume。"></textarea></label><small>每轮交代一段情节，只问一个关键决定。可以选方向，也可以自由行动或追问；摘要与背包自动存档，完整正文可翻阅。创建冒险不调用模型，发送消息时才使用你的 Key。</small><button class="primary">建立冒险手记</button></form></dialog>
+<dialog id="persona-dialog"><form id="persona-form"><div class="dialog-head"><h2>这次冒险的同行者</h2><button type="button" data-close="persona-dialog" aria-label="关闭">×</button></div><label>角色人设<textarea id="persona-text" rows="9" maxlength="4000" placeholder="例如：露米是好奇又有点嘴硬的猫娘，紧张时会揪衣角，喜欢故作镇定地逞强。说话轻快、偶尔吐槽，心里担心你却不总肯直说。"></textarea></label><small>按这段冒险保存，影响后续对话、动作和心理描写；留空恢复默认 Nyalume。已经发生的故事仍会保留。</small><p id="persona-status" role="status"></p><button class="primary">保存人设</button></form></dialog>
+<dialog id="wallpaper-dialog"><div class="dialog-head"><h2>装饰小窝喵</h2><button data-close="wallpaper-dialog" aria-label="关闭">×</button></div><p>选择一张喜欢的壁纸，只留在当前浏览器，不会上传。</p><label class="file-button">导入图片<input id="wallpaper-file" type="file" accept="image/png,image/jpeg,image/webp"></label><label>壁纸清晰度<input id="wallpaper-strength" type="range" min="5" max="45" value="20"></label><button id="wallpaper-clear">恢复默认背景</button><p id="wallpaper-status" role="status"></p><small>支持 PNG、JPG、WebP，最大 10 MB；保存前会缩小至适合网页的尺寸。</small></dialog>
+<script src="/daily-art/catalog.js"></script>
+<script type="module" src="/assets/app.js"></script>
+</body></html>

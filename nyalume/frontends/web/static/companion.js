@@ -90,7 +90,7 @@ window.NyalumeUI = (() => {
       $('focus-retry').hidden = true;
     } catch (error) {
       if (version !== focusVersion) return;
-      $('focus-feedback').textContent = '专注记录暂时无法读取，请重试。' + error.message;
+      $('focus-feedback').textContent = '专注记录暂时无法读取，请重试。' + String(error.message || error);
       $('focus-retry').hidden = false;
       if (!focusData) $('focus-history').textContent = '连接恢复后，你的足迹会显示在这里。';
     } finally { focusLoading = false; }
@@ -127,7 +127,7 @@ window.NyalumeUI = (() => {
         notice(body.outcome === 'done' ? '这件小事完成了。已经为你留下一页记录。' : '前进了一点，也值得记下来。下次接着来。');
       }
     } catch (error) {
-      $('focus-feedback').textContent = error.message + '。可重新加载最新状态后重试。';
+      $('focus-feedback').textContent = String(error.message || error) + '。可重新加载最新状态后重试。';
       $('focus-retry').hidden = false;
     } finally {
       focusPending = false;
@@ -205,7 +205,7 @@ window.NyalumeUI = (() => {
         if (focusPending) return;
         focusPending = true; focusVersion++; remove.disabled = true;
         try { acceptFocus(await api('/api/focus/' + row.id, { method: 'DELETE' })); notice('这段专注记录已删除。'); }
-        catch (error) { notice('删除失败：' + error.message); }
+        catch (error) { notice('删除失败：' + String(error.message || error)); }
         finally { focusPending = false; remove.disabled = false; }
       };
       meta.append(date, remove);
@@ -232,13 +232,21 @@ window.NyalumeUI = (() => {
     const box = document.createElement('div');
     box.className = 'chat-load-error';
     const text = document.createElement('p');
-    text.textContent = '暂时没能打开对话：' + error.message;
+    text.textContent = '暂时没能打开对话：' + String(error.message || error);
     const retry = document.createElement('button');
     retry.className = 'home-primary';
     retry.textContent = '重新加载';
     retry.onclick = () => location.reload();
     box.append(text, retry);
     $('log').append(box);
+  }
+
+  /* ── 追求目标模式 ── */
+  async function startPursuitMode() {
+    showChat(false);
+    if (typeof window._startPursuitMode === 'function') {
+      await window._startPursuitMode();
+    }
   }
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -267,7 +275,6 @@ window.NyalumeUI = (() => {
     };
     $('sidebar-scrim').onclick = closeSidebar;
     $('home-daily').onclick = () => $('daily-nyalume-btn').click();
-    $('home-plan').onclick = () => $('pet-plan-toggle').click();
     document.querySelectorAll('[data-prompt]').forEach(button => {
       button.onclick = () => {
         showChat();
@@ -305,8 +312,8 @@ window.NyalumeUI = (() => {
       ['继续对话', '聊天 · chat', () => showChat()],
       ['新建对话', '新的开始', () => newChat()],
       ['陪伴专注', '计时 · focus', goFocus],
+      ['🎯 目标模式', 'goal · 自主 Agent · 持续执行', startPursuitMode],
       ['今日 Nyalume', '每日卡片 · 祝福', () => $('daily-nyalume-btn').click()],
-      ['她的小计划', '花园 · 陪伴', () => $('pet-plan-toggle').click()],
       ['奇幻冒险', '另一段故事', () => window.open('/fantasy', '_blank', 'noopener')],
       ['聊天壁纸', '外观 · 图片', () => { showChat(false); document.body.classList.add('toolbar-open'); $('wall-menu').classList.remove('hidden'); }],
       ['人设与角色', '切换人设', () => { showChat(); document.body.classList.add('toolbar-open'); $('persona-select').focus(); notice('在顶栏的人设选择框中切换角色。'); }],
@@ -320,7 +327,7 @@ window.NyalumeUI = (() => {
         const button = document.createElement('button');
         button.type = 'button'; button.textContent = label;
         const small = document.createElement('small'); small.textContent = hint; button.append(small);
-        button.onclick = async () => { dialog.close(); try { await run(); } catch (e) { notice(e.message); } };
+        button.onclick = async () => { dialog.close(); try { await run(); } catch (e) { notice(String(e.message || e)); } };
         $('command-list').append(button);
       });
       if (!$('command-list').children.length) {
@@ -331,6 +338,60 @@ window.NyalumeUI = (() => {
     $('command-open').onclick = openCommands;
     $('command-close').onclick = () => dialog.close();
     $('command-search').oninput = renderCommands;
+    const field = $('input'), slash = $('slash-menu');
+    let selected = 0;
+    let composing = false;
+    const slashCommands = [commands[4], commands[2], commands[3], commands.find(([, hint]) => hint === '设置 · 配置')];
+    const hideSlash = () => { slash.hidden = true; field.setAttribute('aria-expanded', 'false'); field.removeAttribute('aria-activedescendant'); };
+    const highlight = () => {
+      [...slash.children].forEach((button, index) => button.setAttribute('aria-selected', String(index === selected)));
+      field.setAttribute('aria-activedescendant', slash.children[selected]?.id || '');
+    };
+    field.setAttribute('aria-controls', 'slash-menu');
+    field.setAttribute('aria-expanded', 'false');
+    function renderSlash() {
+      const value = field.value.replace(/^／/, '/');
+      if (!/^\/[^\s/]*$/.test(value)) return hideSlash();
+      const query = value.slice(1).toLowerCase();
+      slash.replaceChildren(); selected = 0;
+      slashCommands.filter(([label, hint]) => (label + hint).toLowerCase().includes(query)).forEach(([label, hint, run], index) => {
+        const button = document.createElement('button');
+        button.type = 'button'; button.id = 'slash-option-' + index; button.setAttribute('role', 'option');
+        button.textContent = label;
+        const small = document.createElement('small'); small.textContent = hint; button.append(small);
+        button.onmousedown = event => event.preventDefault();
+        button.onclick = async () => {
+          hideSlash(); field.value = ''; resizeInput(); saveDraft();
+          try { await run(); } catch (e) { notice(String(e.message || e)); }
+        };
+        slash.append(button);
+      });
+      if (!slash.children.length) return hideSlash();
+      slash.hidden = false; field.setAttribute('aria-expanded', 'true');
+      highlight();
+    }
+    field.addEventListener('input', event => {
+      if ((event.isComposing || composing) && !/^[\/／]$/.test(field.value)) return hideSlash();
+      renderSlash();
+    });
+    field.addEventListener('compositionstart', () => { composing = true; });
+    field.addEventListener('compositionend', () => { composing = false; renderSlash(); });
+    field.addEventListener('blur', () => { composing = false; });
+    field.addEventListener('focus', renderSlash);
+    field.addEventListener('keydown', event => {
+      if (composing || event.isComposing || event.keyCode === 229) {
+        if (event.key === 'Enter') event.stopImmediatePropagation();
+        return;
+      }
+      if (slash.hidden) return;
+      if (['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key) && !event.shiftKey) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (event.key === 'Escape') hideSlash();
+        else if (event.key === 'Enter') slash.children[selected]?.click();
+        else { selected = (selected + (event.key === 'ArrowDown' ? 1 : -1) + slash.children.length) % slash.children.length; highlight(); }
+      }
+    }, true);
+    document.addEventListener('click', event => { if (!slash.contains(event.target) && event.target !== field) hideSlash(); });
     dialog.addEventListener('click', event => { if (event.target === dialog) { const r = dialog.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) dialog.close(); } });
     dialog.addEventListener('keydown', event => {
       if (event.isComposing) return;
@@ -359,5 +420,5 @@ window.NyalumeUI = (() => {
     document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshFocus(); });
     if (new URLSearchParams(location.search).get('home') === '1') showHome();
   });
-  return { sessionChanged, saveDraft, forgetDraft, showHome, showChat, startupError };
+  return { sessionChanged, saveDraft, forgetDraft, showHome, showChat, startupError, startPursuitMode };
 })();

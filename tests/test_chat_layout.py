@@ -12,7 +12,7 @@ from playwright.sync_api import expect, sync_playwright
 
 
 @pytest.fixture
-def chat_page():
+def chat_page(request):
     html = (Path(__file__).resolve().parents[1] /
             "nyalume/frontends/web/static/index.html").read_text(encoding="utf-8")
     portrait_path = (Path(__file__).resolve().parents[1] /
@@ -53,12 +53,13 @@ def chat_page():
 
     def route_request(route):
         path = urlparse(route.request.url).path
-        if path in ("/static/companion.css", "/static/companion.js"):
+        if path.startswith("/static/"):
             asset = Path(__file__).resolve().parents[1] / "nyalume/frontends/web" / path.lstrip("/")
-            route.fulfill(content_type="text/css" if path.endswith(".css") else "application/javascript",
-                          body=asset.read_text(encoding="utf-8"))
+            route.fulfill(content_type=("text/css" if path.endswith(".css") else
+                                        "image/png" if path.endswith(".png") else "application/javascript"),
+                          body=asset.read_bytes())
             return
-        if path == "/api/pet/plan/portrait":
+        if path == "/api/pet/portrait":
             asset = Path(__file__).resolve().parents[1] / "user_pets/nyalume/idle.png"
             if asset.is_file():
                 route.fulfill(content_type="image/png", body=asset.read_bytes())
@@ -150,6 +151,7 @@ def chat_page():
                                "mode": permission["mode"], "affection": 72},
                 "/api/personas": [{"id": "nyalume", "name": "Nyalume"}],
                 "/api/persona": {"persona": "nyalume"},
+                "/api/companionship/daily-session": {"id": "nyalume-daily"},
                 "/api/wallpaper/settings": {"mode": "", "opacity": 70},
                 "/api/skills": [{
                     "id": "study-helper", "name": "学习规划", "description": "把复习任务拆成小步。",
@@ -188,6 +190,7 @@ def chat_page():
                 if (url !== '/api/chat') return originalFetch(url, options);
                 const encoder = new TextEncoder();
                 const body = new ReadableStream({start(controller) {
+                    options.signal?.addEventListener('abort', () => controller.error(new DOMException('Stopped', 'AbortError')), {once: true});
                     const emit = event => controller.enqueue(encoder.encode('data: ' + JSON.stringify(event) + '\\n\\n'));
                     emit({type: 'user_id', message_id: 9, run_id: 'trace-demo'});
                     window.pushEvent = emit;
@@ -202,7 +205,7 @@ def chat_page():
             };
         })()""")
         try:
-            page.goto("http://nyalume.test/")
+            page.goto("http://nyalume.test/" + getattr(request, 'param', ''))
             expect(page.locator("#log .msg.user").last).to_contain_text(rows[2]["content"])
             expect(page.locator("#persona-select")).to_have_value("nyalume")
             yield page, errors, deletes
@@ -219,6 +222,303 @@ def assert_layout(page):
     assert log["height"] >= 150
     assert composer["y"] + composer["height"] <= page.viewport_size["height"] + 1
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_edit_interrupts_running_reply_before_confirmation(chat_page):
+    page, errors, deletes = chat_page
+    page.locator('#input').fill('原来的问题')
+    page.locator('#send').click()
+    page.wait_for_function('state.busy')
+    page.evaluate("pushReply('旧回答的一部分')")
+    page.locator('.latest-turn .msg-edit-btn').click()
+    page.wait_for_function('!state.busy')
+    expect(page.locator('.latest-turn .edit-box')).to_be_focused()
+    page.locator('.latest-turn .edit-box').fill('修改后的问题')
+    page.get_by_role('button', name='确认', exact=True).click()
+    expect(page.locator('.latest-turn .msg.user')).to_contain_text('修改后的问题')
+    expect(page.locator('#log')).not_to_contain_text('旧回答的一部分')
+    page.evaluate("finishReply('按新问题回答')")
+    page.wait_for_function('!state.busy')
+    assert len(deletes) == 1
+    assert page.locator('.msg.user').count() == 3
+    assert not errors
+
+
+def test_new_chat_opens_empty_composer_directly(chat_page):
+    page, errors, _ = chat_page
+    page.locator('#new-btn').click()
+    expect(page.locator('#home-panel')).to_be_hidden()
+    expect(page.locator('#input')).to_be_visible()
+    expect(page.locator('#input')).to_be_focused()
+    expect(page.locator('#log .empty-hint')).to_be_visible()
+    assert not errors
+
+
+def test_slash_menu_keyboard_goal_stream_and_exit(chat_page, tmp_path):
+    page, errors, _ = chat_page
+    page.evaluate("""() => {
+      const previous = window.fetch;
+      window.fetch = (url, options) => {
+        if (url === '/api/pursuit/start') {
+          window.goalPayload = JSON.parse(options.body);
+          return Promise.resolve(new Response(JSON.stringify({pursuit: {id: 'test-goal'}})));
+        }
+        if (url === '/api/pursuit/test-goal/run') {
+          const events = [
+            {type:'user_id', message_id:11},
+            {type:'pursuit_plan', analysis:'制定计划', formatted:'⬜ #1 计算'},
+            {type:'pursuit_step_start', task:'计算'},
+            {type:'pursuit_step_done', result:'结果是 4'},
+            {type:'pursuit_complete', summary:'目标已完成', formatted:'✅ #1 计算'},
+            {type:'done', message_id:12}
+          ];
+          return Promise.resolve(new Response(events.map(e => 'data: ' + JSON.stringify(e) + '\\n\\n').join('')));
+        }
+        return previous(url, options);
+      };
+    }""")
+    page.locator('#input').fill('/')
+    expect(page.locator('#slash-menu')).to_be_visible()
+    expect(page.locator('#slash-menu button')).to_have_count(4)
+    page.locator('#input').press('ArrowDown')
+    expect(page.locator('#slash-menu button').nth(1)).to_have_attribute('aria-selected', 'true')
+    page.locator('#input').press('ArrowUp')
+    expect(page.locator('#slash-menu button').first).to_have_attribute('aria-selected', 'true')
+    page.screenshot(path=str(tmp_path / 'slash-menu.png'))
+    print('PREVIEW', tmp_path / 'slash-menu.png')
+    page.locator('#input').press('Escape')
+    expect(page.locator('#slash-menu')).to_be_hidden()
+    page.locator('#input').fill('/goal')
+    page.locator('#input').press('Enter')
+    expect(page.locator('#goal-mode')).to_be_visible()
+    expect(page.locator('#input')).to_have_value('')
+    page.locator('#input').fill('计算 2+2')
+    page.locator('#send').click()
+    expect(page.locator('.latest-turn .reply-body')).to_contain_text('目标已完成')
+    page.wait_for_function('!state.busy')
+    assert page.evaluate('goalPayload.goal') == '计算 2+2'
+    assert page.evaluate('goalPayload.session_id') == 'demo'
+    page.locator('#goal-exit').click()
+    expect(page.locator('#goal-mode')).to_be_hidden()
+    page.locator('#input').fill('普通文本 /')
+    expect(page.locator('#slash-menu')).to_be_hidden()
+    assert not errors
+
+
+@pytest.mark.parametrize('chat_page', ['', '?quick=1'], indirect=True)
+def test_slash_menu_handles_ime_commit_fullwidth_and_refocus(chat_page):
+    page, errors, _ = chat_page
+    field = page.locator('#input')
+    field.focus()
+    page.keyboard.type('/')
+    expect(page.locator('#slash-menu')).to_be_visible()
+    field.fill('')
+    page.evaluate("""() => {
+      const field = document.getElementById('input');
+      field.dispatchEvent(new CompositionEvent('compositionstart', {bubbles:true}));
+      field.value = '/';
+      field.dispatchEvent(new InputEvent('input', {bubbles:true, isComposing:true, data:'/'}));
+    }""")
+    expect(page.locator('#slash-menu')).to_be_visible()
+    field.dispatch_event('keydown', {'key': 'Enter', 'isComposing': False})
+    assert not page.evaluate('state.busy || state.pursuitMode')
+    page.evaluate("document.getElementById('input').dispatchEvent(new CompositionEvent('compositionend', {bubbles:true,data:'/'}))")
+    expect(page.locator('#slash-menu button')).to_have_count(4)
+    field.fill('／goal')
+    expect(page.locator('#slash-menu button')).to_have_count(1)
+    field.press('Enter')
+    expect(page.locator('#goal-mode')).to_be_visible()
+    field.fill('正文 /')
+    expect(page.locator('#slash-menu')).to_be_hidden()
+    page.evaluate("document.getElementById('input').value = '/'")
+    page.locator('#send').focus()
+    field.focus()
+    expect(page.locator('#slash-menu')).to_be_visible()
+    assert not errors
+
+
+def test_task_edit_interrupts_and_preserves_queued_message(chat_page):
+    page, errors, _ = chat_page
+    page.locator('#input').fill('正在生成的提问')
+    page.locator('#send').click()
+    page.wait_for_function('state.busy')
+    page.locator('#input').fill('排队的第二个提问')
+    page.locator('#send').click()
+    page.locator('#task-panel .running button').click()
+    page.wait_for_function('!state.busy')
+    expect(page.locator('.edit-box')).to_have_value('正在生成的提问')
+    expect(page.locator('#task-panel')).to_contain_text('排队的第二个提问')
+    page.locator('.edit-box').fill('重写的第一个提问')
+    page.get_by_role('button', name='确认', exact=True).click()
+    expect(page.locator('.latest-turn .msg.user')).to_contain_text('重写的第一个提问')
+    page.evaluate("finishReply('第一个新答案')")
+    expect(page.locator('.latest-turn .msg.user')).to_contain_text('排队的第二个提问')
+    page.evaluate("finishReply('第二个答案')")
+    page.wait_for_function('!state.busy')
+    assert not errors
+
+
+def test_new_chat_stops_previous_generation(chat_page):
+    page, errors, _ = chat_page
+    page.locator('#input').fill('旧会话提问')
+    page.locator('#send').click()
+    page.wait_for_function('state.busy')
+    page.locator('#new-btn').click()
+    expect(page.locator('#home-panel')).to_be_hidden()
+    expect(page.locator('#input')).to_be_focused()
+    expect(page.locator('.msg.user')).to_have_count(0)
+    page.locator('#input').fill('新会话提问')
+    page.locator('#send').click()
+    page.evaluate("finishReply('新会话回复')")
+    page.wait_for_function('!state.busy')
+    expect(page.locator('.msg.user')).to_have_count(1)
+    expect(page.locator('#log')).not_to_contain_text('旧会话提问')
+    assert not errors
+
+
+def test_goal_cancel_during_creation_cleans_pending_goal(chat_page):
+    page, errors, _ = chat_page
+    page.evaluate("""() => {
+      const previous = window.fetch;
+      window.fetch = (url, options) => {
+        if (url === '/api/pursuit/start') return new Promise(resolve => {
+          window.finishGoalCreation = () => resolve(new Response(JSON.stringify({pursuit:{id:'pending'}})));
+        });
+        if (url === '/api/pursuit/pending/stop') {
+          window.pendingGoalStopped = true;
+          return Promise.resolve(new Response('{"ok":true}'));
+        }
+        return previous(url, options);
+      };
+    }""")
+    page.locator('#input').fill('/goal 做一个小任务')
+    page.locator('#input').press('Enter')
+    page.wait_for_function('state.busy && typeof finishGoalCreation === "function"')
+    page.locator('#send').click()
+    page.evaluate('finishGoalCreation()')
+    page.wait_for_function('!state.busy && window.pendingGoalStopped')
+    assert not errors
+
+
+def test_goal_selection_preserves_daily_permissions(chat_page):
+    page, errors, _ = chat_page
+    page.locator('#perm-btn').click()
+    page.get_by_role('button', name='日常模式', exact=True).click()
+    page.wait_for_function("state.chatMode === 'daily' && state.currentId === 'nyalume-daily'")
+    page.locator('#input').fill('/goal')
+    page.locator('#input').press('Enter')
+    expect(page.locator('#goal-mode')).to_be_hidden()
+    assert page.evaluate('state.chatMode') == 'daily'
+    expect(page.locator('#task-toast')).to_contain_text('权限菜单')
+    assert not errors
+
+
+def test_work_status_is_one_line_and_outputs_fold_after_reply(chat_page, tmp_path):
+    page, errors, _ = chat_page
+    page.evaluate("Object.defineProperty(navigator, 'clipboard', {value: {writeText: async text => window.copiedReply = text}})")
+    page.locator('#input').fill('检查代码，然后保存结果')
+    page.locator('#send').click()
+    page.wait_for_function('state.busy')
+    page.evaluate("pushEvent({type:'reasoning',text:'先确认文件位置，再检查代码。'})")
+    status = page.locator('.latest-turn .live-think')
+    expect(status).to_contain_text('先确认文件位置')
+    assert status.evaluate("el => getComputedStyle(el).userSelect") == 'none'
+    assert status.evaluate("el => getComputedStyle(el).animationDuration") == '3s'
+    page.evaluate("pushReply('先读一下文件，再执行验证。')")
+    page.evaluate("""pushEvent({type:'tool',name:'run_code',desc:'运行命令',
+      detail:'D:/projects/nyalume · python -c "print(42)" ' + '很长的参数 '.repeat(50)})""")
+    status = page.locator('.latest-turn .tool-group-head')
+    expect(status).to_be_visible()
+    expect(status.locator('.work-status-tail')).to_have_text('喵')
+    expect(status.locator('.work-status-text')).to_contain_text('D:/projects/nyalume · python')
+    assert status.locator('.work-status-text').evaluate("el => getComputedStyle(el).textOverflow") == 'ellipsis'
+    assert status.evaluate("el => getComputedStyle(el).backgroundImage") != 'none'
+    expect(page.locator('.latest-turn .proc-text')).to_be_hidden()
+    assert page.locator('.latest-turn .tool-group').count() == 1
+    assert page.locator('.latest-turn .exec-item').count() == 0
+    expect(page.locator('.latest-turn .proc')).to_be_visible()
+    expect(page.locator('.latest-turn .process-commentary')).to_be_visible()
+    expect(page.locator('.latest-turn .process-commentary')).to_contain_text('先读一下文件')
+    expect(page.locator('.latest-turn .tool-card-output')).to_be_hidden()
+    page.set_viewport_size({'width': 480, 'height': 640})
+    assert_layout(page)
+    assert status.bounding_box()['height'] < 32
+    page.set_viewport_size({'width': 1100, 'height': 760})
+    page.screenshot(path=str(tmp_path / 'single-work-status.png'))
+    print('PREVIEW', tmp_path / 'single-work-status.png')
+    page.evaluate("pushEvent({type:'tool_result',name:'run_code',result:'42'})")
+    expect(status).to_contain_text('运行了命令')
+    page.evaluate("pushEvent({type:'tool',name:'file_write',desc:'写文件 result.txt'})")
+    page.evaluate("pushEvent({type:'tool_result',name:'file_write',result:'已保存 result.txt'})")
+    page.evaluate("pushEvent({type:'tool',name:'describe_image',desc:'查看 image.png'})")
+    page.evaluate("pushEvent({type:'tool_result',name:'describe_image',result:'图像包含一只猫',paths:['image.png']})")
+    page.evaluate("pushReply('最终结果：\\n```python\\nprint(42)\\n```')")
+    expect(page.locator('.latest-turn .reply-body .code-head button')).to_be_hidden()
+    page.evaluate("finishReply('\\n已保存结果。')")
+    page.wait_for_function('!state.busy')
+    expect(page.locator('.latest-turn .proc')).to_be_hidden()
+    expect(page.locator('.latest-turn .reply-meta-top')).to_contain_text('编辑了文件、运行了命令、已查看 1 张图像喵～')
+    expect(page.locator('.latest-turn .reply-body .code-head button')).to_be_visible()
+    expect(page.locator('.latest-turn .reply-body')).not_to_contain_text('先读一下文件')
+    page.locator('.latest-turn button[title="复制这条回复"]').click()
+    page.wait_for_function('window.copiedReply')
+    assert '最终结果' in page.evaluate('copiedReply')
+    assert '先读一下文件' not in page.evaluate('copiedReply')
+    page.locator('.latest-turn .run-expand').click()
+    expect(page.locator('.latest-turn .proc')).to_be_visible()
+    expect(page.locator('.latest-turn .process-commentary')).to_contain_text('先读一下文件')
+    page.locator('.latest-turn .tool-group-head').click()
+    expect(page.locator('.latest-turn .tool-card-output').first).to_have_text('42')
+    assert page.locator('.latest-turn .tool-card-output').first.evaluate("el => getComputedStyle(el).userSelect") != 'none'
+    assert not errors
+
+
+def test_context_compression_notice_is_visible_and_persists(chat_page):
+    page, errors, _ = chat_page
+    page.locator('#input').fill('继续之前的工作')
+    page.locator('#send').click()
+    page.wait_for_function('state.busy')
+    page.evaluate("pushEvent({type:'context_compression',status:'started',count:12})")
+    notice = page.locator('.latest-turn .context-notice')
+    expect(notice).to_be_visible()
+    expect(notice).to_contain_text('正在整理 12 条')
+    assert notice.evaluate("el => getComputedStyle(el).animationDuration") == '3s'
+    page.evaluate("pushEvent({type:'context_compression',status:'completed',count:12})")
+    expect(notice).to_have_attribute('data-status', 'completed')
+    page.evaluate("finishReply('重点都记住了，继续吧喵。')")
+    page.wait_for_function('!state.busy')
+    expect(notice).to_be_visible()
+    expect(notice).to_contain_text('已整理 12 条')
+    assert not errors
+
+
+def test_workflow_error_folds_and_releases_unfinished_operation(chat_page):
+    page, errors, _ = chat_page
+    page.locator('#input').fill('运行检查')
+    page.locator('#send').click()
+    page.evaluate("pushReply('我先运行一次检查。')")
+    page.evaluate("pushEvent({type:'tool',name:'run_code',desc:'python check.py'})")
+    page.evaluate("pushEvent({type:'error',message:'检查失败，请修复配置'})")
+    page.evaluate("finishReply('')")
+    page.wait_for_function('!state.busy')
+    expect(page.locator('.latest-turn .proc')).to_be_hidden()
+    expect(page.locator('.latest-turn .reply-meta-top')).to_contain_text('这次卡住了喵')
+    page.locator('.latest-turn .run-expand').click()
+    expect(page.locator('.latest-turn .tool-group-head')).to_contain_text('操作未完成喵')
+    page.locator('.latest-turn .tool-group-head').click()
+    expect(page.locator('.latest-turn .tool-card-title')).to_contain_text('未完成')
+    assert page.locator('.latest-turn .tool-card').evaluate("el => getComputedStyle(el).userSelect") != 'none'
+    assert not errors
+
+
+def test_retired_controls_are_absent(chat_page):
+    page, errors, _ = chat_page
+    assert page.locator('#pet-plan-toggle, #home-plan, #pet-plan-panel').count() == 0
+    page.locator('#command-open').click()
+    expect(page.locator('#command-list')).not_to_contain_text('她的小计划')
+    page.locator('#command-close').click()
+    expect(page.locator('#state-body')).not_to_contain_text('全局提醒')
+    assert not errors
 
 
 def test_multiline_composer_and_ime(chat_page):
@@ -272,7 +572,7 @@ def test_tables_in_history_stream_and_code(chat_page, tmp_path):
     reply = page.locator("#log .msg.assistant").last
     expect(reply.locator("table")).to_have_count(1)
     expect(reply.locator("td").first).to_have_text("a|b")
-    expect(reply.locator("tbody tr").nth(1).locator("td").first).to_have_text("`a|b`")
+    expect(reply.locator("tbody tr").nth(1).locator("td").first.locator("code")).to_have_text("a|b")
     expect(reply.locator("script")).to_have_count(0)
     expect(reply.locator(".code-block")).to_contain_text("| 内容 |")
     expect(reply).to_contain_text("普通 | 文本")
@@ -320,7 +620,7 @@ def test_user_messages_stay_in_normal_history(chat_page, tmp_path):
     expect(page.locator("#log .msg.user").last).to_contain_text("给我一个复习计划")
     history_reply = page.locator("#log .msg.assistant").last
     expect(history_reply.locator(".reply-meta-top")).to_contain_text(
-        "思考完毕喵～ · 2 秒 · 2 个步骤"
+        "查阅了资料喵～ · 2 秒 · 2 个步骤"
     )
     expect(history_reply.locator(".proc")).to_be_hidden()
     expect(history_reply.locator(".run-expand")).to_have_text("展开")
@@ -354,6 +654,7 @@ def test_sidebar_compact_sections_and_fixed_footer(chat_page, tmp_path):
     assert page.locator("#sec-projects .side-sec-head").bounding_box()["height"] == 36
     assert page.locator("#sec-recent .side-sec-head").bounding_box()["height"] == 36
     assert page.locator("#sec-state .side-sec-head").bounding_box()["height"] == 36
+    page.locator('#memory-backups summary').click()
     expect(page.locator("#backup-list")).to_contain_text("准备 Agent 面试")
     expect(page.locator("#backup-list")).not_to_contain_text("agent_20260908")
     footer = page.locator(".sidebar-foot").bounding_box()
@@ -428,10 +729,11 @@ def test_daily_nyalume_uses_inline_card_not_modal(chat_page, tmp_path):
     expect(card).to_have_attribute("data-finish", "holo")
     expect(card.locator(".daily-nyalume-art")).to_have_count(1)
     expect(page.locator(".modal-overlay:not(.hidden)")).to_have_count(0)
-    assert card.locator(".daily-nyalume-portrait").bounding_box()["width"] <= 280
+    assert card.locator(".daily-nyalume-art").bounding_box()["width"] <= 280
     page.set_viewport_size({"width": 640, "height": 760})
+    page.wait_for_function("document.getElementById('daily-nyalume-popover').getBoundingClientRect().right <= innerWidth")
     popover_box = page.locator("#daily-nyalume-popover").bounding_box()
-    portrait_box = card.locator(".daily-nyalume-portrait").bounding_box()
+    portrait_box = card.locator(".daily-nyalume-art").bounding_box()
     assert popover_box["x"] >= 0
     assert popover_box["x"] + popover_box["width"] <= 640
     assert portrait_box["width"] <= min(280, popover_box["width"])
@@ -448,6 +750,46 @@ def test_daily_nyalume_uses_inline_card_not_modal(chat_page, tmp_path):
     expect(page.locator("#daily-nyalume-layer")).to_have_class("hidden")
     page.locator("#daily-nyalume-btn").click()
     expect(page.locator(".daily-nyalume-card")).to_be_visible()
+    assert not errors
+
+
+def test_daily_cards_share_layers_drag_flip_and_album_art(chat_page, tmp_path):
+    page, errors, _ = chat_page
+    page.locator("#daily-nyalume-btn").click()
+    art = page.locator(".daily-nyalume-art")
+    expect(art.locator(".daily-card-layer")).to_have_count(4)
+    assert art.locator("img").evaluate_all("imgs => imgs.every(i => i.complete && i.naturalWidth === 1024)")
+    bounds = art.bounding_box()
+    x, y = bounds["x"] + bounds["width"] / 2, bounds["y"] + bounds["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 60, y + 30, steps=5)
+    page.mouse.up()
+    assert art.evaluate("el => parseFloat(el.style.getPropertyValue('--card-ry'))") > 0
+    assert art.evaluate("el => parseFloat(el.style.getPropertyValue('--parallax-x'))") > 0
+    page.get_by_role("button", name="翻面 · 看小秘密").click()
+    expect(art).to_have_class("daily-nyalume-art flipped")
+    expect(art.locator(".daily-card-back")).to_have_attribute("aria-hidden", "false")
+    expect(art.locator(".daily-card-egg")).to_contain_text("大王")
+    page.get_by_role("button", name="翻回正面").click()
+    page.get_by_role("button", name="查看收藏卡片").click()
+    expect(page.locator(".daily-card-thumb img")).to_have_attribute("src", "/static/daily_nyalume/lucky.png?v=trio-v1")
+    page.locator(".daily-card-thumb").click()
+    expect(art.locator(".daily-card-layer")).to_have_count(4)
+    page.get_by_role("button", name="翻面 · 看小秘密").click()
+    expect(art.locator(".daily-card-egg")).to_contain_text("大王")
+    page.emulate_media(reduced_motion="reduce")
+    page.get_by_role("button", name="翻回正面").click()
+    expect(art.locator(".daily-card-front")).to_have_attribute("aria-hidden", "false")
+    eggs = []
+    for profile in page.evaluate("Object.keys(NyalumeCardCatalog)"):
+        page.evaluate("profile => renderDailyNyalume({profile, tone: profile, name: NyalumeCardCatalog[profile].title, score: 50, date: '2026-09-08', blessing: '测试'})", profile)
+        expect(art).to_have_attribute("data-profile", profile)
+        expect(art.locator(".daily-card-layer")).to_have_count(4)
+        page.get_by_role("button", name="翻面 · 看小秘密").click()
+        eggs.append(art.locator(".daily-card-egg").inner_text())
+    assert len(set(eggs)) == 11
+    page.screenshot(path=str(tmp_path / "daily-card-back.png"))
     assert not errors
 
 
@@ -506,7 +848,7 @@ def test_shared_memory_controls_and_daily_session(chat_page):
     requests = []
     page.route('**/api/state*', lambda route: route.fulfill(content_type='application/json', body=json.dumps(
         {'summary': '', 'notes': [], 'docs': [], 'reminders': [], 'mode': 'daily', 'affection': 50,
-         'shared_memories': [{'id': 'mem-test', 'content': '称呼：小林', 'scope': 'shared', 'updated_at': time.time()}]})))
+         'shared_memories': [{'id': 'mem-test', 'content': '称呼：小林', 'scope': 'shared', 'updated_at': time.time(), 'proactive': 1, 'category': 'user', 'title': '称呼', 'summary': '称呼：小林', 'keywords': []}]})))
     def edit(route):
         requests.append(json.loads(route.request.post_data or '{}'))
         route.fulfill(content_type='application/json', body='{"ok":true}')
@@ -635,7 +977,7 @@ def test_stream_edit_and_small_window(chat_page, tmp_path):
     page.evaluate("finishReply('工具参数分多次到达，需要先拼接完整 JSON，再校验并执行。')")
     page.wait_for_function("!state.busy")
     expect(page.locator(".latest-turn")).not_to_have_class("pending-turn")
-    expect(page.locator(".latest-turn .reply-meta-top")).to_contain_text("思考完毕喵～ · 2 秒 · 2 个步骤")
+    expect(page.locator(".latest-turn .reply-meta-top")).to_contain_text("算好了结果喵～ · 2 秒 · 2 个步骤")
     expect(page.locator(".latest-turn .proc")).to_be_hidden()
     expect(page.locator(".latest-turn .run-expand")).to_have_text("展开")
     expect(page.locator(".latest-turn")).not_to_contain_text("执行详情")
@@ -673,7 +1015,7 @@ def test_stream_edit_and_small_window(chat_page, tmp_path):
     assert not errors
 
 
-def test_tool_results_code_blocks_file_folding_and_time_dividers(chat_page):
+def test_tool_results_code_blocks_file_folding_and_time_dividers(chat_page, tmp_path):
     page, errors, _ = chat_page
     expect(page.locator(".time-divider")).to_have_count(2)
     expect(page.locator(".time-divider").first).to_contain_text("今天")
@@ -683,18 +1025,23 @@ def test_tool_results_code_blocks_file_folding_and_time_dividers(chat_page):
     page.evaluate("pushEvent({type:'tool', name:'run_code', desc:'运行 python'})")
     page.evaluate("""pushEvent({type:'tool_result', name:'run_code', result:'第一步输出：42',
       paths:['D:\\\\work\\\\demo-project\\\\workspace\\\\demo.py']})""")
+    page.locator(".tool-group-head").first.click()
     expect(page.locator(".tool-card-output")).to_contain_text("第一步输出：42")
     page.evaluate("pushEvent({type:'tool', name:'run_code', desc:'运行测试'})")
     page.evaluate("pushEvent({type:'tool_result', name:'run_code', result:'测试通过'})")
     expect(page.locator(".tool-group").first.locator(".tool-group-head")).to_have_text(
-        "运行命令 · 2 步"
+        "运行了命令喵"
     )
+    page.evaluate("pushReply('命令完成了，接下来读结果文件。')")
     page.evaluate("pushEvent({type:'tool', name:'file_read', desc:'读取结果文件'})")
     page.evaluate("pushEvent({type:'tool_result', name:'file_read', result:'第二步输出：完成'})")
     expect(page.locator(".tool-card-output").nth(2)).to_contain_text("第二步输出：完成")
     expect(page.locator(".tool-group").nth(1).locator(".tool-group-head")).to_have_text(
-        "读取与检索 · 1 步"
+        "查阅了资料喵"
     )
+    assert page.locator('.tool-feed').evaluate("el => [...el.children].map(node => node.className)") == ['tool-group', 'process-commentary', 'tool-group']
+    assert page.locator('.tool-card-output').first.evaluate("el => getComputedStyle(el).userSelect") != 'none'
+    page.evaluate("pushReply('我再查一下网页资料。')")
     page.evaluate("pushEvent({type:'tool', name:'web_search', desc:'联网搜索「千恋万花」'})")
     page.evaluate("""pushEvent({type:'tool_result', name:'web_search', result:
       '「千恋万花」的搜索结果：\\n1. 千恋万花官网\\n   https://example.com/official\\n   官方作品介绍\\n2. 千恋万花资料\\n   https://example.com/wiki\\n   角色与剧情资料'})""")
@@ -708,10 +1055,15 @@ def test_tool_results_code_blocks_file_folding_and_time_dividers(chat_page):
     expect(search_card.locator(".search-results-fold a").first).to_have_attribute(
         "href", "https://example.com/official"
     )
+    page.locator('.tool-group').first.evaluate('el => el.open = false')
+    page.screenshot(path=str(tmp_path / 'interleaved-workflow.png'))
+    print('PREVIEW', tmp_path / 'interleaved-workflow.png')
     page.evaluate("finishReply('结果如下：\\n```python\\nprint(42)\\n```')")
     page.wait_for_function("!state.busy")
     expect(page.locator(".latest-turn .proc")).to_be_hidden()
+    assert page.locator('.latest-turn .tool-group').evaluate_all('nodes => nodes.every(node => !node.open)')
     page.locator(".latest-turn .run-expand").click()
+    page.locator(".latest-turn .tool-group-head").first.click()
     expect(page.locator(".latest-turn .local-path-link")).to_have_attribute(
         "title", "D:\\work\\demo-project\\workspace\\demo.py"
     )
@@ -744,4 +1096,99 @@ def test_tool_results_code_blocks_file_folding_and_time_dividers(chat_page):
     }""")
     assert labels[0].startswith("昨天 ")
     assert "月" in labels[1] and "日" in labels[1]
+    assert not errors
+
+
+def test_queue_insert_waits_for_cleanup_and_delete_is_clickable(chat_page):
+    page, errors, _ = chat_page
+    page.evaluate("""() => {
+      const previous = fetch; window.sentTexts = [];
+      window.fetch = (url, options) => {
+        if (url === '/api/chat') sentTexts.push(JSON.parse(options.body).message);
+        if (String(url).includes('/cancel?wait=true')) return new Promise(resolve => {
+          window.releaseStop = () => resolve(new Response('{"ok":true,"active":false}'));
+        });
+        return previous(url, options);
+      };
+    }""")
+    page.locator('#input').fill('正在进行')
+    page.locator('#send').click()
+    page.wait_for_function('state.busy')
+    for text in ['普通排队', '优先插入', '可以删除']:
+        page.locator('#input').fill(text)
+        page.locator('#send').click()
+    page.locator('#task-panel .task-row').filter(has_text='可以删除').get_by_role('button', name='删除这条排队消息').click()
+    expect(page.locator('#task-panel')).not_to_contain_text('可以删除')
+    page.locator('#task-panel .task-row').filter(has_text='优先插入').locator('button[aria-label^="插入"]').click()
+    page.wait_for_function('!state.busy && typeof releaseStop === "function"')
+    assert page.evaluate('sentTexts') == ['正在进行']
+    page.evaluate('releaseStop()')
+    expect(page.locator('.latest-turn .msg.user')).to_contain_text('优先插入')
+    page.wait_for_function('state.busy')
+    page.evaluate("finishReply('优先完成')")
+    expect(page.locator('.latest-turn .msg.user')).to_contain_text('普通排队')
+    page.evaluate("finishReply('全部完成')")
+    page.wait_for_function('!state.busy')
+    assert page.evaluate('sentTexts') == ['正在进行', '优先插入', '普通排队']
+    assert not errors
+
+
+def test_first_new_input_after_stop_is_sent_without_replacement(chat_page):
+    page, errors, _ = chat_page
+    page.locator('#input').fill('旧问题')
+    page.locator('#send').click()
+    page.wait_for_function('state.busy')
+    page.locator('#send').click()
+    page.wait_for_function('!state.busy')
+    page.locator('#input').fill('中断后的新问题')
+    page.locator('#send').click()
+    expect(page.locator('.latest-turn .msg.user')).to_contain_text('中断后的新问题')
+    page.evaluate("finishReply('第一次就收到')")
+    page.wait_for_function('!state.busy')
+    expect(page.locator('.latest-turn .reply-body')).to_contain_text('第一次就收到')
+    assert not errors
+
+
+def test_markdown_separator_lists_and_code_comments(chat_page):
+    page, errors, _ = chat_page
+    page.locator('#input').fill('格式检查')
+    page.locator('#send').click()
+    ticks = chr(96)
+    text = '# 标题\n\n正文 ' + ticks + '---' + ticks + '\n\n------\n- 第一项\n- 第二项\n\n> 引用\n\n' + ticks * 3 + 'python\n# 保留注释\nprint("------")\n' + ticks * 3 + '\n<img src=x onerror=alert(1)>'
+    page.evaluate('text => finishReply(text)', text)
+    page.wait_for_function('!state.busy')
+    body = page.locator('.latest-turn .reply-body')
+    expect(body.locator('h1')).to_have_text('标题')
+    expect(body.locator('hr')).to_have_count(1)
+    expect(body.locator('li')).to_have_count(2)
+    expect(body.locator('blockquote')).to_have_text('引用')
+    expect(body.locator('.code-block code')).to_contain_text('# 保留注释')
+    expect(body.locator('img')).to_have_count(0)
+    assert not errors
+
+
+def test_memory_editor_prefills_and_saves_all_fields(chat_page, tmp_path):
+    page, errors, _ = chat_page
+    row = dict(id='m1', category='domain', title='Python', summary='学习数据处理', content='练习 pandas', keywords=['Python'], updated_at=time.time(), scope='shared', proactive=0, source_text='我在学习 Python')
+    saved = []
+    page.route('**/api/state?*', lambda route: route.fulfill(content_type='application/json', body=json.dumps({'mode': 'workspace', 'notes': [], 'docs': [], 'summary': '', 'shared_memories': [row]})))
+    def save(route):
+        saved.append(route.request.post_data_json)
+        route.fulfill(content_type='application/json', body='{"ok":true}')
+    page.route('**/api/companionship/memories/m1', save)
+    page.evaluate('renderState()')
+    page.locator('#sec-state .side-sec-head').click()
+    expect(page.locator('#memory-cards')).to_contain_text('Python')
+    page.locator('#memory-cards').get_by_role('button', name='编辑', exact=True).click()
+    dialog = page.locator('#memory-editor')
+    expect(dialog.locator('[name="content"]')).to_have_value('练习 pandas')
+    dialog.locator('[name="summary"]').fill('改学 Rust')
+    dialog.locator('[name="keywords"]').fill('Rust，系统编程')
+    page.screenshot(path=str(tmp_path / 'memory-editor.png'))
+    print('PREVIEW', tmp_path / 'memory-editor.png')
+    dialog.get_by_role('button', name='保存记忆').click()
+    expect(dialog).to_be_hidden()
+    assert saved[0]['summary'] == '改学 Rust' and saved[0]['keywords'] == ['Rust', '系统编程']
+    page.locator('#memory-search').fill('不存在')
+    expect(page.locator('#memory-cards')).to_contain_text('没有找到')
     assert not errors

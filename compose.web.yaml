@@ -1,0 +1,86 @@
+name: nyalume-web
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nyalume
+      POSTGRES_USER: nyalume
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.web}
+    volumes:
+      - web_database:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U nyalume -d nyalume']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    mem_limit: 384m
+    pids_limit: 100
+    logging: &logs
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+  api:
+    image: ${NYALUME_IMAGE:-nyalume-web:local}
+    build:
+      context: .
+      dockerfile: cloud_service/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://nyalume:${POSTGRES_PASSWORD}@postgres:5432/nyalume
+      NYALUME_TOKEN_SECRET: ${NYALUME_TOKEN_SECRET:?Set NYALUME_TOKEN_SECRET in .env.web}
+      NYALUME_WEB_ONLY: '1'
+      WEB_MESSAGE_CHARS: ${WEB_MESSAGE_CHARS:-16000}
+      WEB_MEMORY_CHARS: ${WEB_MEMORY_CHARS:-12000}
+      WEB_SESSIONS: ${WEB_SESSIONS:-100}
+      WEB_SESSION_MESSAGES: ${WEB_SESSION_MESSAGES:-2000}
+      WEB_ACCOUNT_MESSAGES: ${WEB_ACCOUNT_MESSAGES:-20000}
+      WEB_ACCOUNT_BYTES: ${WEB_ACCOUNT_BYTES:-134217728}
+      WEB_CONTEXT_CHARS: ${WEB_CONTEXT_CHARS:-48000}
+      WEB_BODY_KIB: ${WEB_BODY_KIB:-256}
+      SMTP_DAILY_LIMIT: ${SMTP_DAILY_LIMIT:-200}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-1}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-0}
+    command: [uvicorn, cloud_service.app:app, --host, 0.0.0.0, --port, '8080', --workers, '1', --proxy-headers, --forwarded-allow-ips, '*', --no-access-log]
+    # Only the reverse proxy can reach this port; never publish 8080 on the host.
+    expose: ['8080']
+    read_only: true
+    tmpfs: [/tmp:size=32m]
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    mem_limit: 640m
+    pids_limit: 100
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *logs
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?Set SITE_ADDRESS to your domain}
+      WEB_BODY_KIB: ${WEB_BODY_KIB:-256}
+    ports:
+      - '${HTTP_PORT:-80}:80'
+      - '${HTTPS_PORT:-443}:443'
+    volumes:
+      - ./cloud_service/Caddyfile:/etc/caddy/Caddyfile:ro
+      - web_caddy_data:/data
+      - web_caddy_config:/config
+    depends_on:
+      api: {condition: service_healthy}
+    mem_limit: 128m
+    logging: *logs
+volumes:
+  web_database:
+  web_caddy_data:
+  web_caddy_config:

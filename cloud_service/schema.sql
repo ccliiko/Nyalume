@@ -75,3 +75,16 @@ CREATE TABLE IF NOT EXISTS password_reset_codes (
 
 CREATE INDEX IF NOT EXISTS password_reset_user_created_idx
     ON password_reset_codes (user_id, created_at DESC);
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS email_codes (
+    id UUID PRIMARY KEY,
+    email TEXT NOT NULL,
+    purpose TEXT NOT NULL CHECK (purpose IN ('register','reset','verify')),
+    code_hash TEXT NOT NULL,
+    attempts SMALLINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS email_codes_lookup ON email_codes(email,purpose,created_at DESC);

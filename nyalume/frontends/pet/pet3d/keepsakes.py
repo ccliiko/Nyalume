@@ -77,13 +77,14 @@ class Keepsakes:
         if folder.resolve() != root.resolve() / folder.name:
             raise OSError("奇幻手记目录被重定向")
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"第{int(chapter['revision']):04d}章.txt"
+        unit = "回合" if "turn" in chapter else "章"
+        path = folder / f"第{int(chapter['revision']):04d}{unit}.txt"
         options = "\n".join(f"{i}. {c['label']}：{c['text']}" for i, c in enumerate(chapter['choices'], 1))
         facts = "\n".join(f"- {value}" for value in chapter['canon'].values())
         plan = chapter.get('plan', {})
         intentions = "\n".join(f"{label}：{plan[key]}" for key, label in (
             ('aim', '她的目标'), ('next_step', '下一步'), ('waiting_for', '等你决定'), ('lesson', '这次记住了')) if plan.get(key))
-        text = (f"{chapter['title']} · 第{chapter['revision']}章\n\n{chapter['narrative']}\n\n"
+        text = (f"{chapter['title']} · 第{chapter['revision']}{unit}\n\n{chapter['narrative']}\n\n"
                 f"你的回应：{chapter['user_response'] or '等待你回应'}\n\n接下来可以……\n{options}\n"
                 "在聊天窗口选择一个方向，或者直接输入自己的做法。\n\n"
                 f"同行关系：{chapter['bond']}\n地点：{chapter['location']}\n"

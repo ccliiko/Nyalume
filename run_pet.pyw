@@ -27,14 +27,19 @@ def _run_frozen_child() -> bool:
         web_chat_main()
         return True
     if role == "--web-server":
+        import argparse
         import uvicorn
 
         from nyalume.frontends.web.server import app
 
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--port', type=int, default=8000)
+        options = parser.parse_args(sys.argv[2:])
+
         uvicorn.run(
             app,
             host="127.0.0.1",
-            port=8000,
+            port=options.port,
             log_level="warning",
             log_config=None,
         )

@@ -35,8 +35,8 @@
   <details id="plan" hidden><summary>她在惦记什么</summary><div id="plan-copy"></div></details>
   <details id="diagnostics" hidden><summary>查看最近运行记录</summary><div id="diagnostic-copy" class="muted"></div></details>
   <section id="log" aria-label="冒险记录"></section>
-  <section id="empty" hidden><h2>小窝之外，还有未曾抵达的世界。</h2><p class="muted">陪她拆开第一封来信，决定你们的下一步。</p><button id="start" class="primary">开启第一章</button></section>
-  <fieldset id="choices" hidden><legend>你想怎么回应？</legend><div id="cards"></div><button id="choose" class="primary" disabled>发送这个回应</button></fieldset>
+  <section id="empty" hidden><h2>小窝之外，还有未曾抵达的世界。</h2><p class="muted">陪她拆开第一封来信，决定你们的下一步。</p><button id="start" class="primary">走进开场</button></section>
+  <fieldset id="choices" hidden><legend id="decision">你想怎么回应？</legend><div id="cards"></div><button id="choose" class="primary" disabled>发送这个回应</button></fieldset>
 </main>
 <form id="composer">
   <section id="feedback" aria-label="当前进展" hidden>
@@ -88,7 +88,7 @@
     const data=await api('/api/fantasy');sid=data.session_id;chapter=data.chapter||{};
     $('diagnostics').hidden=!data.last_run;$('diagnostic-copy').replaceChildren();
     if(data.last_run){
-      const run=data.last_run,names={worldbook:'世界底稿',chapter:'章节存档',chat_stream:'章节生成',check_chapter:'章节预检',recall_chapters:'查阅旧手记'};
+      const run=data.last_run,names={worldbook:'世界底稿',chapter:'回合存档',chat_stream:'回合生成',check_chapter:'回合预检',recall_chapters:'查阅旧手记'};
       const status={running:'进行中',completed:'已完成',error:'未完成',cancelled:'已停止'};
       const lines=[new Date(run.started_at*1000).toLocaleString()+' · '+(status[run.status]||run.status)+' · '+Math.round(run.duration_ms/1000)+'秒',
         ...(run.spans||[]).map(s=>(names[s.name]||s.name)+' · '+(s.status==='error'?'未通过':'已结束')+' · '+Math.round(s.duration_ms/1000)+'秒'+(s.reason?'：'+s.reason:''))];
@@ -100,10 +100,10 @@
     const last=(data.messages||[]).filter(row=>row.role==='assistant').at(-1);
     if(chapter.narrative && last?.content!==chapter.narrative)message('assistant',chapter.narrative);
     $('empty').hidden=!!chapter.narrative;
-    $('start').textContent=chapter.worldbook?'继续开启第一章':'开启第一章';
+    $('start').textContent=chapter.worldbook?'继续走进开场':'走进开场';
     $('summary').textContent=chapter.narrative
       ? [chapter.title,chapter.bond,chapter.location,chapter.status==='paused'?'已暂停':chapter.status==='completed'?'本篇已完成':'冒险进行中'].filter(Boolean).join(' · ')
-      : chapter.worldbook?'世界底稿与初始背包已保存。现在可以开启第一章。':'三个方向，或你自己的答案。章节会留在小窝的「奇幻手记」里。';
+      : chapter.worldbook?'世界底稿与初始背包已保存。现在可以走进开场。':'三个方向，或你自己的答案。每次互动会留在小窝的「奇幻手记」里。';
     const book=chapter.worldbook;$('worldbook').hidden=!book;$('worldbook-copy').replaceChildren();
     if(book){
       $('worldbook-title').textContent='世界底稿 · '+book.name;
@@ -120,6 +120,7 @@
       const line=document.createElement('p');line.textContent=label+'：'+chapter.plan[key];$('plan-copy').appendChild(line);
     }
     $('cards').replaceChildren();selected='';
+    $('decision').textContent=chapter.open_question||'你想怎么回应？';
     const choices=chapter.choices||[];$('choices').hidden=!choices.length;
     for(const choice of choices){
       const label=document.createElement('label');label.className='choice';
@@ -173,13 +174,13 @@
           if(fromInput && $('input').value.trim()===text)$('input').value='';
         }
       }catch(error){errorText=errorText||error.message}
-      controls();showStatus(errorText||'已记入奇幻手记。',errorText?'error':'done',!completed);
+      controls();showStatus(errorText||'这一段已记下，接下来由你决定。',errorText?'error':'done',!completed);
     }
   }
   $('composer').onsubmit=event=>{event.preventDefault();void send($('input').value,true)};
   $('input').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();void send($('input').value,true)}};
   $('choose').onclick=()=>void send(selected);
-  $('start').onclick=()=>void send('请开启第一章奇幻冒险，让我决定如何参与。');
+  $('start').onclick=()=>void send('请走进开场奇幻冒险，让我决定如何参与。');
   $('stop').onclick=()=>void stop();
   $('retry').onclick=()=>{if(lastAttempt)void send(lastAttempt.text,lastAttempt.fromInput)};
   $('dismiss').onclick=()=>{$('feedback').hidden=true};

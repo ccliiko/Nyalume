@@ -162,7 +162,7 @@ def test_real_window_check_and_promise_lifecycle(chat_page, real_motion_endpoint
     expect(page.locator("#companion-list")).to_contain_text("我们约好的事")
     page.get_by_role("button", name="我们完成了").click()
     expect(page.locator("#companion-list")).to_contain_text("一起完成的事")
-    assert "用户确认完成" in agent._system_prompt()
+    assert "不能自行把约定标记完成" in agent._system_prompt()
     page.locator("#pet-motion-check").click()
     expect(page.locator("#pet-motion-report table tbody tr")).to_have_count(1)
     expect(page.locator("#companion-list")).to_contain_text("检查了 1 支动作")

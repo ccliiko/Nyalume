@@ -849,6 +849,33 @@
     .task-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #3a4049; }
     .task-state { color: #8a93a3; flex: 0 0 auto; font-size: 11px; }
     .task-row .mini-btn { padding: 0 6px; }
+    .inline-edit-modal {
+      position: fixed; inset: 0; z-index: 9999;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.35); backdrop-filter: blur(2px);
+    }
+    .inline-edit-modal.hidden { display: none; }
+    .inline-edit-box {
+      background: #fff; border-radius: 14px; padding: 20px 22px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.22);
+      width: min(480px, calc(100vw - 48px));
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    .inline-edit-box h3 { margin: 0; font-size: 15px; color: #2b3542; }
+    .inline-edit-box textarea {
+      width: 100%; min-height: 72px; resize: vertical;
+      border: 1px solid #d0d7e2; border-radius: 8px; padding: 10px 12px;
+      font: inherit; font-size: 14px; color: #2b3542; background: #f7f9fc;
+    }
+    .inline-edit-box textarea:focus { outline: none; border-color: #0b57d0; background: #fff; }
+    .inline-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .inline-edit-actions button {
+      border: 1px solid #d0d7e2; border-radius: 8px; padding: 7px 18px;
+      font-size: 13px; cursor: pointer; background: #fff; color: #3a4049;
+    }
+    .inline-edit-actions button:hover { background: #eef1f6; }
+    .inline-edit-actions button.primary { background: #0b57d0; color: #fff; border-color: #0b57d0; }
+    .inline-edit-actions button.primary:hover { background: #0949b8; }
     #input-row {
       display: grid;
       grid-template-columns: auto auto minmax(0, 1fr) auto;
@@ -1445,27 +1472,9 @@
     .reply-choice-hint { display: block; margin-top: 8px; color: #958678; font-size: 11px; }
     .reply-story { margin-bottom: 10px; color: #6c7251; }
     .reply-story strong, .reply-story small { display: block; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
-    #pet-plan-toggle { border: 1px solid #d7e5d5; border-radius: 12px; padding: 5px 9px; background: #f4faf2; color: #446444; cursor: pointer; white-space: nowrap; }
-    #pet-plan-panel { position: fixed; top: 62px; right: 12px; z-index: 70; width: min(420px, calc(100vw - 24px)); max-height: calc(100vh - 160px); overflow-y: auto; padding: 18px; box-sizing: border-box; border: 1px solid #dce6d6; border-radius: 20px; background: #fcfff8; box-shadow: 0 14px 38px #293b2926; color: #354936; }
-    #pet-plan-panel.hidden { display: none; }
-    #pet-plan-panel .side-mini-btn { width: auto; margin: 0; padding: 7px 12px; }
-    #pet-plan-panel h3 { margin: 0 0 8px; font-size: 16px; }
-    #pet-plan-panel p { line-height: 1.7; margin: 8px 0; }
-    #pet-plan-panel small { color: #657562; }
-    .plan-art { text-align: center; font-size: 54px; padding: 10px; background: linear-gradient(var(--plan-color, #e9f3df), #fffaf0); border-radius: 14px; margin-top: 12px; }
-    .plan-portrait { display: block; width: 160px; height: 160px; object-fit: contain; margin: auto; }
-    .plan-portrait[hidden] { display: none; }
-    .plan-image-missing { font-size: 13px; }
-    .plan-keepsake { border-top: 1px solid #d9dfd5; margin-top: 16px; padding-top: 8px; }
-    .plan-company { background: #eef3e8; padding: 10px; border-radius: 10px; }
-    .plan-theme-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 16px 0 8px; }
-    .plan-theme-picker select { max-width: 160px; padding: 6px; border-radius: 8px; }
-    .plan-steps { display: flex; justify-content: space-between; gap: 5px; list-style: none; padding: 0; font-size: 12px; }
-    .plan-steps li { color: #91a18b; }
-    .plan-steps .reached { color: #426a3a; font-weight: 600; }
-    #pet-plan-feedback { font-size: 12px; color: #755446; }
   </style>
-  <link rel="stylesheet" href="/static/companion.css">
+  <link rel="stylesheet" href="/static/companion.css?v=20261007-slash-ime">
+  <link rel="stylesheet" href="/static/daily-card.css?v=trio-v1">
 </head>
 <body>
   <script>if (new URLSearchParams(location.search).get('quick') === '1') document.body.classList.add('quick-chat');</script>
@@ -1611,7 +1620,6 @@
         <button id="sidebar-toggle" type="button" aria-label="打开导航" aria-expanded="false" aria-controls="sidebar">☰</button>
         <span id="chat-title">新对话</span>
         <button id="focus-chip" type="button" hidden title="查看陪伴专注"></button>
-        <button id="pet-plan-toggle" type="button" aria-expanded="false" aria-controls="pet-plan-panel">🌱 小计划</button>
         <a id="fantasy-entry" href="/fantasy" target="_blank" rel="noopener" style="white-space:nowrap;font-size:13px;color:#786198;text-decoration:none" title="在独立窗口开始或继续剧情">✦ 奇幻冒险 ↗</a>
         <a id="full-chat-link" href="/" target="_blank" rel="noopener">完整聊天 ↗</a>
         <button id="daily-nyalume-btn" type="button" title="每天 0:00 刷新">✦ 今日 Nyalume</button>
@@ -1643,7 +1651,7 @@
             <div class="hero-chapter">✧ 与你相伴的日常</div>
             <h1><span id="home-greeting">欢迎回来，</span><br>今天的故事，<em>也想有你。</em></h1>
             <div class="home-dialogue"><span class="dialogue-name">Nyalume <span>✧</span></span><p>今天想认真一点，还是想被陪着？<br>无论哪一种，都给你留了位置喵。</p></div>
-            <img id="home-portrait" class="home-portrait" src="/api/pet/plan/portrait" alt="在小窝等你的 Nyalume" width="300" height="300" hidden>
+            <img id="home-portrait" class="home-portrait" src="/api/pet/portrait" alt="在小窝等你的 Nyalume" width="300" height="300" hidden>
             <svg class="home-cat" viewBox="0 0 200 180" fill="none" aria-hidden="true">
               <circle cx="106" cy="83" r="65" fill="#edf0e4"/>
               <path d="M24 143h155" stroke="#c5cdb8" stroke-width="1.5"/>
@@ -1708,7 +1716,6 @@
           <div class="home-section-head"><h2>✧ 小窝里的支线故事</h2><span>想起我时，就来坐坐吧</span></div>
           <div class="home-rituals">
             <button id="home-daily" class="home-ritual" type="button"><span class="ritual-symbol">✧</span><strong>今日 Nyalume</strong><small>收下一句，只属于今天的祝福</small></button>
-            <button id="home-plan" class="home-ritual" type="button"><span class="ritual-symbol">♧</span><strong>她的小计划</strong><small>看看小窝，又有了什么变化</small></button>
             <a class="home-ritual" href="/fantasy" target="_blank" rel="noopener"><span class="ritual-symbol">☾</span><strong>奇幻冒险 ↗</strong><small>在另一段故事里，和她相遇</small></a>
           </div>
           <div class="home-section-head"><h2>我们的进度手记</h2><span id="focus-today">专注足迹 · 本地保存</span></div>
@@ -1716,7 +1723,6 @@
           <div class="home-footer"><span>TO BE CONTINUED / 和你的下一页</span><span>故事不用赶，我会在这里喵。</span></div>
         </div>
       </section>
-      <section id="pet-plan-panel" class="hidden" aria-label="她的小计划"></section>
       <div id="daily-nyalume-layer" class="hidden">
         <section id="daily-nyalume-popover" aria-live="polite"></section>
       </div>
@@ -1724,6 +1730,7 @@
       <div id="log"><div class="empty-hint">🐾 主人想聊点什么喵？点左侧会话或 ＋ 开始～</div></div>
       <div id="task-panel" class="hidden"></div>
       <div id="input-row">
+        <div id="slash-menu" role="listbox" aria-label="聊天快捷指令" hidden></div>
         <textarea id="input" rows="3" placeholder="今天的心事，或想一起完成的小任务，都可以告诉我喵…" aria-label="聊天输入" title="Enter 发送，Shift+Enter 换行" autocomplete="off"></textarea>
         <div class="add-wrap">
           <button id="add-btn" type="button" title="添加：图片 / 文件 / 文件夹">＋</button>
@@ -1744,7 +1751,7 @@
         </div>
         <button id="send">发送</button>
       </div>
-      <div id="composer-caption"><span>Enter 发送 · Shift + Enter 换行</span><span id="draft-status" role="status">草稿仅存于当前浏览器</span></div>
+      <div id="composer-caption"><span>Enter 发送 · Shift + Enter 换行 · / 快捷指令</span><span id="goal-mode" hidden>目标模式 <button id="goal-exit" type="button">退出</button></span><span id="draft-status" role="status">草稿仅存于当前浏览器</span></div>
       <div id="chat-floats">
         <div id="cat-tap-wrap">
           <button id="cat-tap-btn" type="button" title="敲敲猫猫头" aria-label="敲敲猫猫头">
@@ -1786,7 +1793,9 @@
     <div class="command-foot">↑ ↓ 选择 · Enter 打开 · Esc 关闭</div>
   </dialog>
   <div id="ui-notice" role="status" hidden></div>
-  <script src="/static/companion.js"></script>
+  <script src="/static/daily_nyalume/catalog.js?v=trio-v1"></script>
+  <script src="/static/daily-card.js?v=trio-v1"></script>
+  <script src="/static/companion.js?v=20261007-slash-ime"></script>
   <script>
     const log = document.getElementById("log");
     let followLatest = true;
@@ -2092,7 +2101,12 @@
       const res = await fetch(path, options);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || "HTTP " + res.status);
+        const detail = body.detail;
+        const msg = typeof detail === "string" ? detail
+          : Array.isArray(detail) ? detail.map(d => d.msg || JSON.stringify(d)).join("; ")
+          : detail && typeof detail === "object" ? JSON.stringify(detail)
+          : "HTTP " + res.status;
+        throw new Error(msg);
       }
       return res.json();
     }
@@ -2286,29 +2300,7 @@
       score.className = "daily-nyalume-score";
       score.textContent = data.score + " 分";
       title.appendChild(score);
-      const image = document.createElement("img");
-      image.className = "daily-nyalume-portrait";
-      image.src = data.portrait_url;
-      image.alt = data.name + " 卡片";
-      const art = document.createElement("div");
-      art.className = "daily-nyalume-art";
-      art.appendChild(image);
-      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-        art.addEventListener("pointermove", event => {
-          const rect = art.getBoundingClientRect();
-          const x = Math.max(0, Math.min(100, (event.clientX - rect.left) / rect.width * 100));
-          const y = Math.max(0, Math.min(100, (event.clientY - rect.top) / rect.height * 100));
-          art.style.setProperty("--shine-x", x.toFixed(1));
-          art.style.setProperty("--shine-y", y.toFixed(1));
-          art.style.setProperty("--shine-dx", ((x - 50) * .12).toFixed(1) + "%");
-          art.style.setProperty("--shine-dy", ((y - 50) * .12).toFixed(1) + "%");
-          art.style.setProperty("--card-rx", ((50 - y) * .06).toFixed(2) + "deg");
-          art.style.setProperty("--card-ry", ((x - 50) * .06).toFixed(2) + "deg");
-        });
-        art.addEventListener("pointerleave", () => {
-          ["--shine-x", "--shine-y", "--shine-dx", "--shine-dy", "--card-rx", "--card-ry"].forEach(name => art.style.removeProperty(name));
-        });
-      }
+      const {art, flip} = NyalumeCards.create(data);
       const blessing = document.createElement("div");
       blessing.className = "daily-nyalume-blessing";
       blessing.textContent = data.blessing;
@@ -2333,7 +2325,7 @@
       collect.setAttribute("aria-label", data.collected ? "取消珍藏" : "加入珍藏");
       collect.textContent = (data.collected ? "★" : "☆") + " 珍藏";
       collect.addEventListener("click", () => toggleDailyFlag(data, "collected"));
-      actions.append(like, collect);
+      actions.append(like, collect, flip);
 
       const footer = document.createElement("div");
       footer.className = "daily-nyalume-footer";
@@ -2433,7 +2425,7 @@
           button.type = "button";
           button.title = `${data.name} · ${data.score} 分`;
           const image = document.createElement("img");
-          image.src = data.portrait_url;
+          image.src = NyalumeCards.front(data.profile);
           image.alt = "";
           image.loading = "lazy";
           const imageWrap = document.createElement("div");
@@ -2561,12 +2553,23 @@
       }).join("\n");
     }
 
-    function addRunSummary(wrap, trace, detailBox, seconds = 0, errorText = "") {
+    function actionSummary(names, imageCount = names.filter(name => name === 'describe_image').length) {
+      const actions = new Set(names), labels = [];
+      if (['file_write', 'file_mkdir', 'file_move', 'file_delete', 'pdf_edit', 'office_edit'].some(name => actions.has(name))) labels.push('编辑了文件');
+      if (actions.has('run_code')) labels.push('运行了命令');
+      if (imageCount) labels.push('已查看 ' + imageCount + ' 张图像');
+      if (['file_read', 'file_list', 'search_files', 'search_docs', 'add_documents', 'skill_read_resource'].some(name => actions.has(name))) labels.push('查阅了资料');
+      if (names.some(name => name.startsWith('web_') || name.startsWith('browser_'))) labels.push('查阅了网页');
+      if (actions.has('calculator')) labels.push('算好了结果');
+      return (labels.length ? labels.join('、') : names.length ? '完成了 ' + names.length + ' 个操作' : '思考完毕') + '喵～';
+    }
+
+    function addRunSummary(wrap, trace, detailBox, seconds = 0, errorText = "", actionLabel = "") {
       const steps = Array.isArray(trace && trace.spans) ? trace.spans : [];
       const topMeta = document.createElement("div");
       topMeta.className = "reply-meta-top";
       const status = errorText ? "这次卡住了喵" : trace && trace.status === "max_rounds"
-        ? "想得有点久，先停一下喵" : "思考完毕喵～";
+        ? "想得有点久，先停一下喵" : actionLabel || actionSummary(steps.filter(step => step.kind === 'tool').map(step => step.name));
       const label = document.createElement("span");
       label.textContent = (errorText ? "⚠ " : "✓ ") + status + " · "
         + fmtDur(Number(trace ? trace.duration_ms / 1000 : seconds))
@@ -2646,16 +2649,17 @@
     }
 
     function appendRichText(el, text) {
-      const parts = String(text || "").split("**");
+      const parts = String(text || "").split(/(`[^`\n]+`)/);
       parts.forEach((part, i) => {
         if (!part) return;
         if (i % 2 === 1) {
-          const b = document.createElement("span");
-          b.className = "hl";
-          b.textContent = part;
-          el.appendChild(b);
+          const code = document.createElement('code');
+          code.textContent = part.slice(1, -1); el.appendChild(code);
         } else {
-          appendWithMedia(el, part);
+          part.split('**').forEach((piece, n) => {
+            if (n % 2) { const bold = document.createElement('strong'); bold.className = 'hl'; bold.textContent = piece; el.appendChild(bold); }
+            else appendWithMedia(el, piece);
+          });
         }
       });
     }
@@ -2719,6 +2723,30 @@
       let plain = [];
       const flush = () => { appendRichText(el, plain.join("\n")); plain = []; };
       for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (/^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})\s*$/.test(line)) {
+          flush(); el.appendChild(document.createElement('hr')); continue;
+        }
+        const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)(?:\s+#+)?\s*$/);
+        const quote = line.match(/^\s{0,3}>\s?(.*)$/);
+        const list = line.match(/^\s{0,3}(?:([-+*])|\d+[.)])\s+(.+)$/);
+        if (heading || quote || list) {
+          flush();
+          if (list) {
+            const kind = list[1] ? 'ul' : 'ol';
+            let node = el.lastChild;
+            if (!node || node.nodeType !== Node.ELEMENT_NODE || node.tagName.toLowerCase() !== kind) {
+              node = document.createElement(kind);
+              if (kind === 'ol') node.start = parseInt(line.trim(), 10);
+              el.appendChild(node);
+            }
+            const item = document.createElement('li'); appendRichText(item, list[2]); node.appendChild(item);
+          } else {
+            const node = document.createElement(heading ? 'h' + heading[1].length : 'blockquote');
+            appendRichText(node, heading ? heading[2] : quote[1]); el.appendChild(node);
+          }
+          continue;
+        }
         const header = tableCells(lines[i]);
         const separator = i + 1 < lines.length ? tableCells(lines[i + 1]) : null;
         if (!header || !separator || header.length !== separator.length
@@ -2762,7 +2790,7 @@
 
     function richInto(el, text) {
       el.textContent = "";
-      const raw = String(text || "").replace(/^#{1,6}[ \t]*/gm, "");
+      const raw = String(text || "");
       raw.split("```").forEach((part, i) => {
         if (i % 2) appendCodeBlock(el, part);
         else appendTextBlocks(el, part);
@@ -3013,19 +3041,26 @@
     }
 
     function cancelEditUser(div, originalText, meta) {
+      state.editingUser = null;
       div.classList.remove("editing");
       div.textContent = "";
       appendWithMedia(div, originalText);
       div.appendChild(meta);
       div.dataset.msgid = div.dataset.msgid || "";
+      void drainQueue();
     }
     function beginEditUser(div, msgId, originalText) {
-      if (state.busy || state.queue.length) { alert("Nyalume 还在忙喵，等这轮结束或先按停止再编辑吧～"); return; }
+      if (state.editingUser) return;
       const users = userMessages();
       if (!users.length || users[users.length - 1] !== div) {
         alert("只能编辑最近一次对话"); return;
       }
       const meta = div.querySelector(".reply-meta");
+      const wasBusy = state.busy;
+      const streamDone = activeStreamDone;
+      state.editingUser = div;
+      const stopping = wasBusy ? cancelActiveRun(true).then(() => streamDone) : Promise.resolve();
+      stopping.catch(() => {});
       div.removeChild(meta);
       div.textContent = "";
       div.classList.add("editing");
@@ -3040,12 +3075,20 @@
       const ok = document.createElement("button");
       ok.className = "mini-btn primary-mini";
       ok.textContent = "确认";
-      const finish = (apply) => {
+      const finish = async (apply) => {
+        if (ok.disabled) return;
         const text = box.value.trim();
         if (apply && !text) return;
-        if (apply && text === originalText) { cancelEditUser(div, originalText, meta); return; }
-        if (!apply) { cancelEditUser(div, originalText, meta); return; }
-        commitEdit(div, msgId, text, originalText, meta);
+        if (!apply || (text === originalText && !wasBusy)) {
+          await stopping.catch(() => {});
+          cancelEditUser(div, originalText, meta); return;
+        }
+        ok.disabled = cancel.disabled = true;
+        try {
+          await stopping.catch(() => cancelActiveRun(true).then(() => streamDone));
+          await commitEdit(div, msgId, text, originalText, meta);
+        } catch (e) { alert("暂时无法重发：" + e.message); }
+        finally { ok.disabled = cancel.disabled = false; }
       };
       cancel.addEventListener("click", () => finish(false));
       ok.addEventListener("click", () => finish(true));
@@ -3061,7 +3104,7 @@
       try {
         await api("/api/sessions/" + encodeURIComponent(state.currentId)
           + "/messages?message_id=" + realId, { method: "DELETE" });
-      } catch (e) { alert("没改成功喵：" + e.message); cancelEditUser(div, originalText, meta); return; }
+      } catch (e) { throw new Error("没改成功，编辑内容已保留：" + e.message); }
       const turn = div.closest(".chat-turn");
       while (turn.nextSibling) turn.nextSibling.remove();
       turn.remove();
@@ -3069,9 +3112,11 @@
       state.msgNodes = (state.msgNodes || []).filter((item) => item.el.isConnected);
       markLatestAssistant();
       markLatestUser();
-      state.queue = [];
+      state.editingUser = null;
+      state.stopped = false;
+      state.queue.unshift({id: 't' + (++taskSeq), text, pursuit: !!state.pursuitMode});
       renderTaskPanel();
-      await streamMessage(text);
+      await drainQueue();
     }
 
     let lastMotionReport = null;
@@ -3091,135 +3136,6 @@
       return html + '</tbody></table></div><div class="state-empty">' + esc(report.notice || '')
         + (report.memory_warning ? '<br>' + esc(report.memory_warning) : '') + '</div>';
     }
-
-    let planBusy = false, planArchive = false, planBefore = 0;
-    function planArt(plan) {
-      return '<div class="plan-art" style="--plan-color:' + esc(plan.color) + '">'
-        + (plan.portrait ? '<img class="plan-portrait" src="/api/pet/plan/portrait" alt="Nyalume 的 2D 形象"><small class="plan-image-missing" hidden>Nyalume 的形象文件暂时不在这里，成长纪念已保留。</small>'
-          : '<span aria-hidden="true">' + esc(plan.art) + '</span>') + '</div>';
-    }
-    async function loadPetPlan() {
-      const panel = document.getElementById('pet-plan-panel');
-      if (planBusy) return;
-      planBusy = true;
-      panel.querySelectorAll('button, select').forEach(b => b.disabled = true);
-      const oldScroll = panel.scrollTop;
-      try {
-        const [plan, themes, collection] = await Promise.all([
-          api('/api/pet/plan'), api('/api/pet/plan/themes'),
-          planArchive ? api('/api/pet/plan/collection?before=' + planBefore) : Promise.resolve([]),
-        ]);
-        panel.innerHTML = '<h3>' + (planArchive ? '小窝 · 纪念架' : '她的小计划' + (plan?.id ? ' · ' + esc(plan.title) : '')) + '</h3>';
-        const nav = document.createElement('button');
-        nav.type = 'button'; nav.className = 'side-mini-btn';
-        nav.textContent = planArchive ? '返回当前计划' : '打开纪念架';
-        nav.onclick = () => { planArchive = !planArchive; planBefore = 0; panel.scrollTop = 0; void loadPetPlan(); };
-        panel.appendChild(nav);
-        const add = (host, label, method, body) => {
-          const button = document.createElement('button');
-          button.type = 'button'; button.className = 'side-mini-btn'; button.textContent = label;
-          button.onclick = async () => {
-            if (planBusy) return;
-            planBusy = true;
-            panel.querySelectorAll('button, select').forEach(b => b.disabled = true);
-            try {
-              await api('/api/pet/plan' + (method === 'POST' ? '/start' : ''), {
-                method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(typeof body === 'function' ? body() : body),
-              });
-              planBusy = false;
-              await loadPetPlan();
-            } catch (error) {
-              document.getElementById('pet-plan-feedback').textContent = error.message;
-            } finally {
-              planBusy = false;
-              panel.querySelectorAll('button, select').forEach(b => b.disabled = false);
-            }
-          };
-          host.appendChild(button);
-          return button;
-        };
-        if (planArchive) {
-          panel.insertAdjacentHTML('beforeend', '<p><small>完成的小计划都留在这里。标记喜欢，会影响她下次挑选主题。</small></p>');
-          if (!collection.length) panel.insertAdjacentHTML('beforeend', '<p>这里还空着，等一个小计划慢慢完成吧。</p>');
-          for (const item of collection) {
-            const card = document.createElement('article');
-            card.className = 'plan-keepsake';
-            card.innerHTML = '<h4>' + esc(item.title + ' · ' + item.plant) + '</h4>' + planArt(item)
-              + '<small>' + esc(item.stage_day) + ' · 在 ' + item.company_count + ' 个阶段留下了陪伴</small>'
-              + '<p>' + esc(item.text) + '</p>';
-            add(card, item.liked ? '♥ 已喜欢 · 取消' : '♡ 喜欢这个计划', 'PATCH', {id: item.id, liked: !item.liked});
-            panel.appendChild(card);
-          }
-          if (collection.length === 20) {
-            const more = document.createElement('button');
-            more.type = 'button'; more.className = 'side-mini-btn'; more.textContent = '更早的纪念';
-            more.onclick = () => { planBefore = collection.at(-1).id; panel.scrollTop = 0; void loadPetPlan(); };
-            panel.appendChild(more);
-          }
-          if (planBefore) {
-            const latest = document.createElement('button');
-            latest.type = 'button'; latest.className = 'side-mini-btn'; latest.textContent = '回到最新纪念';
-            latest.onclick = () => { planBefore = 0; panel.scrollTop = 0; void loadPetPlan(); };
-            panel.appendChild(latest);
-          }
-        } else {
-          if (!plan?.id) {
-            panel.insertAdjacentHTML('beforeend', '<p>想给小窝添一点新东西。选个主题，也可以让我自己想。</p>');
-          } else {
-            panel.insertAdjacentHTML('beforeend', planArt(plan)
-              + '<ol class="plan-steps">' + plan.stages.map((label, i) =>
-                '<li class="' + (i <= plan.stage ? 'reached' : '') + '"' + (i === plan.stage ? ' aria-current="step"' : '') + '>' + esc(label) + '</li>').join('') + '</ol>'
-              + '<p>' + esc(plan.text) + '</p>'
-              + (plan.plant ? '<small>' + esc((plan.chosen_by === 'user' ? '你选的：' : '她自己选的：') + plan.plant) + '</small>' : '')
-              + '<p><small>' + (plan.paused ? '已暂停。恢复后按自己的节奏继续。' : '虚拟小计划 · 每个活跃日期走一小步，离线不扣分。') + '</small></p>'
-              + (plan.accompanied ? '<p class="plan-company" role="status">' + esc(plan.company_text) + '</p>' : ''));
-          }
-          const actions = document.createElement('div'); actions.className = 'companion-actions';
-          panel.appendChild(actions);
-          for (const choice of (plan?.choices || [])) add(actions, '选' + choice, 'PATCH', {id: plan.id, choice});
-          if (plan?.id) {
-            if (!plan.accompanied) add(actions, plan.stage === 3 ? '一起看看成果' : '陪她一会儿', 'PATCH', {id: plan.id, accompany: true});
-            add(actions, plan.liked ? '♥ 已喜欢 · 取消' : '♡ 喜欢这个计划', 'PATCH', {id: plan.id, liked: !plan.liked});
-            if (plan.stage < 3) add(actions, plan.paused ? '继续这个小计划' : '暂停小计划', 'PATCH', {id: plan.id, paused: !plan.paused});
-          }
-          if (!plan?.id || plan.stage === 0 || plan.stage === 3) {
-            const pick = document.createElement('div'); pick.className = 'plan-theme-picker';
-            const label = document.createElement('label'); label.textContent = plan?.stage === 0 ? '换个念头 ' : '下一个小计划 ';
-            const select = document.createElement('select'); select.setAttribute('aria-label', '小计划主题');
-            if (!plan?.id || plan.stage === 3) select.add(new Option('让她自己想', ''));
-            for (const theme of themes) select.add(new Option(theme.title, theme.kind));
-            if (plan?.stage === 0) select.value = plan.kind;
-            label.appendChild(select); pick.appendChild(label);
-            add(pick, plan?.stage === 0 ? '换这个主题' : '开始小计划', plan?.stage === 0 ? 'PATCH' : 'POST',
-              () => plan?.stage === 0 ? {id: plan.id, kind: select.value} : {kind: select.value || null});
-            panel.appendChild(pick);
-            panel.insertAdjacentHTML('beforeend', '<small>' + (plan?.stage === 0 ? '开始制作前可以换主题；换后重新选择，也会清除这次的陪伴和喜欢标记。' : '她会避开上一个主题，并更常选择你标记喜欢的主题。') + '</small>');
-          }
-        }
-        panel.insertAdjacentHTML('beforeend', '<p id="pet-plan-feedback" role="status"></p>');
-        panel.querySelectorAll('.plan-portrait').forEach(img => { img.onerror = () => { img.hidden = true; img.nextElementSibling.hidden = false; }; });
-        panel.scrollTop = oldScroll;
-      } catch (error) {
-        panel.textContent = '小计划暂时打不开：' + error.message;
-      } finally {
-        planBusy = false;
-      }
-    }
-    document.getElementById('pet-plan-toggle').onclick = () => {
-      const panel = document.getElementById('pet-plan-panel');
-      panel.classList.toggle('hidden');
-      document.getElementById('pet-plan-toggle').setAttribute('aria-expanded', String(!panel.classList.contains('hidden')));
-      if (!panel.classList.contains('hidden')) void loadPetPlan();
-    };
-    document.addEventListener('keydown', event => {
-      if (event.key === 'Escape') {
-        document.getElementById('pet-plan-panel').classList.add('hidden');
-        document.getElementById('pet-plan-toggle').setAttribute('aria-expanded', 'false');
-      }
-    });
-    setInterval(() => {
-      if (!planArchive && !document.getElementById('pet-plan-panel').classList.contains('hidden') && !document.getElementById('pet-plan-panel').contains(document.activeElement)) void loadPetPlan();
-    }, 30000);
 
     async function loadCompanion(before = 0) {
       const host = document.getElementById('companion-list');
@@ -3274,11 +3190,7 @@
       if (!button) return;
       const id = button.dataset.compMemory, action = button.dataset.action;
       let body = action === 'mute' ? {proactive: false} : {};
-      if (action === 'edit') {
-        const value = prompt('修正这条记忆为：');
-        if (!value?.trim()) return;
-        body = {content: value.trim()};
-      }
+      if (action === 'edit') { openMemoryEditor(memoryCards.find(m => m.id === id)); return; }
       try {
         await api('/api/companionship/memories/' + encodeURIComponent(id), {
           method: action === 'delete' ? 'DELETE' : 'PATCH',
@@ -3288,6 +3200,68 @@
       } catch (error) { alert(error.message); }
     });
 
+
+    let memoryCards = [];
+    function renderMemoryCards() {
+      const host = document.getElementById('memory-cards');
+      const query = document.getElementById('memory-search').value.trim().toLowerCase();
+      const category = document.getElementById('memory-category').value;
+      const labels = {user: '用户（您）', topic: '主题', domain: '领域'};
+      const rows = memoryCards.filter(m => (!category || m.category === category)
+        && [m.title, m.summary, m.content, ...(m.keywords || [])].join(' ').toLowerCase().includes(query));
+      host.innerHTML = rows.length ? rows.map(m => '<article class="memory-card">'
+        + '<div class="memory-card-heading"><strong>' + esc(m.title) + '</strong><span>' + labels[m.category] + '</span></div>'
+        + '<small>更新于 ' + new Date(m.updated_at * 1000).toLocaleString('zh-CN') + (m.scope === 'daily' ? ' · 日常对话' : ' · 跨对话') + '</small>'
+        + '<p>' + esc(m.summary) + '</p><div class="memory-keywords">'
+        + (m.keywords || []).map(word => '<span>' + esc(word) + '</span>').join('') + '</div>'
+        + '<details><summary>详情与来源</summary><p>' + esc(m.content) + '</p><small>' + esc(m.source_text) + '</small></details>'
+        + '<div class="memory-actions"><button type="button" data-comp-memory="' + esc(m.id) + '" data-action="edit">编辑</button>'
+        + (m.proactive ? '<button type="button" data-comp-memory="' + esc(m.id) + '" data-action="mute">不主动提</button>' : '')
+        + '<button type="button" data-comp-memory="' + esc(m.id) + '" data-action="delete">删除</button></div></article>').join('')
+        : '<p class="state-empty">' + (query || category ? '没有找到相符的记忆' : '还没有记忆。明确告诉她您的偏好，也可以自己添加。') + '</p>';
+    }
+
+    function openMemoryEditor(memory = null) {
+      let dialog = document.getElementById('memory-editor');
+      if (!dialog) {
+        dialog = document.createElement('dialog'); dialog.id = 'memory-editor';
+        dialog.innerHTML = '<form id="memory-editor-form"><h2 id="memory-editor-title"></h2>'
+          + '<label>分类<select name="category"><option value="user">用户（您）</option><option value="topic">主题</option><option value="domain">领域</option></select></label>'
+          + '<label>标题<input name="title" maxlength="80" required></label>'
+          + '<label>摘要<textarea name="summary" maxlength="300" rows="2"></textarea></label>'
+          + '<label>详情<textarea name="content" maxlength="4000" rows="5" required></textarea></label>'
+          + '<label>关键词<input name="keywords" placeholder="用逗号分隔，最多 12 个关键词"></label>'
+          + '<label>可见范围<select name="scope"><option value="shared">所有对话</option><option value="daily">日常对话</option></select></label>'
+          + '<label class="memory-check"><input type="checkbox" name="proactive">允许桌宠主动提起</label>'
+          + '<p id="memory-editor-error" role="status"></p><div class="memory-actions"><button type="button" id="memory-editor-cancel">取消</button><button type="submit">保存记忆</button></div></form>';
+        document.body.appendChild(dialog);
+        document.getElementById('memory-editor-cancel').onclick = () => dialog.close();
+      }
+      const form = dialog.querySelector('form');
+      form.reset();
+      document.getElementById('memory-editor-title').textContent = memory ? '编辑记忆' : '添加记忆';
+      document.getElementById('memory-editor-error').textContent = '';
+      for (const key of ['category', 'title', 'summary', 'content', 'scope']) {
+        form.elements[key].value = memory?.[key] || ({category: 'user', scope: 'shared'}[key] || '');
+      }
+      form.elements.keywords.value = (memory?.keywords || []).join('，');
+      form.elements.proactive.checked = Boolean(memory?.proactive);
+      form.onsubmit = async event => {
+        event.preventDefault();
+        const button = form.querySelector('[type="submit"]'); button.disabled = true;
+        const payload = Object.fromEntries(['category', 'title', 'summary', 'content', 'scope'].map(key => [key, form.elements[key].value.trim()]));
+        payload.keywords = form.elements.keywords.value.split(/[,，]/).map(word => word.trim()).filter(Boolean);
+        payload.proactive = form.elements.proactive.checked;
+        try {
+          await api('/api/companionship/memories' + (memory ? '/' + encodeURIComponent(memory.id) : ''),
+            {method: memory ? 'PATCH' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+          dialog.close(); await renderState(); showTaskToast('记忆已保存喵～');
+        } catch (error) { document.getElementById('memory-editor-error').textContent = error.message; }
+        finally { button.disabled = false; }
+      };
+      dialog.showModal();
+    }
+
     async function renderState() {
       if (!state.currentId) return;
       try {
@@ -3296,6 +3270,8 @@
           api("/api/pet/state").catch(() => ({ ok: false })),
         ]);
         const body = document.getElementById("state-body");
+        const memoryQuery = document.getElementById('memory-search')?.value || '';
+        const memoryCategory = document.getElementById('memory-category')?.value || '';
         let html = "";
         html += '<div class="state-section">3D 桌宠 · 此次刷新</div>';
         html += pet.ok
@@ -3315,44 +3291,56 @@
           html += '<div class="state-section">日常模式</div>'
             + '<div class="summary-box">当前好感度：' + Number(st.affection) + '</div>';
         }
-        html += '<div class="state-section">共享记忆 · 明确来源</div>';
-        for (const m of st.shared_memories || []) {
-          html += '<div class="state-item"><span>' + esc(m.content) + '<small> · ' + esc(m.scope) + ' · ' + new Date(m.updated_at * 1000).toLocaleDateString() + '</small></span>'
-            + '<button data-comp-memory="' + esc(m.id) + '" data-action="edit">修正</button>'
-            + '<button data-comp-memory="' + esc(m.id) + '" data-action="mute">不主动提</button>'
-            + '<button data-comp-memory="' + esc(m.id) + '" data-action="delete">删除</button></div>';
-        }
-        html += '<div class="state-section">本对话摘要（L2）</div>';
+        memoryCards = st.shared_memories || [];
+        html += '<div class="state-section">记忆 · 与您有关的事</div>'
+          + '<div class="memory-toolbar"><input id="memory-search" aria-label="搜索记忆" placeholder="搜索标题、摘要、关键词">'
+          + '<select id="memory-category" aria-label="记忆分类"><option value="">全部</option value="user">用户（您）</option><option value="topic">主题</option><option value="domain">领域</option></select>'
+          + '<button id="memory-add" class="side-mini-btn" type="button">添加记忆</button></div><div id="memory-cards"></div>';
+        html += '<div class="state-section">对话摘要</div>';
         html += st.summary
           ? '<div class="summary-box">' + esc(st.summary) + "</div>"
           : '<div class="state-empty">暂无，多聊几句会自动生成</div>';
-        html += '<div class="state-section">本对话便签（L3）</div>';
+        html += '<div class="state-section">对话便签</div>';
         if (!st.notes.length) html += '<div class="state-empty">还没有便签</div>';
         for (const n of st.notes) {
-          const tag = n.tag ? "[" + n.tag + "] " : "";
-          html += '<div class="state-item"><span>' + esc(tag + n.content) + "</span>"
-            + '<button class="state-del" data-type="note" data-id="' + n.id + '" title="删除便签">✕</button></div>';
+          html += '<article class="memory-card"><strong>' + esc(n.tag || '对话便签') + '</strong>'
+            + '<small>' + new Date(n.ts * 1000).toLocaleString('zh-CN') + (n.source === 'model_extraction_unverified' || n.source === 'legacy_unverified' ? ' · 自动摘录，待核对' : '') + '</small>'
+            + '<p>' + esc(n.content) + '</p><div class="memory-actions">'
+            + '<button class="note-edit" data-id="' + n.id + '" type="button">编辑</button>'
+            + '<button class="state-del" data-type="note" data-id="' + n.id + '" title="删除便签">删除</button></div></article>';
         }
-        html += '<div class="state-section">本对话资料（RAG）</div>';
+        html += '<div class="state-section">对话资料</div>';
         const docs = st.docs || [];
         if (!docs.length) html += '<div class="state-empty">还没有导入资料</div>';
         for (const d of docs) {
           html += '<div class="doc-item" title="' + esc(d.source) + '"><span class="t">📄 '
             + esc(d.title) + '</span><small>' + Number(d.chunks || 0) + ' 段</small></div>';
         }
-        html += '<div class="state-section">全局提醒（所有对话）</div>';
-        if (!st.reminders.length) html += '<div class="state-empty">暂无，可以跟 Nyalume 说“每天 9 点提醒我…”</div>';
-        for (const r of st.reminders) {
-          html += '<div class="state-item"><span>' + esc(r.content)
-            + "<small> · " + esc(r.cron) + "</small></span>"
-            + '<button class="state-del" data-id="' + r.id + '" title="取消提醒">✕</button></div>';
-        }
-        html += '<div class="state-section">全局记忆快照</div>';
+        html += '<details id="memory-backups"><summary>备份与恢复</summary><p class="state-empty">保存完整记录，恢复时会替换当前记录。</p>';
         html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0">'
           + '<button id="backup-now" class="side-mini-btn" type="button">💾 保存快照</button>'
           + '<button id="backup-open" class="side-mini-btn" type="button">📂 快照目录</button></div>'
-          + '<div id="backup-list"></div>';
+          + '<div id="backup-list"></div></details>';
         body.innerHTML = html;
+        document.getElementById('memory-search').value = memoryQuery;
+        document.getElementById('memory-category').value = memoryCategory;
+        renderMemoryCards();
+        document.getElementById('memory-add').onclick = () => openMemoryEditor();
+        document.getElementById('memory-search').oninput = renderMemoryCards;
+        document.getElementById('memory-category').onchange = renderMemoryCards;
+        document.getElementById('memory-backups').ontoggle = event => { if (event.target.open) renderBackupList(); };
+        body.querySelectorAll('.note-edit').forEach(button => {
+          button.onclick = async () => {
+            const note = st.notes.find(item => item.id === Number(button.dataset.id));
+            const content = await showInlineEditAsync('编辑这条便签', note.content);
+            if (!content) return;
+            try {
+              await api('/api/notes/' + note.id + '?session_id=' + encodeURIComponent(state.currentId),
+                {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({content})});
+              await renderState();
+            } catch (error) { showTaskToast(error.message); }
+          };
+        });
         document.getElementById('pet-motion-check').onclick = async (event) => {
           if (checkingMotions) return;
           checkingMotions = true;
@@ -3386,7 +3374,6 @@
         body.querySelectorAll(".state-del").forEach((btn) => {
           btn.addEventListener("click", () => {
             if (btn.dataset.type === "note") removeNote(Number(btn.dataset.id));
-            else removeReminder(Number(btn.dataset.id));
           });
         });
         const nowBtn = document.getElementById("backup-now");
@@ -3402,7 +3389,7 @@
           catch (e) { alert("没打开成功喵：" + e.message); }
         });
         const stateSec = document.getElementById("sec-state");
-        if (stateSec && !stateSec.classList.contains("collapsed")) renderBackupList();
+        // Backups load when the user expands their section.
       } catch (e) { /* 网络抖动忽略 */ }
     }
 
@@ -3452,13 +3439,6 @@
       } catch (e) { /* 网络抖动忽略 */ }
     }
 
-    async function removeReminder(id) {
-      try {
-        await api("/api/reminders/" + id, { method: "DELETE" });
-        await renderState();
-      } catch (e) { alert("没取消成功喵：" + e.message); }
-    }
-
     async function removeNote(id) {
       try {
         await api("/api/notes/" + id + "?session_id=" + encodeURIComponent(state.currentId || ""), { method: "DELETE" });
@@ -3473,9 +3453,9 @@
           return (await window.pywebview.api.pick_folder()) || null;
         } catch (e) { return null; }
       }
-      const p = prompt(
+      const p = await showInlineEditAsync(
         "输入本地文件夹或文档路径，例如：\nD:\\Desktop\\新建文件夹 (2)\n\n"
-        + "桌宠窗口里可以直接点“浏览”，浏览器里请粘贴路径。"
+        + "桌宠窗口里可以直接点\"浏览\"，浏览器里请粘贴路径。"
       );
       return p ? p.trim().replace(/^"+|"+$/g, "") : null;
     }
@@ -3502,7 +3482,7 @@
         try { path = await window.pywebview.api.pick_file(); } catch (e) { path = null; }
       }
       if (!path) {
-        path = prompt("输入要导入的文件路径，例如：\nD:\\文档\\报告.docx");
+        path = await showInlineEditAsync("输入要导入的文件路径，例如：\nD:\\文档\\报告.docx");
         if (path) path = path.trim().replace(/^"+|"+$/g, "");
       }
       if (path) await importPath(path);
@@ -3602,7 +3582,7 @@
           if (picked) return picked;
         } catch (e) { /* fall through to prompt */ }
       }
-      const p = prompt(tip || "输入文件夹绝对路径，例如：\nD:\\我的项目");
+      const p = await showInlineEditAsync(tip || "输入文件夹绝对路径，例如：\nD:\\我的项目");
       return p ? p.trim().replace(/^"+|"+$/g, "") : null;
     }
 
@@ -3833,8 +3813,8 @@
     }
 
     async function renameSession(s) {
-      const name = prompt("会话标题（留空 = 回到默认标题）", s.title || "");
-      if (name === null) return;
+      const name = await showInlineEditAsync("会话标题（留空 = 回到默认标题）", s.title || "");
+      if (name === null || name === undefined) return;
       await putJSON("/api/sessions/" + encodeURIComponent(s.id), { title: name.trim() });
       await renderSessions();
     }
@@ -3930,8 +3910,8 @@
         {
           label: "重命名",
           run: async () => {
-            const name = prompt("项目名称", project.name);
-            if (name !== null && name.trim()) {
+            const name = await showInlineEditAsync("项目名称", project.name);
+            if (name !== null && name !== undefined && name.trim()) {
               await putJSON("/api/projects/" + project.id, { name: name.trim() });
             }
           }
@@ -4164,7 +4144,6 @@
         hint.className = "empty-hint";
         hint.textContent = "想做点什么，或只是聊聊天？我在这里。";
         log.appendChild(hint);
-        NyalumeUI.showHome();
         return;
       }
       const els = [];
@@ -4178,9 +4157,27 @@
     }
 
     async function switchTo(sessionId) {
+      if (state.currentId === sessionId) return;
+      setPursuitMode(false);
+      state.editingUser = null;
+      if (state.busy || sendController) {
+        cancelActiveRun();
+      }
+      state.queue.length = 0;
+      state.currentTask = null;
+      state.stopped = false;
+      state.busy = false;
+      sendController = null;
+      streamSessionId = "";
+      activeWrapEl = null;
+      activeStatusDiv = null;
+      activeLivePanel = null;
+      stoppedStatusEl = null;
+      setSendIcon('idle');
+      renderTaskPanel();
       state.currentId = sessionId;
       if (state.renderPerm) {
-        const mode = sessionId === "nyalume-daily" ? "daily" : (await api("/api/permissions")).mode;
+        const mode = sessionId === 'nyalume-daily' ? 'daily' : (await api('/api/permissions')).mode;
         state.renderPerm(mode);
       }
       await showMessages(sessionId);
@@ -4207,10 +4204,9 @@
       const created = state.chatMode === "daily"
         ? await api("/api/companionship/daily-session")
         : await api("/api/sessions", { method: "POST" });
-      state.currentId = created.id;
-      await showMessages(created.id);
-      await renderSessions();
-      await renderState();
+      setPursuitMode(false);
+      await switchTo(created.id);
+      NyalumeUI.showChat();
       input.focus();
     }
 
@@ -4646,17 +4642,30 @@
 
     let sendController = null;
     let activeRequestId = "";
+    let activeStreamDone = Promise.resolve();
     let stoppedStatusEl = null;
-    let relayAfterStop = null;
+    let queueRunner = null;
+    let stopBarrier = Promise.resolve();
     let activeWrapEl = null;
     let activeStatusDiv = null;
     let activeLivePanel = null;
-    function cancelActiveRun() {
+    let streamSessionId = "";
+    async function cancelActiveRun(wait = false) {
       const requestId = activeRequestId;
+      const controller = sendController;
+      let cancellation;
       if (requestId) {
-        fetch("/api/runs/" + encodeURIComponent(requestId) + "/cancel", {
-          method: "POST"
-        }).catch(() => {});
+        cancellation = (async () => {
+          for (let attempt = 0; attempt < 6; attempt++) {
+            const response = await fetch('/api/runs/' + encodeURIComponent(requestId) + '/cancel?wait=true', {method: 'POST'});
+            if (response.ok) return;
+            const failure = await response.json().catch(() => ({}));
+            if (response.status !== 409 || attempt === 5) throw new Error(failure.detail || '上一轮尚未停止');
+            showTaskToast('正在等待上一轮停止喵…');
+          }
+        })();
+        stopBarrier = cancellation;
+        stopBarrier.catch(error => showTaskToast(String(error.message || error)));
       }
       if (approvalResolve) {
         const resolve = approvalResolve;
@@ -4664,47 +4673,62 @@
         document.getElementById("approval-overlay").classList.add("hidden");
         resolve("deny");
       }
-      if (sendController) sendController.abort();
+      if (controller) controller.abort();
+      if (wait && cancellation) await cancellation;
     }
-    function setSendIcon(mode) {
-      if (mode === "run") {
-        sendBtn.textContent = "■";
-        sendBtn.title = "停止生成";
-        sendBtn.classList.add("paused");
-      } else if (mode === "paused") {
-        sendBtn.textContent = "▶";
-        sendBtn.title = "恢复刚才的输入（可修改后重发）";
-        sendBtn.classList.add("paused");
-      } else {
-        sendBtn.textContent = "↑";
-        sendBtn.title = "发送";
-        sendBtn.classList.remove("paused");
-      }
-    }
-    function clickSend() {
-      if (state.busy) {
-        cancelActiveRun();
-        return;
-      }
-      if (state.stopped) {
-        state.stopped = false;
-        if (stoppedStatusEl) { stoppedStatusEl.remove(); stoppedStatusEl = null; }
-        input.value = state.pendingMessage || "";
-        resizeInput();
-        setSendIcon("idle");
-        input.focus();
-        return;
-      }
-      send();
-    }
+        function setSendIcon(mode) {
+          if (mode === "queue") {
+            sendBtn.textContent = "↑";
+            sendBtn.title = "排队发送";
+            sendBtn.classList.remove("paused");
+          } else if (mode === "run") {
+            sendBtn.textContent = "■";
+            sendBtn.title = "停止生成";
+            sendBtn.classList.add("paused");
+          } else if (mode === "paused") {
+            sendBtn.textContent = "▶";
+            sendBtn.title = "恢复刚才的输入";
+            sendBtn.classList.add("paused");
+          } else {
+            sendBtn.textContent = "↑";
+            sendBtn.title = "发送";
+            sendBtn.classList.remove("paused");
+          }
+        }
+        function clickSend() {
+          if (state.busy) {
+            if (input.value.trim()) {
+              state.queue.push({ id: "t" + (++taskSeq), text: input.value.trim(), pursuit: !!state.pursuitMode });
+              input.value = "";
+              resizeInput();
+              renderTaskPanel();
+              syncSendIcon();
+              return;
+            }
+            cancelActiveRun();
+            return;
+          }
+          if (state.stopped && !input.value.trim()) {
+            state.stopped = false;
+            if (stoppedStatusEl) { stoppedStatusEl.remove(); stoppedStatusEl = null; }
+            input.value = state.pendingMessage || "";
+            resizeInput();
+            syncSendIcon();
+            input.focus();
+            return;
+          }
+          send();
+        }
 
     let taskSeq = 0;
     function taskAction(label, title, fn) {
       const b = document.createElement("button");
+      b.type = 'button';
       b.className = "mini-btn";
       b.textContent = label;
       b.title = title;
-      b.addEventListener("click", (e) => { e.stopPropagation(); fn(); });
+      b.setAttribute('aria-label', title);
+      b.addEventListener("click", (e) => { e.stopPropagation(); Promise.resolve().then(fn).catch(error => showTaskToast(String(error.message || error))); });
       return b;
     }
     function makeTaskRow(task, status) {
@@ -4720,9 +4744,9 @@
       if (status === "running") {
         row.appendChild(taskAction("✎", "编辑这条对话（会停止当前思考并重跑）", editRunningTask));
       } else {
-        row.appendChild(taskAction("⏩", "插入：打断当前思考，立即执行这条", () => insertQueuedTask(task)));
+        row.appendChild(taskAction("插入", "插入：打断当前思考，立即执行这条", () => insertQueuedTask(task)));
         row.appendChild(taskAction("✎", "编辑这条排队中的对话", () => editQueuedTask(task)));
-        row.appendChild(taskAction("🗑", "从队列删除", () => deleteQueuedTask(task)));
+        row.appendChild(taskAction("删除", "删除这条排队消息", () => deleteQueuedTask(task)));
       }
       return row;
     }
@@ -4736,40 +4760,129 @@
       rows.forEach((r) => panel.appendChild(r));
     }
     function editQueuedTask(task) {
-      const next = prompt("编辑这条排队中的对话", task.text);
-      if (next === null) return;
-      const n = next.trim();
-      if (n) { task.text = n; renderTaskPanel(); }
+      showInlineEdit("编辑排队中的对话", task.text, (val) => {
+        task.text = val;
+        renderTaskPanel();
+        showTaskToast("已编辑喵 ✎");
+      });
     }
     function deleteQueuedTask(task) {
-      const i = state.queue.indexOf(task);
-      if (i >= 0) { state.queue.splice(i, 1); renderTaskPanel(); }
+      const i = state.queue.findIndex(item => item.id === task.id);
+      if (i >= 0) { state.queue.splice(i, 1); renderTaskPanel(); showTaskToast("已从队列删除 🗑"); }
     }
     function insertQueuedTask(task) {
-      deleteQueuedTask(task);
+      const index = state.queue.findIndex(item => item.id === task.id);
+      if (index < 0) return;
+      state.queue.splice(index, 1);
+      state.queue.unshift(task);
+      renderTaskPanel();
       if (state.busy && sendController) {
-        relayAfterStop = { text: task.text };
         cancelActiveRun();
-      } else {
-        state.queue.unshift(task);
-        renderTaskPanel();
-        void drainQueue();
+        showTaskToast("已优先插入，停止当前回复后马上处理喵");
       }
+      void drainQueue();
     }
     function editRunningTask() {
       if (!state.busy || !sendController) return;
-      const next = prompt("编辑这条对话（停止当前思考并重跑）", state.pendingMessage || "");
-      if (next === null) return;
-      const n = next.trim();
-      if (!n || n === state.pendingMessage) return;
-      relayAfterStop = { text: n };
-      cancelActiveRun();
+      const div = userMessages().at(-1);
+      if (div) beginEditUser(div, div.dataset.msgid, state.pendingMessage || "");
     }
+
+    // ── Inline edit modal ──
+    function showInlineEdit(title, defaultVal, onOk, onCancel = () => {}) {
+      const modal = document.getElementById("inline-edit-modal");
+      const titleEl = document.getElementById("inline-edit-title");
+      const inputEl = document.getElementById("inline-edit-input");
+      const okBtn = document.getElementById("inline-edit-ok");
+      const cancelBtn = document.getElementById("inline-edit-cancel");
+      titleEl.textContent = title;
+      inputEl.value = defaultVal || "";
+      modal.classList.remove("hidden");
+      inputEl.focus();
+      inputEl.select();
+      function cleanup() {
+        modal.classList.add("hidden");
+        okBtn.removeEventListener("click", onOkClick);
+        cancelBtn.removeEventListener("click", onCancelClick);
+        inputEl.removeEventListener("keydown", onKey);
+        modal.removeEventListener("click", onBackdrop);
+      }
+      function onOkClick() {
+        const val = inputEl.value.trim();
+        if (val) { cleanup(); onOk(val); }
+      }
+      function onCancelClick() { cleanup(); onCancel(); }
+      function onKey(e) {
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onOkClick(); }
+        if (e.key === "Escape") { onCancelClick(); }
+      }
+      function onBackdrop(e) { if (e.target === modal) onCancelClick(); }
+      okBtn.addEventListener("click", onOkClick);
+      cancelBtn.addEventListener("click", onCancelClick);
+      inputEl.addEventListener("keydown", onKey);
+      modal.addEventListener("click", onBackdrop);
+    }
+    function showInlineEditAsync(title, defaultVal) {
+      return new Promise((resolve) => {
+        showInlineEdit(title, defaultVal || "", (val) => resolve(val), () => resolve(null));
+      });
+    }
+
+    // ── Task toast notification ──
+    let taskToastTimer = null;
+    function showTaskToast(msg) {
+      let toast = document.getElementById("task-toast");
+      if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "task-toast";
+        toast.style.cssText = "position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:9999;background:#2b3542;color:#fff;padding:8px 18px;border-radius:999px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,0.2);opacity:0;transition:opacity 0.25s;pointer-events:none;";
+        document.body.appendChild(toast);
+      }
+      toast.textContent = msg;
+      toast.style.opacity = "1";
+      clearTimeout(taskToastTimer);
+      taskToastTimer = setTimeout(() => { toast.style.opacity = "0"; }, 2000);
+    }
+
+    // ── Sync send button icon with input state ──
+    function setPursuitMode(enabled) {
+      state.pursuitMode = enabled;
+      document.getElementById('goal-mode').hidden = !enabled;
+      input.placeholder = enabled ? '输入一个具体目标，Nyalume 会规划、执行并检查结果（最多 500 字）…' : '今天的心事，或想一起完成的小任务，都可以告诉我喵…';
+    }
+    window._startPursuitMode = async () => {
+      if (state.busy || state.editingUser) { showTaskToast('请先停止当前回复或完成编辑'); return; }
+      if (state.chatMode === 'daily') {
+        showTaskToast('请先通过权限菜单切回工作模式，再进入目标模式'); return;
+      }
+      setPursuitMode(true); input.focus();
+    };
+    document.getElementById('goal-exit').onclick = () => {
+      if (state.busy) { showTaskToast('先停止当前目标，再退出目标模式'); return; }
+      setPursuitMode(false); input.focus();
+    };
+    function syncSendIcon() {
+      if (state.busy) {
+        setSendIcon(input.value.trim() ? "queue" : "run");
+      } else if (state.stopped && !input.value.trim()) {
+        setSendIcon("paused");
+      } else {
+        setSendIcon("idle");
+      }
+    }
+
     async function send(selectedReply) {
+      if (state.editingUser) { showTaskToast('请先确认或取消消息编辑'); return; }
+      if (typeof selectedReply !== 'string' && /^[\/／]goal(?:\s|$)/i.test(input.value)) {
+        const goal = input.value.replace(/^[\/／]goal\s*/i, '');
+        await window._startPursuitMode();
+        if (!state.pursuitMode) return;
+        input.value = goal; resizeInput();
+      }
       if (state.stopped) {
         state.stopped = false;
         if (stoppedStatusEl) { stoppedStatusEl.remove(); stoppedStatusEl = null; }
-        setSendIcon("idle");
+        syncSendIcon();
       }
       if (!state.currentId) {
         const created = await api("/api/sessions", { method: "POST" });
@@ -4779,26 +4892,38 @@
       const fromChoice = typeof selectedReply === "string";
       const message = fromChoice ? selectedReply.trim() : input.value.trim();
       if (!message) return;
-      if (!fromChoice) { input.value = ""; resizeInput(); }
+      if (state.pursuitMode && message.length > 500) { showTaskToast('目标最多 500 字，请精简后发送'); return; }
+      if (!fromChoice) { input.value = ""; resizeInput(); syncSendIcon(); }
       NyalumeUI.saveDraft();
-      state.queue.push({ id: "t" + (++taskSeq), text: message });
+      state.queue.push({ id: "t" + (++taskSeq), text: message, pursuit: !!state.pursuitMode });
       renderTaskPanel();
       await drainQueue();
     }
     async function drainQueue() {
-      if (state.busy) return;
-      while (state.queue.length) {
-        const task = state.queue.shift();
-        state.currentTask = task;
-        renderTaskPanel();
-        await streamMessage(task.text);
-        if (state.currentTask && state.currentTask.id === task.id) {
-          state.currentTask = null;
+      if (queueRunner) return queueRunner;
+      if (state.busy || state.editingUser) return;
+      const owner = state.currentId;
+      queueRunner = (async () => {
+        while (state.queue.length && !state.editingUser && state.currentId === owner) {
+          try { await stopBarrier; }
+          catch (error) { showTaskToast('还没能停止上一轮，输入已留在队列中喵'); return; }
+          if (state.editingUser || state.currentId !== owner) break;
+          const task = state.queue.shift();
+          state.currentTask = task;
+          renderTaskPanel();
+          await streamMessage(task.text, task.pursuit);
+          if (state.currentTask?.id === task.id) state.currentTask = null;
           renderTaskPanel();
         }
-      }
+      })().finally(() => {
+        queueRunner = null;
+        if (state.queue.length && !state.busy && !state.editingUser) {
+          stopBarrier.then(() => drainQueue()).catch(() => {});
+        }
+      });
+      return queueRunner;
     }
-    async function streamMessage(message) {
+    async function streamMessage(message, pursuitMode = !!state.pursuitMode) {
       if (state.chatMode === 'daily' && state.currentId !== 'nyalume-daily') {
         await switchTo((await api('/api/companionship/daily-session')).id);
       }
@@ -4808,6 +4933,7 @@
         await renderSessions();
       }
       state.pendingMessage = message;
+      streamSessionId = state.currentId || "";
       let stopped = false;
       const started = performance.now();
       const sentAt = Date.now() / 1000;
@@ -4815,9 +4941,10 @@
       const wrap = document.createElement("div");
       wrap.className = "msg assistant reply";
       const proc = document.createElement("div");
-      proc.className = "proc hidden";
+      proc.className = "proc work-timeline hidden";
       const procText = document.createElement("div");
       procText.className = "proc-text";
+      procText.hidden = true;
       const body = document.createElement("div");
       body.className = "reply-body";
       const attachBox = document.createElement("div");
@@ -4825,7 +4952,8 @@
       const toolFeed = document.createElement("div");
       toolFeed.className = "tool-feed";
       proc.append(toolFeed, procText);
-      wrap.append(proc, body, attachBox);
+      proc.appendChild(attachBox);
+      wrap.append(proc, body);
       const turn = log.querySelector(".latest-turn");
       turn.appendChild(wrap);
       activeWrapEl = wrap;
@@ -4837,14 +4965,24 @@
       const livePanel = document.createElement("div");
       livePanel.className = "live-panel";
       const liveThink = document.createElement("div");
-      liveThink.className = "live-think";
-      liveThink.textContent = "🐱 喵喵思考中…";
+      liveThink.className = "live-think work-status running";
+      const statusText = document.createElement('span'); statusText.className = 'work-status-text';
+      const statusTail = document.createElement('span'); statusTail.className = 'work-status-tail'; statusTail.textContent = '喵';
+      liveThink.append(statusText, statusTail);
+      const showWorkStatus = text => {
+        statusText.textContent = String(text).replace(/\s+/g, ' ').replace(/喵[～~…。]*$/, '').trim();
+        liveThink.setAttribute('aria-label', statusText.textContent + '喵');
+      };
+      showWorkStatus('正在想一想');
       const liveSteps = document.createElement("div");
       liveSteps.className = "live-steps";
+      liveSteps.hidden = true;
       livePanel.append(liveThink, liveSteps);
-      turn.insertBefore(livePanel, wrap);
+      wrap.insertBefore(livePanel, body);
       activeLivePanel = livePanel;
       const liveAct = (txt, cls) => {
+        if (!livePanel.isConnected) wrap.insertBefore(livePanel, body);
+        showWorkStatus(txt);
         const d = document.createElement("div");
         d.className = "live-line" + (cls ? " " + cls : "");
         d.textContent = txt;
@@ -4853,70 +4991,8 @@
       };
       const toolCards = [];
       const toolGroups = [];
-      const execItems = [];
-      const execLabel = (name) => {
-        if (name === "run_code") return "正在执行命令喵～";
-        if (name === "file_write") return "正在写文件喵～";
-        if (name === "file_mkdir") return "正在创建文件夹喵～";
-        if (name === "file_move") return "正在移动文件喵～";
-        if (name === "file_delete") return "正在删除文件喵～";
-        if (["file_read", "file_list", "search_files"].includes(name)) return "正在读取文件喵～";
-        if (["add_documents", "search_docs", "search_memory"].includes(name)) return "正在检索资料喵～";
-        if (["save_note", "delete_note"].includes(name)) return "正在记便签喵～";
-        if (["create_reminder", "remind_me_in", "cancel_reminder"].includes(name)) return "正在设定提醒喵～";
-        if (name.startsWith("web_") || name.startsWith("browser_")) return "正在联网操作喵～";
-        return "正在执行操作喵～";
-      };
-      const startExecItem = (ev) => {
-        const item = document.createElement("details");
-        item.className = "exec-item";
-        const summary = document.createElement("summary");
-        summary.className = "exec-summary running";
-        const nameEl = document.createElement("span");
-        nameEl.className = "exec-item-name";
-        const label = execLabel(ev.name || "");
-        nameEl.textContent = label;
-        nameEl.title = label;
-        summary.appendChild(nameEl);
-        const bodyEl = document.createElement("div");
-        bodyEl.className = "exec-item-body";
-        bodyEl.textContent = "努力中喵…";
-        item.append(summary, bodyEl);
-        body.appendChild(item);
-        execItems.push({
-          name: ev.name,
-          desc: String(ev.desc || ev.name || ""),
-          node: item,
-          summary,
-          nameEl,
-          bodyEl,
-          done: false,
-        });
-        scrollActiveIntoView();
-      };
-      const finishExecItem = (ev) => {
-        const it = execItems.find((x) => !x.done && x.name === ev.name)
-          || execItems.find((x) => !x.done);
-        if (!it) return;
-        it.done = true;
-        it.summary.classList.remove("running");
-        it.nameEl.textContent = "✓ " + (it.desc || execLabel(it.name));
-        it.nameEl.title = it.desc || "";
-        it.bodyEl.textContent = [it.desc, (ev.result || ev.summary || "搞定啦喵～")]
-          .filter(Boolean).join("\n\n");
-        scrollActiveIntoView();
-      };
-      const toolGroup = (name) => {
-        if (name === "run_code") return ["command", "运行命令"];
-        if (["file_write", "file_mkdir", "file_move", "file_delete", "set_workspace", "file_set_root"].includes(name)) {
-          return ["write", "文件操作"];
-        }
-        if (["file_read", "file_list", "search_files", "add_documents", "search_docs", "search_memory"].includes(name)) {
-          return ["read", "读取与检索"];
-        }
-        if (name.startsWith("web_") || name.startsWith("browser_")) return ["web", "联网操作"];
-        return ["other", "其他操作"];
-      };
+      const completedActions = [], viewedImages = new Set();
+      let contextNotice = null;
       const parseSearchResults = (raw) => {
         const lines = String(raw || "").split("\n");
         const rows = [];
@@ -4990,24 +5066,30 @@
         item.output.append(strip, fold);
         return true;
       };
+      const setGroupStatus = (group, text, running) => {
+        group.head.classList.toggle('running', running);
+        group.status.textContent = String(text).replace(/\s+/g, ' ').replace(/喵[～~…。]*$/, '').trim();
+        group.head.setAttribute('aria-label', group.status.textContent + '喵，点击展开操作详情');
+      };
       const startToolCard = (ev) => {
-        const [key, label] = toolGroup(ev.name || "");
-        let group = toolGroups[toolGroups.length - 1];
-        if (!group || group.key !== key) {
-          const box = document.createElement("section");
-          box.className = "tool-group";
-          const head = document.createElement("div");
-          head.className = "tool-group-head";
-          const body = document.createElement("div");
-          box.append(head, body);
-          toolFeed.appendChild(box);
-          group = { key, label, count: 0, head, body };
+        proc.classList.remove('hidden');
+        let group = toolGroups.at(-1);
+        if (!group || group.closed) {
+          const box = document.createElement('details');
+          box.className = 'tool-group';
+          const head = document.createElement('summary');
+          head.className = 'tool-group-head work-status';
+          const status = document.createElement('span'); status.className = 'work-status-text';
+          const tail = document.createElement('span'); tail.className = 'work-status-tail'; tail.textContent = '喵';
+          head.append(status, tail);
+          const content = document.createElement('div'); content.className = 'tool-group-content';
+          box.append(head, content); toolFeed.appendChild(box);
+          group = {box, head, status, body: content, names: [], images: new Set(), closed: false};
           toolGroups.push(group);
         }
-        group.count += 1;
-        group.head.textContent = group.label + " · " + group.count + " 步";
+        setGroupStatus(group, '正在' + (ev.name === 'run_code' ? '运行 ' : '处理 ') + (ev.detail || ev.desc || ev.name), true);
         const card = document.createElement("div");
-        card.className = "tool-card";
+        card.className = "tool-card running";
         const title = document.createElement("div");
         title.className = "tool-card-title";
         title.textContent = "正在做 · " + (ev.desc || ev.name);
@@ -5016,7 +5098,7 @@
         output.textContent = "努力中喵…";
         card.append(title, output);
         group.body.appendChild(card);
-        toolCards.push({ name: ev.name, card, title, output, done: false });
+        toolCards.push({ name: ev.name, card, title, output, group, done: false });
         scrollActiveIntoView();
       };
       const addToolPaths = (item, paths) => {
@@ -5032,24 +5114,27 @@
           || toolCards.find((x) => !x.done);
         if (!item) return;
         item.done = true;
+        item.group.names.push(ev.name);
+        if (ev.name === 'describe_image') (ev.paths?.length ? ev.paths : [item.title.textContent]).forEach(path => item.group.images.add(path));
+        setGroupStatus(item.group, actionSummary(item.group.names, item.group.images.size), false);
+
+        item.card.classList.remove('running');
+        item.title.textContent = '已完成 · ' + item.title.textContent.replace(/^正在做 · /, '');
         addToolPaths(item, ev.paths);
         if (ev.name === "web_search" && renderSearchResult(item, ev.result || "")) {
           scrollActiveIntoView();
           return;
         }
-        item.output.textContent = ev.result || ev.summary || "搞定啦喵～";
+        item.output.textContent = (typeof ev.result === "string" ? ev.result : ev.result ? JSON.stringify(ev.result) : "") || (typeof ev.summary === "string" ? ev.summary : ev.summary ? JSON.stringify(ev.summary) : "") || "搞定啦喵～";
         scrollActiveIntoView();
       };
-      const thinkTimer = setInterval(() => {
-        if (livePanel.isConnected) {
-          liveThink.textContent = "🐱 喵喵思考中…（已思考 "
-            + Math.round((performance.now() - started) / 1000) + " 秒）";
-        }
-      }, 1000);
       state.busy = true;
       const controller = new AbortController();
+      let resolveStreamDone;
+      activeStreamDone = new Promise(resolve => { resolveStreamDone = resolve; });
+      const sessionId = state.currentId;
       sendController = controller;
-      const requestId = crypto.randomUUID
+      let requestId = crypto.randomUUID
         ? crypto.randomUUID()
         : "run-" + Date.now() + "-" + Math.random().toString(16).slice(2);
       activeRequestId = requestId;
@@ -5064,7 +5149,19 @@
       let errorText = "";
       let runId = "";
       try {
-        const res = await fetch("/api/chat", {
+        let endpoint = '/api/chat';
+        if (pursuitMode) {
+          const result = await api('/api/pursuit/start', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({goal: message, session_id: sessionId})});
+          if (controller.signal.aborted) {
+            await api('/api/pursuit/' + encodeURIComponent(result.pursuit.id) + '/stop', {method: 'POST'});
+            throw new DOMException('Stopped', 'AbortError');
+          }
+          requestId = 'pursuit-' + result.pursuit.id;
+          activeRequestId = requestId;
+          endpoint = '/api/pursuit/' + encodeURIComponent(result.pursuit.id) + '/run';
+        }
+        const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -5074,7 +5171,11 @@
           }),
           signal: controller.signal
         });
-        if (!res.ok || !res.body) throw new Error("HTTP " + res.status);
+        if (!res.ok) {
+          const failure = await res.json().catch(() => ({}));
+          throw new Error(failure.detail || ('HTTP ' + res.status));
+        }
+        if (!res.body) throw new Error('没有收到回复内容');
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buf = "";
@@ -5089,6 +5190,24 @@
             for (const line of frame.split("\n")) {
               if (!line.startsWith("data: ")) continue;
               const ev = JSON.parse(line.slice(6));
+              if (ev.type === 'pursuit_tool') ev.type = 'tool';
+              if (ev.type === 'pursuit_tool_result') ev.type = 'tool_result';
+              if (ev.type.startsWith('pursuit_')) {
+                if (ev.formatted) {
+                  finalText = [ev.analysis || ev.summary, ev.formatted].filter(Boolean).join('\n\n');
+                  richInto(body, finalText);
+                }
+                if (ev.type === 'pursuit_step_start') liveAct('正在执行：' + ev.task);
+                if (ev.type === 'pursuit_step_done') liveAct(ev.result, 'ok');
+                if (ev.type === 'pursuit_step_failed') liveAct(ev.result, 'fail');
+                if (ev.type === 'pursuit_needs_input') {
+                  finalText += '\n\n需要你补充：' + ev.message;
+                  richInto(body, finalText);
+                }
+                if (ev.type === 'pursuit_stopped') stopped = true;
+                if (ev.message) liveAct(ev.message);
+                continue;
+              }
               if (ev.type === "user_id") {
                 runId = ev.run_id || runId;
                 const users = userMessages();
@@ -5108,20 +5227,27 @@
                 activeLivePanel = null;
               } else if (ev.type === "tool") {
                 sawTool = true;
+                if (curTextBlock) {
+                  curTextBlock.className = 'process-commentary';
+                  toolFeed.appendChild(curTextBlock);
+                  if (toolGroups.length) toolGroups.at(-1).closed = true;
+                }
+                finalText = '';
+                if (livePanel.isConnected) livePanel.remove();
+                activeLivePanel = null;
                 startToolCard(ev);
-                startExecItem(ev);
                 curTextBlock = null;
                 segmentText = "";
               } else if (ev.type === "tool_result") {
                 finishToolCard(ev);
-                finishExecItem(ev);
+                completedActions.push(ev.name);
+                if (ev.name === 'describe_image') (ev.paths?.length ? ev.paths : [toolCards.at(-1)?.title.textContent]).forEach(path => viewedImages.add(path));
+                showWorkStatus('正在思考');
+                if (!livePanel.isConnected) wrap.insertBefore(livePanel, body);
+                activeLivePanel = livePanel;
                 await new Promise((resolve) => requestAnimationFrame(resolve));
               } else if (ev.type === "media") {
                 for (const p of (ev.paths || [])) {
-                  const row = document.createElement("div");
-                  row.className = "live-media";
-                  row.appendChild(makeMediaNode(p));
-                  liveSteps.appendChild(row);
                   ensureMedia(attachBox, p);
                 }
                 scrollActiveIntoView();
@@ -5129,8 +5255,27 @@
                 sawReason = true;
                 // 推理原文不刷屏：静默收集，结束后折叠可看
                 if (ev.text) procText.textContent += ev.text;
+                const preview = procText.textContent.trim().split('\n').filter(Boolean).at(-1);
+                if (preview) {
+                  showWorkStatus('正在想：' + preview);
+                  if (!livePanel.isConnected) wrap.insertBefore(livePanel, body);
+                  activeLivePanel = livePanel;
+                }
               } else if (ev.type === "reasoning_end") {
                 // 无需处理
+              } else if (ev.type === 'context_compression') {
+                if (!contextNotice) {
+                  contextNotice = document.createElement('div');
+                  contextNotice.className = 'context-notice'; contextNotice.setAttribute('role', 'status');
+                  turn.insertBefore(contextNotice, wrap);
+                }
+                contextNotice.classList.toggle('running', ev.status === 'started');
+                contextNotice.dataset.status = ev.status;
+                contextNotice.textContent = ev.status === 'started' ? '正在整理 ' + ev.count + ' 条较早的对话，记好重点再继续陪你喵'
+                  : ev.status === 'completed' ? '已整理 ' + ev.count + ' 条较早的对话，重点都记下啦喵'
+                  : '这次记忆整理没完成，先沿用已保存的记忆喵';
+              } else if (ev.type === 'cancelled') {
+                stopped = true;
               } else if (ev.type === "approval") {
                 liveAct("⏸ 等待审批：" + (ev.desc || ev.name), "wait");
                 const decision = await askApproval(
@@ -5148,7 +5293,7 @@
                 replyInteraction = ev.interaction || replyInteraction;
                 runId = ev.run_id || runId;
               } else if (ev.type === "error") {
-                errorText = ev.message || "";
+                errorText = typeof ev.message === "string" ? ev.message : (ev.message ? JSON.stringify(ev.message) : "");
                 runId = ev.run_id || runId;
                 if (livePanel.isConnected) livePanel.remove();
                 activeLivePanel = null;
@@ -5160,10 +5305,37 @@
         }
       } catch (e) {
         stopped = e && e.name === "AbortError";
-        if (!stopped) richInto(body, "这次没有连上喵：" + e);
+        if (!stopped) {
+          errorText = String(e && e.message || e);
+          richInto(body, "这次没有连上喵：" + errorText);
+        }
       } finally {
+        liveThink.classList.remove('running');
+        if (contextNotice?.classList.contains('running')) {
+          contextNotice.classList.remove('running'); contextNotice.textContent = '记忆整理已暂停喵';
+        }
+        proc.classList.add('hidden');
+        toolGroups.forEach(group => {
+          group.box.open = false; group.head.classList.remove('running');
+          const unfinished = toolCards.some(item => item.group === group && !item.done);
+          if (group.names.length && !unfinished) setGroupStatus(group, actionSummary(group.names, group.images.size), false);
+          else setGroupStatus(group, stopped ? '操作已停止' : errorText ? '操作未完成' : '操作已结束', false);
+        });
+        toolCards.filter(item => !item.done).forEach(item => {
+          item.card.classList.remove('running');
+          item.title.textContent = (stopped ? '已停止 · ' : '未完成 · ') + item.title.textContent.replace(/^正在做 · /, '');
+          item.output.textContent = stopped ? '操作已停止喵' : '这一步没有完成喵';
+        });
+        procText.hidden = false;
+        liveSteps.hidden = false; proc.appendChild(liveSteps);
+        const __ownSession = state.currentId === sessionId && sendController === controller;
         if (activeRequestId === requestId) activeRequestId = "";
         turn.classList.remove("pending-turn");
+        if (!__ownSession) {
+          resolveStreamDone();
+          return;
+        }
+        streamSessionId = "";
         const secs = ((performance.now() - started) / 1000).toFixed(1);
         let trace = null;
         if (runId) {
@@ -5171,35 +5343,14 @@
           catch (e) { trace = null; }
         }
         const traceSteps = Array.isArray(trace && trace.spans) ? trace.spans : [];
-        clearInterval(thinkTimer);
         procText.dataset.done = "1";
-        const relay = relayAfterStop;
-        relayAfterStop = null;
-        if (relay) {
-          if (activeWrapEl) activeWrapEl.remove();
-          if (activeLivePanel) activeLivePanel.remove();
-          log.classList.remove("log-thinking");
-          stoppedStatusEl = null;
-          state.stopped = false;
-          state.queue.unshift({ id: "t" + (++taskSeq), text: relay.text });
-          state.currentTask = null;
-          state.busy = false;
-          sendController = null;
-          activeWrapEl = null;
-          activeStatusDiv = null;
-          activeLivePanel = null;
-          setSendIcon("idle");
-          renderTaskPanel();
-          scrollLog();
-          void drainQueue();
-          await renderSessions();
-          input.focus();
-        } else if (stopped) {
-          liveThink.textContent = "你在 " + Math.round(Number(secs)) + " 秒后停止了";
+        if (stopped) {
+          if (livePanel.isConnected) livePanel.remove();
+          addRunSummary(wrap, trace, proc, Number(secs), '', '已停止思考喵');
           state.stopped = true;
-          stoppedStatusEl = livePanel;
-          setSendIcon("paused");
+          stoppedStatusEl = null;
           state.busy = false;
+          syncSendIcon();
           sendController = null;
           activeWrapEl = null;
           activeStatusDiv = null;
@@ -5207,14 +5358,13 @@
           renderTaskPanel();
           await renderSessions();
           await renderState();
-          input.focus();
+          if (!state.editingUser) input.focus();
         } else {
           stoppedStatusEl = null;
           if (livePanel.isConnected) livePanel.remove();
-          execItems.forEach((x) => x.node.remove());
           activeLivePanel = null;
           log.classList.remove("log-thinking");
-          setSendIcon("idle");
+          syncSendIcon();
           if (traceSteps.length) {
             const reasoning = procText.textContent.trim();
             const timings = sawTool ? "" : traceDetail(trace);
@@ -5223,7 +5373,8 @@
           }
           const hasProc = traceSteps.length || sawTool || sawReason || procText.textContent.trim();
           if (!hasProc) proc.remove();
-          addRunSummary(wrap, trace, hasProc ? proc : null, Number(secs), errorText);
+          addRunSummary(wrap, trace, hasProc ? proc : null, Number(secs), errorText,
+            completedActions.length ? actionSummary(completedActions, viewedImages.size) : '');
           addReplyActions(wrap, lastMsgId, () => finalText || body.textContent, fmtStamp(sentAt));
           if (!errorText && (finalText.trim() || replyInteraction.choices)) addReplyOptions(wrap, replyInteraction);
           noteMsg(wrap, state.speaker, finalText || body.textContent || errorText);
@@ -5235,31 +5386,15 @@
           activeWrapEl = null;
           activeStatusDiv = null;
           activeLivePanel = null;
+          syncSendIcon();
           renderTaskPanel();
           await renderSessions();
           await renderState();
           await attachStreamOps(wrap, sentAt);
-          input.focus();
+          if (!state.editingUser) input.focus();
         }
+        resolveStreamDone();
       }
-    }
-
-    async function pollReminders() {
-      // 服务器到点返回到期提醒——agent 会自己动，不需要用户先发消息
-      try {
-        const due = await api("/api/reminders/due");
-        let added = false;
-        for (const r of due) {
-          const key = r.id + "-" + Math.floor(Date.now() / 60000);
-          if (window.__reminderSeen && window.__reminderSeen.has(key)) continue;
-          if (!window.__reminderSeen) window.__reminderSeen = new Set();
-          window.__reminderSeen.add(key);
-          if (window.__reminderSeen.size > 300) window.__reminderSeen.clear();
-          append("assistant", "[⏰ 主动提醒] " + r.content);
-          added = true;
-        }
-        if (added) await renderState();
-      } catch (e) { /* 网络抖动忽略，下轮再试 */ }
     }
 
     let configFields = [];
@@ -5791,13 +5926,13 @@ async function loadConfigForm() {
       input.style.height = input.scrollHeight + "px";
     }
     input.addEventListener("input", resizeInput);
+        input.addEventListener("input", syncSendIcon);
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         send();
       }
     });
-    setInterval(pollReminders, 15000);
     refreshModelChip();
 
     wallBtn.addEventListener("click", (e) => {
@@ -5912,9 +6047,6 @@ async function loadConfigForm() {
           if (mark) mark.textContent = sec.classList.contains("collapsed") ? "▸" : "▾";
           saved[sec.id] = !sec.classList.contains("collapsed");
           try { localStorage.setItem("side-sec", JSON.stringify(saved)); } catch (_) { /* 折叠仍在当前窗口生效。 */ }
-          if (sec.id === "sec-state" && !sec.classList.contains("collapsed")) {
-            setTimeout(renderBackupList, 60); // 展开记忆面板时再拉备份列表，省请求
-          }
         });
       });
     }
@@ -5970,8 +6102,10 @@ async function loadConfigForm() {
     });
     new ResizeObserver(() => {
       const composer = document.getElementById("input-row");
+      const tasks = document.getElementById('task-panel');
+      const anchor = tasks.classList.contains('hidden') ? composer : tasks;
       document.getElementById("chat-floats").style.bottom =
-        (composer.parentElement.getBoundingClientRect().bottom - composer.getBoundingClientRect().top + 12) + "px";
+        (composer.parentElement.getBoundingClientRect().bottom - anchor.getBoundingClientRect().top + 12) + "px";
       scrollLog();
       logWidth = log.clientWidth;
       logHeight = log.clientHeight;
@@ -5980,7 +6114,6 @@ async function loadConfigForm() {
 
     // 启动：建出/选中第一个会话并回显历史
     (async function init() {
-      if (new URLSearchParams(location.search).get('plan') === '1') document.getElementById('pet-plan-toggle').click();
       initSidebarSections();
       await renderSessions();
       const wantSession = new URLSearchParams(location.search).get("session");
@@ -6014,5 +6147,15 @@ async function loadConfigForm() {
       });
     })().catch(error => NyalumeUI.startupError(error));
   </script>
-</body>
+    <div id="inline-edit-modal" class="inline-edit-modal hidden">
+      <div class="inline-edit-box">
+        <h3 id="inline-edit-title">编辑对话</h3>
+        <textarea id="inline-edit-input" rows="3" placeholder="输入新的内容…"></textarea>
+        <div class="inline-edit-actions">
+          <button id="inline-edit-cancel">取消</button>
+          <button id="inline-edit-ok" class="primary">确定</button>
+        </div>
+      </div>
+    </div>
+  </body>
 </html>

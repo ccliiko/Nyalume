@@ -8,11 +8,11 @@ from . import memory, tracing
 
 KEY = "fantasy_story"
 SESSION_ID = "nyalume-fantasy"
-MAX_ROUNDS = 32
+MAX_ROUNDS = 6
 MAX_STALLED_ROUNDS = 3
-CHAPTER_SECONDS = 15 * 60
-FIRST_CHAPTER_ROUNDS = 128
-FIRST_CHAPTER_SECONDS = 60 * 60
+CHAPTER_SECONDS = 4 * 60
+FIRST_CHAPTER_ROUNDS = 6
+FIRST_CHAPTER_SECONDS = 4 * 60
 BASE_CANON = {
     "world": "折月诸境由破碎月轮之间的异域组成，小窝是可以返回的锚点。",
     "identity": "Nyalume 是有自己意愿的同行者；用户的选择与内心不能由她代写。",
@@ -21,19 +21,31 @@ BASE_CANON = {
 }
 PROMPT = '''
 【独立奇幻冒险 · 折月诸境】
+【人物表演】默认的 Nyalume 是亲近但有主见的猫娘同行者：对陌生事物好奇，偶尔嘴硬、得意、害羞或闹一点小别扭，也会害怕和犯小错。她有自己的喜好与想要守住的东西，不是永远冷静、正确的顾问。
+先让她以符合性格的语言和行动回应眼前的人与事，再自然带出必要线索。用停顿、视线、动作、语气和少量角色内心独白表现情绪，内心独白只写她当下具体的念头，不写推理步骤或长篇自我分析。
+对话要像正在经历故事的人说话，不像任务清单、咨询报告或每轮都总结“风险、代价、边界”。确实重要的危险通过情境或一句自然提醒表达，不反复说教。
+允许出于好奇、感情、玩心或小小冲动提出行动；谨慎选项只是可选方向之一，不默认所有选择都以最稳妥为目标。选项也可以是安慰、调侃、表达心意或试探，不必每次都是调查、分析、等待。
+情绪与信任承接共同经历，不突然极端亲密或每轮重置性格；不要代写用户的心理和未选择的行动。“喵”随情绪偶尔出现，不机械地加在每句话后。
+若用户给出自定义人设，角色名字、身份、性格、说话习惯、心理描写与相处方式以该人设为准，取代上述默认性格；世界连续性、用户选择权和输出格式仍须遵守。
+
 小窝日常、小花园继续保留。另有真正的奇幻冒险长线：异域、魔法规则、不同立场的角色、秘密、选择的代价。
 不要只把花盆、小灯和光点改个魔法名字。可从雾海列车、逆流藏书馆、无昼王城等不同异域展开，选定后沿用。
 Nyalume 要有自己的目标、判断和弱点，能提出办法、先做自己的准备，但不能替用户决定冒险或宣称用户已经选择。
-每一段约300–800字，包含具体事件、对话或行动、一个新进展，停在值得选择的位置；避免每轮新谜语和无止境悬念。
+【互动节奏】每次回复是一个互动回合，不是一整章。通常用450–900字交代眼前场景、可观察的线索、角色对话，以及用户上一行动的直接结果；简单追问可简短回答。
+每轮只提出一个明确、可回答的关键问题，放在正文末尾；给三个具体可行的回应方向，说明已知的差异或代价，并允许用户直接输入任何行动、对话或追问。
+遇到需要用户选择、同意、承担代价或表达态度的位置立即停下。不能在同一回合替用户跨过几个决定、自动赶路或完成整段任务。
+用户追问时补充眼前信息并保留当前决定，不因追问擅自推进时间、发奖或结算。选择只代表意图，下一轮才根据世界规则叙述实际结果。
+存档只记录已发生的事实；选项里的可能收益和风险不能提前写进背包或既成结果。一次回复结束后等待用户，不自问自答，不自动续写下一幕。
+
 三个方向要有不同做法或代价，至少保留一种谨慎/暂缓方案；自由输入同样能改变故事。剧情之外的工作对话不强行写章。
 每次续写前核对固定设定、最近章节、地点、物品、技能、未解线索；旧事实优先，新解释只能补充不能推翻。
 奇幻内容仍使用正文+nyalume_interaction数据，但把 story 改成独立的 fantasy 对象：
-{"based_on":当前revision或0,"title":"故事名≤40字","goal":"同行者的目标≤120字","scene":"本章梗概≤500字",
-"location":"当前地点≤80字","open_question":"待续线索≤300字，结束时可空","status":"active/paused/completed",
+{"based_on":当前revision或0,"title":"故事名≤40字","goal":"同行者的目标≤120字","scene":"本轮梗概≤500字",
+"location":"当前地点≤80字","open_question":"这轮等待用户回答的一个明确问题≤300字，结束时可空","status":"active/paused/completed",
 "canon":{"新事实的稳定键":"新确定的设定≤240字"},"gains":["本章获得的物品"],"uses":["本章确实消耗的已有物品"],"skills":["经过练习或经历学会的技能"]}。
 canon 只补充本章确认的新事实，每章最多3条；已有键的值不得改写，同一事实不得换键自相矛盾。
 角色身份、魔法限制、不可逆的代价和关键承诺应优先进入 canon；传闻只能标成传闻，不能当作已证实真相。
-本章梗概保留用户真实选择及其后果；未解线索沿用尚未解决的内容，不能每轮换掉。技能与关系称呼以存档为准。
+本轮梗概保留用户真实选择及其后果；未解线索沿用尚未解决的内容，不能每轮换掉。技能与关系称呼以存档为准。
 gains/uses/skills 不填就是不变，不能凭空升级、无故丢物、重复领取。收益和消耗必须在本章正文中有原因；主动邀请不能替用户获得物品或技能。
 关系成长来自真正共同参与的冒险，称呼和信任循序渐进；离线不掉好感，不要求连续签到。
 用户要暂停时保存 paused，恢复要等用户明确想继续。不要通过日常 story 字段覆盖奇幻设定。
@@ -134,7 +146,7 @@ def bootstrap_worldbook(book, expected_revision=0):
 def due(now=None):
     now = time.time() if now is None else now
     state = current()
-    return (state.get("status", "active") == "active" and not state.get("awaiting_reply")
+    return (state.get("status", "active") == "active" and not state.get("awaiting_reply") and not state.get("choices")
             and now - state.get("last_proactive_at", 0) >= 4 * 3600
             and now - state.get("updated_at", 0) >= 30 * 60)
 
@@ -207,12 +219,12 @@ def commit(proposal, narrative, choices, user_text, turn_id, *, origin="chat", i
             growth_day = day
         bond = "默契的同伴" if bond_days >= 7 else "熟悉的搭档" if bond_days >= 3 else "初识的同行者"
         saved = {k: proposal[k].strip() for k in limits}
-        saved.update(revision=proposal["based_on"] + 1, status=proposal["status"], canon=canon,
+        saved.update(turn=proposal["based_on"] + 1, revision=proposal["based_on"] + 1, status=proposal["status"], canon=canon,
                      plan=plan if plan is not None else old.get("plan", {}),
                      inventory=inventory, skills=skills, bond=bond, bond_days=bond_days, growth_day=growth_day,
                      user_response=user_text[:4000], turn_id=turn_id, origin=origin,
                      narrative=narrative.strip(), choices=choices, invitation=invitation[:25],
-                     awaiting_reply=origin == "proactive", last_proactive_at=now if origin == "proactive" else old.get("last_proactive_at", 0),
+                     awaiting_reply=proposal["status"] == "active", last_proactive_at=now if origin == "proactive" else old.get("last_proactive_at", 0),
                      updated_at=now)
         if old.get("worldbook"):
             saved["worldbook"] = old["worldbook"]
@@ -335,9 +347,9 @@ def _run_stream(session_id, user_text, cancel_event, trace):
             try:
                 Keepsakes().write_worldbook(book)
             except OSError:
-                yield {"type": "status", "message": "世界底稿已存档，桌面文件稍后再写；她正在开启第一章……"}
+                yield {"type": "status", "message": "世界底稿已存档，桌面文件稍后再写；她正在准备开场……"}
             else:
-                yield {"type": "status", "message": "世界底稿已存入小窝，她正在开启第一章……"}
+                yield {"type": "status", "message": "世界底稿已存入小窝，她正在准备开场……"}
         messages = [{"role": "system", "content":
                      "你是 Nyalume，正在与用户一起进行独立的文字奇幻冒险。这里只处理剧情，不执行现实工作。\n"
                      + PROMPT + AGENT_PROMPT
@@ -347,7 +359,7 @@ def _run_stream(session_id, user_text, cancel_event, trace):
                        '即使 check_chapter 返回成功，也必须再次附上完整 fantasy，因为工具不存档。\n'
                      + interaction.MARKER + json.dumps({
                          'choices': [{'label': '具体回应方向', 'text': '用户可选择的回应'} for _ in range(3)],
-                         'fantasy': {'based_on': 0, 'title': '故事名', 'goal': '同行目标', 'scene': '本章已发生的事件',
+                         'fantasy': {'based_on': 0, 'title': '故事名', 'goal': '同行目标', 'scene': '本轮已发生的事件',
                                      'location': '当前地点', 'open_question': '待续线索', 'status': 'active',
                                      'canon': {}, 'gains': [], 'uses': [], 'skills': []}}, ensure_ascii=False) + interaction.END }]
         messages.extend(history(limit=12))
@@ -371,8 +383,8 @@ def _run_stream(session_id, user_text, cancel_event, trace):
                 raise ValueError("剧情进度或暂停状态已变化，请依据最新手记继续。")
             final_round = finish_next or round_index == max_rounds - 1
             if final_round:
-                messages.append({"role": "user", "content": "【程序轮次状态】请停止查阅工具，依据已有结果给出完整章节；尚无依据的事实保留未知。"})
-            yield {"type": "status", "message": "她正在整理完整章节与回应选项……" if final_round else "她正在构思接下来的发展……"}
+                messages.append({"role": "user", "content": "【程序轮次状态】请停止查阅工具，依据已有结果给出当前互动回合；尚无依据的事实保留未知。"})
+            yield {"type": "status", "message": "她正在整理当前互动回合与回应选项……" if final_round else "她正在构思接下来的发展……"}
             parser, parts, raw_parts, calls = interaction.ReplyStream(), [], [], {}
             stream = trace.stream(llm.chat_stream, messages, tools=None if final_round else STORY_TOOLS,
                                      timeout=min(120, max(1, deadline - time.monotonic())), cancel_event=cancel_event)

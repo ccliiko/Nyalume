@@ -230,7 +230,7 @@ class Proposer:
     # ---- 真的开口 ----
 
     def build_prompt(self, desk: dict, state: dict, reason: str, now: float | None = None) -> list[dict]:
-        from nyalume.core import small_plans, interaction, fantasy, companionship, memory
+        from nyalume.core import interaction, fantasy, companionship, memory
 
         now = time.time() if now is None else now
         digest = {
@@ -248,8 +248,6 @@ class Proposer:
         digest['候选话题'] = eligible
         referenced = {mid for row in eligible for mid in json.loads(row['memory_ids'])}
         digest['候选记忆'] = [row for row in memory.companion_memories() if row['id'] in referenced and row['proactive']][:3]
-        digest['小计划存档'] = small_plans.current()
-        digest['虚拟计划资料'] = small_plans.prompt_context()
         self.candidate_topics = {row['id'] for row in eligible}
         self.topic_sources = {row['id']: json.loads(row['memory_ids']) for row in eligible}
         self.candidate_memories = {row['id'] for row in digest['候选记忆']}

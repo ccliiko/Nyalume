@@ -76,7 +76,7 @@ def test_first_start_saves_worldbook_before_chapter_and_supplies_server_version(
     assert state['revision'] == 1 and state['inventory'] == ['旧车票', '折角地图']
     assert state['worldbook']['name'] == '逆流藏书馆'
     assert '世界底稿' in (keepsakes.home_path() / '折月诸境 · 世界底稿.txt').read_text(encoding='utf-8')
-    assert (keepsakes.home_path() / '奇幻手记' / '第0001章.txt').exists()
+    assert (keepsakes.home_path() / '奇幻手记' / '第0001回合.txt').exists()
 
 
 def test_failed_opening_retains_worldbook_for_retry(monkeypatch):
@@ -191,7 +191,7 @@ def test_chat_one_response_archives_full_chapter_and_choices(monkeypatch, mode):
     assert fantasy.current() == {}
     sid = memory.daily_session() if mode == 'daily' else 'adventure'
     assert memory.session_messages(sid)[-1]['content'] == '逆流的书页从天花板落下。'
-    assert not (keepsakes.home_path() / '奇幻手记' / '第0001章.txt').exists()
+    assert not (keepsakes.home_path() / '奇幻手记' / '第0001回合.txt').exists()
 
 
 def test_invalid_chapter_does_not_change_progress_or_export():
@@ -246,7 +246,7 @@ def test_proactive_invitation_waits_and_opens_full_chapter(monkeypatch, interrup
     assert message['content'] == chapter['narrative']
     assert message['interaction']['choices'] == chapter['choices']
     save(1, now=now[0] + 86400)
-    assert fantasy.due(now[0] + 86400 + 1801)
+    assert not fantasy.due(now[0] + 86400 + 1801)  # A decision remains pending; never advance offline.
 
 
 def test_proactive_cannot_spend_or_reward_without_user():
@@ -402,7 +402,7 @@ def test_dedicated_page_choices_draft_pause_and_errors(chat_page, tmp_path):
     page.locator('#input').fill('我尚未写完的草稿')
     page.locator('#cards label').nth(1).click()
     page.get_by_role('button', name='发送这个回应').click()
-    expect(page.locator('#status')).to_have_text('已记入奇幻手记。')
+    expect(page.locator('#status')).to_have_text('这一段已记下，接下来由你决定。')
     expect(page.locator('#input')).to_have_value('我尚未写完的草稿')
     assert calls[-1]['session_id'] == fantasy.SESSION_ID
     page.get_by_role('button', name='暂停冒险').click()
@@ -423,7 +423,7 @@ def test_dedicated_page_choices_draft_pause_and_errors(chat_page, tmp_path):
     expect(page.locator('#input')).to_have_value('我想先研究封印')
     fail[0] = False
     page.locator('#retry').click()
-    expect(page.locator('#status')).to_have_text('已记入奇幻手记。')
+    expect(page.locator('#status')).to_have_text('这一段已记下，接下来由你决定。')
     expect(page.locator('#log .user').filter(has_text='我想先研究封印')).to_have_count(1)
     expect(page.locator('#retry')).to_be_hidden()
     page.locator('#dismiss').click()
@@ -448,7 +448,7 @@ def test_dedicated_page_shows_saved_opening_worldbook(chat_page):
         'last_run': {'started_at': 1800000000, 'duration_ms': 5000, 'status': 'error', 'error_type': 'ValueError',
                      'spans': [{'name': 'chapter', 'status': 'error', 'duration_ms': 1, 'reason': '最终回复缺少 fantasy 对象'}]}}))
     page.goto('http://nyalume.test/fantasy')
-    expect(page.get_by_role('button', name='继续开启第一章')).to_be_visible()
+    expect(page.get_by_role('button', name='继续走进开场')).to_be_visible()
     expect(page.locator('#summary')).to_contain_text('世界底稿与初始背包已保存')
     page.locator('#worldbook summary').click()
     expect(page.locator('#worldbook-copy')).to_contain_text('旧车票')
@@ -521,7 +521,7 @@ def test_dedicated_page_recovers_saved_chapter_when_done_event_is_lost(chat_page
     page.goto('http://nyalume.test/fantasy')
     page.locator('#input').fill('先问馆长')
     page.locator('#send').click()
-    expect(page.locator('#status')).to_have_text('已记入奇幻手记。')
+    expect(page.locator('#status')).to_have_text('这一段已记下，接下来由你决定。')
     expect(page.locator('#retry')).to_be_hidden()
     expect(page.locator('#input')).to_have_value('')
     expect(page.locator('#log .user').filter(has_text='先问馆长')).to_have_count(1)
@@ -600,7 +600,7 @@ def test_story_agent_recalls_previews_and_keeps_its_plan(monkeypatch):
     assert any('核对线索' in event.get('message', '') for event in events)
     assert fantasy.current()['inventory'] == ['地下馆目录']
     assert fantasy.current()['plan'] == plan
-    path = keepsakes.home_path() / '奇幻手记' / '第0006章.txt'
+    path = keepsakes.home_path() / '奇幻手记' / '第0006回合.txt'
     assert '先问清代价再交出车票' in path.read_text(encoding='utf-8')
     memory.init_db()
     assert '先核对馆长交来的目录' in fantasy.context()
@@ -618,8 +618,7 @@ def test_story_can_use_more_than_four_rounds_and_batch_queries(monkeypatch):
     calls = []
     def model(messages, **kwargs):
         calls.append(1)
-        if len(calls) <= 6:
-            assert kwargs['tools']
+        if kwargs['tools']:
             for index in range(3):
                 yield {'kind': 'tool_delta', 'index': index, 'id': f'q-{len(calls)}-{index}',
                        'name': 'recall_chapters', 'arguments': json.dumps({'query': f'线索{len(calls)}-{index}'})}
@@ -628,7 +627,7 @@ def test_story_can_use_more_than_four_rounds_and_batch_queries(monkeypatch):
                    + json.dumps({'fantasy': proposal(), 'choices': choices()}) + interaction.END}
     monkeypatch.setattr(llm, 'chat_stream', model)
     result = list(fantasy.run_stream(fantasy.SESSION_ID, '逐项查清这些线索'))
-    assert len(calls) == 7 and result[-1]['type'] == 'done'
+    assert len(calls) == fantasy.FIRST_CHAPTER_ROUNDS and result[-1]['type'] == 'done'
 
 
 def test_repeated_tool_loop_reuses_result_and_gets_a_final_answer(monkeypatch):
@@ -651,7 +650,7 @@ def test_repeated_tool_loop_reuses_result_and_gets_a_final_answer(monkeypatch):
     monkeypatch.setattr(fantasy, '_story_tool', read)
     monkeypatch.setattr(llm, 'chat_stream', model)
     result = list(fantasy.run_stream(fantasy.SESSION_ID, '想想这张车票'))
-    assert reads == [1] and len(rounds) == 8
+    assert reads == [1] and len(rounds) == fantasy.FIRST_CHAPTER_ROUNDS
     assert result[-1]['type'] == 'done'
 
 
@@ -697,7 +696,7 @@ def test_world_preparation_does_not_stop_at_six_changed_drafts(monkeypatch):
     assert len(calls) == 9
 
 
-def test_first_chapter_can_exceed_old_round_and_time_limits(monkeypatch):
+def test_opening_finishes_within_interactive_turn_budget(monkeypatch):
     from nyalume.core import llm
     fantasy.bootstrap_worldbook(worldbook())
     clock, calls = [0], []
@@ -705,7 +704,7 @@ def test_first_chapter_can_exceed_old_round_and_time_limits(monkeypatch):
     def model(*args, **kwargs):
         calls.append(1)
         clock[0] += 30
-        if len(calls) <= 34:
+        if kwargs['tools']:
             yield {'kind': 'tool_delta', 'index': 0, 'id': str(len(calls)), 'name': 'recall_chapters',
                    'arguments': json.dumps({'query': f'开场线索{len(calls)}'})}
         else:
@@ -713,7 +712,10 @@ def test_first_chapter_can_exceed_old_round_and_time_limits(monkeypatch):
                 {'fantasy': proposal(), 'choices': choices()}) + interaction.END}
     monkeypatch.setattr(llm, 'chat_stream', model)
     result = list(fantasy.run_stream(fantasy.SESSION_ID, '仔细准备开篇'))
-    assert len(calls) == 35 and clock[0] > 900 and result[-1]['type'] == 'done'
+    assert len(calls) == fantasy.FIRST_CHAPTER_ROUNDS and clock[0] < fantasy.FIRST_CHAPTER_SECONDS
+    assert result[-1]['type'] == 'done'
+    assert fantasy.current()['awaiting_reply']
+    assert not fantasy.due(1900000000)
 
 
 def test_story_safety_budget_reserves_a_final_answer(monkeypatch):
@@ -788,3 +790,10 @@ def test_cancel_during_story_tools_does_not_save_plan(monkeypatch):
     cancel.set()
     assert list(stream)[-1]['type'] == 'cancelled'
     assert fantasy.current()['revision'] == 0
+
+
+def test_existing_save_with_choices_also_waits_for_user():
+    state=save()
+    state['awaiting_reply']=False  # Previous versions cleared this after a user turn.
+    memory.set_setting(fantasy.KEY,json.dumps(state))
+    assert not fantasy.due(1900000000)

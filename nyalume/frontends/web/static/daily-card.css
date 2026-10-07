@@ -1,0 +1,63 @@
+.daily-nyalume-art {
+  overflow: visible;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  perspective: 900px;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+.daily-nyalume-art::before, .daily-nyalume-art::after { content: none; }
+.daily-card-rotator {
+  position: relative;
+  width: 100%; height: 100%;
+  transform-style: preserve-3d;
+  transform: rotateX(var(--card-rx, 0deg)) rotateY(var(--card-ry, 0deg));
+  transition: transform 140ms ease-out;
+}
+.daily-nyalume-art.flipped .daily-card-rotator {
+  transform: rotateX(var(--card-rx, 0deg)) rotateY(calc(180deg + var(--card-ry, 0deg)));
+}
+.daily-nyalume-art.dragging { cursor: grabbing; }
+.daily-nyalume-art.dragging .daily-card-rotator { transition: none; }
+.daily-card-face {
+  position: absolute; inset: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  backface-visibility: hidden;
+  box-shadow: 0 12px 28px #2d234033;
+  background: #f8f5f4;
+}
+.daily-card-front { transform: translateZ(.5px); }
+.daily-card-layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.daily-card-background { transform: scale(1.04) translate(calc(var(--parallax-x, 0px) * -.5), calc(var(--parallax-y, 0px) * -.5)); }
+.daily-card-subject, .daily-card-lineart { transform: translate(var(--parallax-x, 0px), var(--parallax-y, 0px)); }
+.daily-card-lineart { filter: invert(1); mix-blend-mode: screen; opacity: calc(var(--pearl) * .35); }
+.daily-card-text { z-index: 2; }
+.daily-card-front::after, .daily-card-back::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  opacity: var(--pearl); mix-blend-mode: soft-light;
+  background: radial-gradient(ellipse at var(--shine-x, 50%) var(--shine-y, 50%), #fff 0%, #ffffff00 55%),
+    linear-gradient(125deg, #aeeeff55, #f3c9e777, #e1d7ff88, #fff8da66, #aeeeff55);
+  background-size: 100% 100%, 200% 200%;
+  background-position: center, var(--shine-x, 50%) var(--shine-y, 50%);
+}
+.daily-card-back {
+  transform: rotateY(180deg) translateZ(.5px);
+  box-sizing: border-box;
+  padding: 12%; display: flex; flex-direction: column; justify-content: center; gap: 18px;
+  color: #655369; text-align: center;
+  background: radial-gradient(ellipse at top, #fff5f8, #e9edf7);
+  border: 1px solid #c9bbd2;
+}
+.daily-card-back::before { content: ''; position: absolute; inset: 6%; border: 1px solid #baa9c6; border-radius: 7px; pointer-events: none; }
+.daily-card-back span, .daily-card-back small { font-size: 10px; letter-spacing: .1em; }
+.daily-card-back strong { font-size: 17px; }
+.daily-card-egg { margin: 0; font-size: 13px; line-height: 1.9; }
+.daily-card-flip { margin-top: 14px; }
+.daily-card-hint { margin-top: 8px; color: #9a8fa0; font-size: 11px; }
+.daily-card-thumb-art { height: auto; aspect-ratio: 2 / 3; }
+@media (prefers-reduced-motion: reduce) {
+  .daily-card-rotator { transition: none; }
+}

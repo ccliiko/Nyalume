@@ -27,6 +27,16 @@ def test_head_pose_reaches_physics_in_same_frame(tmp_path, monkeypatch):
       get helper() { return helper; }, get model() { return model; },
       touchAt(region, at) { clock.elapsedTime = at; window.__touch(region); return {...touch}; },
       get touch() { return {...touch}; },
+      bubbleRect() {
+        const unit = pixelsPerUnit(bubble.position.z), fw = renderer.domElement.width, fh = renderer.domElement.height;
+        const head = new THREE.Vector3(); lookBones.head.getWorldPosition(head); const z = head.z; head.project(camera);
+        const radius = height * .12 * pixelsPerUnit(z);
+        return {x: fw/2 + bubble.position.x*unit - bubble.scale.x*unit/2,
+          y: fh/2 - bubble.position.y*unit - bubble.scale.y*unit/2,
+          w: bubble.scale.x*unit, h: bubble.scale.y*unit, fw, fh,
+          hx: (head.x+1)*fw/2, hy: (1-head.y)*fh/2, radius, particles: touchParticles.length};
+      },
+      say() { showBubble('一起歇一会儿吧，点击回复就能接着聊喵～', 15, true, false, true); },
       nearEnd() { mainAction.time = mainClip.duration - END_FADE; },
       step(x, y) {
         lookTx = x; lookTy = y;
@@ -106,7 +116,20 @@ def test_head_pose_reaches_physics_in_same_frame(tmp_path, monkeypatch):
             assert page.evaluate("rig.touch.dodge") < 0.001
             page.evaluate("window.__idleBeat()")
             assert page.evaluate("rig.touch.kind") == 'idle'  # 她自己动不会变成用户摸过
+            for kind in ['wave', 'pat', 'nod', 'cheer']:
+                assert page.evaluate('kind => window.__interact(kind)', kind)
+                assert page.evaluate('checkFrames()') < 1e-6
+            page.evaluate('rig.say(); rig.step(0, 0)')
+            box = page.evaluate('rig.bubbleRect()')
+            assert 0 <= box['x'] <= box['fw'] - box['w'] + 1e-6
+            assert 0 <= box['y'] <= box['fh'] - box['h'] + 1e-6
+            assert (box['y'] + box['h'] <= box['hy'] - box['radius'] or
+                    box['y'] >= box['hy'] + box['radius'] or
+                    box['x'] + box['w'] <= box['hx'] - box['radius'] or
+                    box['x'] >= box['hx'] + box['radius'])
+            assert box['particles'] <= 20
             page.screenshot(path=str(tmp_path / "head-physics.png"))
+            print('PREVIEW', tmp_path / 'head-physics.png')
             assert not errors
         finally:
             browser.close()

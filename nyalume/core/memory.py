@@ -193,6 +193,10 @@ def init_db() -> None:
                                  ("liked", "INTEGER NOT NULL DEFAULT 0")):
             if name not in plan_cols:
                 conn.execute(f"ALTER TABLE pet_plans ADD COLUMN {name} {definition}")
+        memory_cols = {row['name'] for row in conn.execute('PRAGMA table_info(companion_memories)')}
+        for name, default in (('category', 'user'), ('title', ''), ('summary', ''), ('keywords', '[]')):
+            if name not in memory_cols:
+                conn.execute(f"ALTER TABLE companion_memories ADD COLUMN {name} TEXT NOT NULL DEFAULT '{default}'")
         # 旧库迁移：notes 表没有 tag 列时补上
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(notes)")}
         if "tag" not in cols:
@@ -307,12 +311,12 @@ def save_message(
     return cur.lastrowid
 
 
-def delete_messages_after(session_id: str, message_id: int) -> None:
+def delete_messages_after(session_id: str, message_id: int, *, include_self: bool = False) -> None:
     """删除某条消息之后的全部内容（编辑重发用），并清掉滚动摘要进度。"""
     with _conn() as conn:
         conn.execute(
             "DELETE FROM messages WHERE session_id = ? AND id > ?",
-            (session_id, int(message_id)),
+            (session_id, int(message_id) - int(include_self)),
         )
         conn.execute("DELETE FROM summaries WHERE session_id = ?", (session_id,))
         conn.execute(
@@ -409,6 +413,15 @@ def note_delete(note_id: int, session_id: str = "") -> bool:
             "DELETE FROM notes WHERE id = ? AND session_id = ?",
             (int(note_id), session_id),
         )
+    return cur.rowcount > 0
+
+
+def note_edit(note_id: int, content: str, session_id: str = '') -> bool:
+    if not content.strip() or len(content) > 4000:
+        raise ValueError('便签需要 1～4000 个字')
+    with _conn() as conn:
+        cur = conn.execute("UPDATE notes SET content=?,source='user',ts=? WHERE id=? AND session_id=?",
+                           (content.strip(), time.time(), note_id, session_id))
     return cur.rowcount > 0
 
 
@@ -752,6 +765,7 @@ def restore_backup(name: str) -> str:
     finally:
         dst.close()
         src.close()
+    init_db()  # Restored older snapshots need the same migrations as app startup.
     return src_path
 
 
@@ -1309,22 +1323,75 @@ def companion_memories(*, daily: bool = True) -> list[dict]:
             "AND (source_message IS NULL OR EXISTS (SELECT 1 FROM messages m "
             "WHERE m.id=companion_memories.source_message AND m.session_id=companion_memories.session_id "
             "AND m.role='user')) "
-            "ORDER BY updated_at DESC LIMIT 30", (int(daily),)).fetchall()
-    return [dict(row) for row in rows]
+            "ORDER BY updated_at DESC", (int(daily),)).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item['keywords'] = json.loads(item['keywords'])
+        item['title'] = item['title'] or item['content'].split('：', 1)[0][:80]
+        item['summary'] = item['summary'] or item['content'][:160]
+        result.append(item)
+    return result
+
+
+def _memory_fields(content, category='user', title='', summary='', keywords=None):
+    if category not in ('user', 'topic', 'domain'):
+        raise ValueError('未知记忆类别')
+    if not content.strip() or len(content) > 4000 or len(title) > 80 or len(summary) > 300:
+        raise ValueError('详情需要 1～4000 字，标题最多 80 字，摘要最多 300 字')
+    keywords = keywords or []
+    if not isinstance(keywords, list) or len(keywords) > 12 or any(not isinstance(k, str) or len(k) > 40 for k in keywords):
+        raise ValueError('关键词最多 12 个，每个最多 40 字')
+    return (category, title.strip() or content.split('：', 1)[0][:80],
+            summary.strip() or content.strip()[:160], json.dumps(list(dict.fromkeys(k.strip() for k in keywords if k.strip())), ensure_ascii=False))
+
+
+def companion_memory_context(query: str = '', *, daily=True) -> list[dict]:
+    """Recall relevant cards within a bounded context; the editor still shows all cards."""
+    rows = companion_memories(daily=daily)
+    text = query.lower()
+    rows.sort(key=lambda row: sum(len(word) for word in row['keywords'] if len(word) > 1 and word.lower() in text)
+              + (3 if row['fact_key'] == 'address' else 0), reverse=True)
+    result, used = [], 0
+    for row in rows[:30]:
+        item = {**row, 'content': row['content'][:800], 'source_text': row['source_text'][:200]}
+        size = len(json.dumps(item, ensure_ascii=False))
+        if used + size > 6000:
+            continue
+        result.append(item)
+        used += size
+    return result
+
+
+def create_companion_memory(content: str, *, category='user', title='', summary='', keywords=None,
+                            scope='shared', proactive=False) -> str:
+    fields = _memory_fields(content, category, title, summary, keywords)
+    if scope not in ('shared', 'daily'):
+        raise ValueError('未知记忆范围')
+    mid = 'mem-' + uuid.uuid4().hex[:12]
+    now = time.time()
+    with _conn() as conn:
+        conn.execute('INSERT INTO companion_memories (id,fact_key,content,source_text,session_id,scope,proactive,created_at,updated_at,category,title,summary,keywords) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                     (mid, mid, content.strip(), '用户在记忆面板添加', '', scope, int(proactive), now, now, *fields))
+    return mid
 
 
 def save_companion_memory(key: str, content: str, source_text: str, message_id: int,
-                          *, scope: str = 'shared') -> str:
-    """Only explicit daily user messages are eligible; no model extraction or legacy promotion."""
+                          *, scope: str = 'shared', session_id: str = DAILY_SESSION_ID,
+                          category='user', title='', keywords=None) -> str:
+    """Only verified user declarations are eligible; model/tool output is never promoted."""
+    fields = _memory_fields(content, category, title, keywords=keywords)
     if scope not in ('shared', 'daily') or not key.strip() or not content.strip():
         raise ValueError('无效记忆')
     now = time.time()
     with _conn() as conn:
         conn.execute('BEGIN IMMEDIATE')
         source = conn.execute("SELECT * FROM messages WHERE id=? AND session_id=? AND role='user'",
-                              (message_id, DAILY_SESSION_ID)).fetchone()
+                              (message_id, session_id)).fetchone()
         if not source or source['content'] != source_text:
-            raise ValueError('记忆必须来自本轮日常用户原话')
+            raise ValueError('记忆必须来自本轮用户原话')
+        if conn.execute("SELECT 1 FROM companion_memories WHERE fact_key=? AND state='deleted' AND source_text=?", (key, source_text)).fetchone():
+            return ''
         old = conn.execute("SELECT * FROM companion_memories WHERE fact_key=? AND state='active'", (key,)).fetchone()
         if old and old['content'] == content:
             return old['id']
@@ -1334,9 +1401,9 @@ def save_companion_memory(key: str, content: str, source_text: str, message_id: 
             _invalidate_memory_topics(conn, old['id'], now)
         mid = 'mem-' + uuid.uuid4().hex[:12]
         conn.execute("INSERT INTO companion_memories "
-                     "(id,fact_key,content,source_text,source_message,session_id,scope,created_at,updated_at) "
-                     "VALUES (?,?,?,?,?,?,?,?,?)",
-                     (mid, key, content, source_text, message_id, DAILY_SESSION_ID, scope, now, now))
+                     "(id,fact_key,content,source_text,source_message,session_id,scope,created_at,updated_at,category,title,summary,keywords) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (mid, key, content, source_text, message_id, session_id, scope, now, now, *fields))
     return mid
 
 
@@ -1347,7 +1414,8 @@ def _invalidate_memory_topics(conn, mid: str, now: float) -> None:
 
 
 def update_companion_memory(mid: str, *, content: str | None = None, delete: bool = False,
-                            proactive: bool | None = None) -> bool:
+                            proactive: bool | None = None, category=None, title=None, summary=None,
+                            keywords=None, scope=None) -> bool:
     """User-facing edit/delete; tombstones prevent archived facts from being promoted again."""
     now = time.time()
     with _conn() as conn:
@@ -1357,17 +1425,26 @@ def update_companion_memory(mid: str, *, content: str | None = None, delete: boo
             return False
         if content is not None and not content.strip():
             raise ValueError('记忆不能为空')
-        if delete or content is not None:
+        editing = content is not None or any(v is not None for v in (category, title, summary, keywords, scope))
+        fields = _memory_fields(content if content is not None else row['content'],
+                                category if category is not None else row['category'],
+                                title if title is not None else row['title'],
+                                summary if summary is not None else ('' if content is not None else row['summary']),
+                                keywords if keywords is not None else json.loads(row['keywords']))
+        scope = row['scope'] if scope is None else scope
+        if scope not in ('daily', 'shared'):
+            raise ValueError('未知记忆范围')
+        if delete or editing:
             conn.execute("UPDATE companion_memories SET state=?,updated_at=? WHERE id=?",
                          ('deleted' if delete else 'superseded', now, mid))
             _invalidate_memory_topics(conn, mid, now)
             if not delete:
                 conn.execute("INSERT INTO companion_memories "
-                             "(id,fact_key,content,source_text,source_message,session_id,scope,created_at,updated_at,proactive) "
-                             "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                             ('mem-' + uuid.uuid4().hex[:12], row['fact_key'], content.strip(), '用户在记忆面板修正',
-                              None, row['session_id'], row['scope'], now, now,
-                              row['proactive'] if proactive is None else int(proactive)))
+                             "(id,fact_key,content,source_text,source_message,session_id,scope,created_at,updated_at,proactive,category,title,summary,keywords) "
+                             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                             ('mem-' + uuid.uuid4().hex[:12], row['fact_key'], (content if content is not None else row['content']).strip(), '用户在记忆面板修正',
+                              None, row['session_id'], scope, row['created_at'], now,
+                              row['proactive'] if proactive is None else int(proactive), *fields))
         elif proactive is not None:
             conn.execute('UPDATE companion_memories SET proactive=?,updated_at=? WHERE id=?',
                          (int(proactive), now, mid))

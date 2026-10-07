@@ -8,11 +8,13 @@ import pytest
 from nyalume.core import memory, tools
 
 
-def test_tool_schemas_include_reminder_tools():
+def test_tool_schemas_exclude_retired_features():
     names = [t["function"]["name"] for t in tools.TOOL_SCHEMAS]
-    assert "create_reminder" in names
-    assert "remind_me_in" in names
-    assert "cancel_reminder" in names
+    assert "create_reminder" not in names
+    assert "remind_me_in" not in names
+    assert "cancel_reminder" not in names
+    assert "list_reminders" not in names
+    assert "pet_plan" not in names
     assert "delete_note" in names
     assert "web_search" in names
     assert "pdf_edit" in names
@@ -73,30 +75,8 @@ def test_web_search_prefers_the_complete_title_and_drops_unrelated_baike(monkeyp
     assert "千（汉语汉字）" not in result
 
 
-def test_remind_me_in_is_one_shot_not_every_minute():
-    """“X 分钟后提醒一次”必须落成固定时刻 cron，不能变成 */1 每分钟。"""
-    result = tools.execute_tool(
-        "remind_me_in", {"content": "喝水", "minutes": 1}
-    )
-    assert "已设好一次性提醒" in result
-    rows = tools.list_reminders()
-    assert rows, "提醒应已入库"
-    cron = rows[0]["cron"]
-    assert "*/1" not in cron and cron.split()[0] != "*"
-    assert cron.count(" ") == 4
-    assert rows[0]["one_shot"] == 1, "remind_me_in 必须标记为一次性"
 
 
-def test_create_reminder_stays_recurring():
-    rows_before = tools.list_reminders()
-    result = tools.execute_tool(
-        "create_reminder", {"content": "周期性测试", "cron": "0 9 * * *"}
-    )
-    assert "已设置定时提醒" in result
-    rows = tools.list_reminders()
-    newest = rows[0]
-    assert newest["one_shot"] == 0, "create_reminder 是周期提醒，不能标记一次性"
-    tools.execute_tool("cancel_reminder", {"reminder_id": newest["id"]})
 
 
 def test_calculator_safe_math():

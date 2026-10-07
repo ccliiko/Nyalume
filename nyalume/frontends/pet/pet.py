@@ -10,7 +10,7 @@ import tkinter as tk
 import ctypes
 from urllib.request import urlopen
 
-from nyalume.core import memory, personas, reminders
+from nyalume.core import memory, personas
 
 from . import interactions
 from .web_chat import WEB_PORT, WebChat
@@ -42,29 +42,13 @@ class PetApp:
 
         self.chat = WebChat(on_event=self._on_chat_event)
         self.window: PetWindow | None = None
-        self._scheduler = reminders.ReminderScheduler(self._on_reminder, interval=5.0)
-        self._scheduler.start()
         self._tray_icon = None
         self._closing = False
         self._cmd_q: queue.Queue = queue.Queue()
         self._spawn_pet()
         threading.Thread(target=self._watch_web_activity, daemon=True).start()
         self.root.after(200, self._drain_commands)
-        self.root.after(3000, self._catch_up_missed_reminders)
 
-    def _catch_up_missed_reminders(self) -> None:
-        """启动补发：今天错过且未触发的周期提醒，补报最近一次（只补一次）。"""
-        try:
-            for item in reminders.report_missed_today():
-                when = item["scheduled"].strftime("%H:%M")
-                self._cmd_q.put(
-                    (
-                        "reminder",
-                        f"[补发] 错过了 {when} 的提醒：{item['content'][:42]}",
-                    )
-                )
-        except Exception:
-            pass
 
     def _watch_web_activity(self) -> None:
         """跨进程读取 Web Agent 状态，再交给 Tk 主线程切换工作动画。"""
@@ -90,13 +74,6 @@ class PetApp:
                 pass
             time.sleep(0.45)
 
-    def _on_reminder(self, content: str) -> None:
-        """后台线程命中提醒：写入会话历史 + 走队列在主线程冒泡。"""
-        try:
-            memory.save_message(self.session_id, "assistant", f"[定时提醒] {content}")
-        except Exception:
-            pass
-        self._cmd_q.put(("reminder", content))
 
     # ---------- 宠物窗口 ----------
 
@@ -218,8 +195,6 @@ class PetApp:
                 phrase = phrases[self._cheer_idx % len(phrases)]
                 self._cheer_idx += 1
                 self.window.cheer(phrase)
-        elif kind == "reminder":
-            self.window.cheer(str(value)[:24])
 
     # ---------- 挂后台 / 托盘 ----------
 
@@ -269,24 +244,6 @@ class PetApp:
                 elif kind == "quit":
                     self._quit()
                     return
-                elif kind == "reminder":
-                    try:
-                        with open(
-                            os.path.join(
-                                tempfile.gettempdir(), "nyalume_pet_reminder.log"
-                            ),
-                            "a",
-                            encoding="utf-8",
-                        ) as f:
-                            f.write(
-                                time.strftime("%H:%M:%S")
-                                + f" fire: {value[:60]}\n"
-                            )
-                    except Exception:
-                        pass
-                    if self.window:
-                        self.window.show()  # 隐藏/趴边时先现身
-                        self.window.start_reminder(f"🔔 提醒：{value[:42]}")
                 elif kind == "working" and self.window:
                     self.window.set_working(bool(value))
                 elif kind == "pet_tap" and self.window:
@@ -299,7 +256,6 @@ class PetApp:
         self._closing = True
         save_config(self.cfg)
         self.chat.close()
-        self._scheduler.stop()
         if self._tray_icon is not None:
             try:
                 self._tray_icon.stop()
