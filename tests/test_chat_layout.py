@@ -3,12 +3,39 @@
 import base64
 import datetime
 import json
+import re
 import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 from playwright.sync_api import expect, sync_playwright
+
+
+# 让「用户按下停止」到「前端收尾真正跑完」之间隔开一段确定的空档：
+# 真实浏览器里中止流、后端释放运行锁、finally 收尾本来就不同步，
+# 插入 / 停止之后立刻再发消息时，旧一轮的收尾常常落在新一轮起跑之后。
+DELAYED_ABORT_SCRIPT = """() => {
+  const original = window.fetch;
+  window.fetch = async (url, options) => {
+    const response = await original(url, options);
+    if (url !== '/api/chat') return response;
+    const reader = response.body.getReader();
+    const body = new ReadableStream({async start(controller) {
+      try {
+        while (true) {
+          const {done, value} = await reader.read();
+          if (done) { controller.close(); break; }
+          controller.enqueue(value);
+        }
+      } catch (error) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+        controller.error(error);
+      }
+    }});
+    return new Response(body, {headers: response.headers});
+  };
+}"""
 
 
 @pytest.fixture
@@ -355,6 +382,64 @@ def test_task_edit_interrupts_and_preserves_queued_message(chat_page):
     expect(page.locator('.latest-turn .msg.user')).to_contain_text('排队的第二个提问')
     page.evaluate("finishReply('第二个答案')")
     page.wait_for_function('!state.busy')
+    assert not errors
+
+
+def test_stopped_run_keeps_accepting_new_messages(chat_page):
+    """停止一轮回复后，输入框和队列里的消息必须还能继续发出去。
+
+    旧一轮的前端收尾（finally）可能落在停止确认之后：那时新一轮已经跑起来了，
+    收尾若还去改 state.busy，忙碌标记就再也放不下来，之后所有消息只能排队。
+    DELAYED_ABORT 让收尾晚于停止确认 250 毫秒，正好造出这个时序。
+    """
+    page, errors, _ = chat_page
+    page.evaluate(DELAYED_ABORT_SCRIPT)
+    page.locator('#input').fill('第一轮提问')
+    page.locator('#send').click()
+    page.wait_for_function('state.busy')
+    stopped_turn = page.locator('.chat-turn').filter(has=page.locator('.msg.user').filter(has_text='第一轮提问'))
+    page.locator('#input').fill('排队的提问')
+    page.locator('#send').click()
+    page.locator('#send').click()               # 停止按钮：此时输入框是空的
+    expect(stopped_turn).to_contain_text('已停止思考喵')
+    # 队列里的消息随后自己发出去，收尾之后忙碌标记必须放开。
+    expect(page.locator('.chat-turn').last).to_contain_text('排队的提问')
+    page.evaluate("finishReply('队列的回答')")
+    expect(page.locator('.chat-turn').last).to_contain_text('队列的回答')
+    page.wait_for_function('!state.busy')
+    # 停止之后再发一条：输入框里的消息同样必须发得出去。
+    page.locator('#input').fill('停止后的新提问')
+    page.locator('#send').click()
+    expect(page.locator('.chat-turn').last).to_contain_text('停止后的新提问')
+    page.evaluate("finishReply('停止后的回答')")
+    expect(page.locator('.chat-turn').last).to_contain_text('停止后的回答')
+    page.wait_for_function('!state.busy')
+    expect(page.locator('#task-panel')).to_have_class(re.compile(r'\bhidden\b'))
+    assert not errors
+
+
+def test_insert_queued_message_keeps_composer_usable(chat_page):
+    """点「插入」打断当前回复后，输入框和队列必须还能继续工作。"""
+    page, errors, _ = chat_page
+    page.evaluate(DELAYED_ABORT_SCRIPT)
+    page.locator('#input').fill('被打断的提问')
+    page.locator('#send').click()
+    page.wait_for_function('state.busy')
+    page.locator('#input').fill('插入的提问')
+    page.locator('#send').click()
+    page.locator('#task-panel .task-row:not(.running) button[title^="插入"]').click()
+    expect(page.locator('.chat-turn').last).to_contain_text('插入的提问')
+    page.evaluate("finishReply('插入的回答')")
+    expect(page.locator('.chat-turn').last).to_contain_text('插入的回答')
+    page.wait_for_function('!state.busy')
+    # 插入打断之后，输入框照样能发出新消息，任务面板也要归位。
+    page.locator('#input').fill('插入之后的新提问')
+    page.locator('#send').click()
+    expect(page.locator('.chat-turn').last).to_contain_text('插入之后的新提问')
+    page.evaluate("finishReply('之后的回答')")
+    expect(page.locator('.chat-turn').last).to_contain_text('之后的回答')
+    page.wait_for_function('!state.busy')
+    expect(page.locator('#task-panel')).to_have_class(re.compile(r'\bhidden\b'))
     assert not errors
 
 

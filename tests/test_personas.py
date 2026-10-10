@@ -27,10 +27,11 @@ def test_personas_have_no_relationship_state():
     assert set(personas.get_persona("assistant")) == expected
 
 
-def test_prompts_use_the_current_character_text_without_deleted_worldview():
-    assert personas.persona_base_prompt('nyalume') == personas.NYALUME_SYSTEM_PROMPT
+def test_only_nyalume_prompt_includes_the_restored_worldview():
+    expected = personas.NYALUME_SYSTEM_PROMPT + personas.WORLD_VIEW_PROMPT
+    assert personas.persona_base_prompt('nyalume') == expected
     assert personas.persona_base_prompt('assistant') == personas.ASSISTANT_SYSTEM_PROMPT
-    assert personas.persona_base_prompt('unknown') == personas.NYALUME_SYSTEM_PROMPT
+    assert personas.persona_base_prompt('unknown') == expected
 
 
 def test_invalid_config_and_environment_fall_back_to_a_valid_persona(tmp_path, monkeypatch):

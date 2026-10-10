@@ -3057,9 +3057,8 @@
       }
       const meta = div.querySelector(".reply-meta");
       const wasBusy = state.busy;
-      const streamDone = activeStreamDone;
       state.editingUser = div;
-      const stopping = wasBusy ? cancelActiveRun(true).then(() => streamDone) : Promise.resolve();
+      const stopping = wasBusy ? cancelActiveRun(true) : Promise.resolve();
       stopping.catch(() => {});
       div.removeChild(meta);
       div.textContent = "";
@@ -3085,7 +3084,7 @@
         }
         ok.disabled = cancel.disabled = true;
         try {
-          await stopping.catch(() => cancelActiveRun(true).then(() => streamDone));
+          await stopping.catch(() => cancelActiveRun(true));
           await commitEdit(div, msgId, text, originalText, meta);
         } catch (e) { alert("暂时无法重发：" + e.message); }
         finally { ok.disabled = cancel.disabled = false; }
@@ -4642,7 +4641,8 @@
 
     let sendController = null;
     let activeRequestId = "";
-    let activeStreamDone = Promise.resolve();
+    let runSeq = 0;              // 每轮回复的代次，用来判断旧一轮的收尾是否还在跑
+    let activeRunSettled = Promise.resolve();   // 最近一轮回复「完全收尾」的信号
     let stoppedStatusEl = null;
     let queueRunner = null;
     let stopBarrier = Promise.resolve();
@@ -4653,8 +4653,10 @@
     async function cancelActiveRun(wait = false) {
       const requestId = activeRequestId;
       const controller = sendController;
-      let cancellation;
+      let cancellation = null;
       if (requestId) {
+        // 必须同步挂到 stopBarrier 上：调用方（插入 / 发送）紧接着就会 drainQueue，
+        // 而 drainQueue 等的就是这一轮的停止结果。
         cancellation = (async () => {
           for (let attempt = 0; attempt < 6; attempt++) {
             const response = await fetch('/api/runs/' + encodeURIComponent(requestId) + '/cancel?wait=true', {method: 'POST'});
@@ -4664,7 +4666,7 @@
             showTaskToast('正在等待上一轮停止喵…');
           }
         })();
-        stopBarrier = cancellation;
+        stopBarrier = Promise.all([cancellation, activeRunSettled]);
         stopBarrier.catch(error => showTaskToast(String(error.message || error)));
       }
       if (approvalResolve) {
@@ -4673,8 +4675,14 @@
         document.getElementById("approval-overlay").classList.add("hidden");
         resolve("deny");
       }
-      if (controller) controller.abort();
-      if (wait && cancellation) await cancellation;
+      if (controller) {
+        if (!requestId) {
+          stopBarrier = Promise.all([stopBarrier, activeRunSettled]);
+          stopBarrier.catch(() => {});
+        }
+        controller.abort();
+      }
+      if (wait) await stopBarrier;
     }
         function setSendIcon(mode) {
           if (mode === "queue") {
@@ -4905,8 +4913,10 @@
       const owner = state.currentId;
       queueRunner = (async () => {
         while (state.queue.length && !state.editingUser && state.currentId === owner) {
-          try { await stopBarrier; }
-          catch (error) { showTaskToast('还没能停止上一轮，输入已留在队列中喵'); return; }
+          // 插入 / 停止之后必须先等「旧一轮的后端运行释放 + 前端收尾结束」，
+          // 否则新的 /api/chat 会撞上还在收尾的旧任务而被拒绝。
+          try { await stopBarrier; } catch (error) { showTaskToast('还没能停止上一轮，输入已留在队列中喵'); return; }
+          await activeRunSettled;
           if (state.editingUser || state.currentId !== owner) break;
           const task = state.queue.shift();
           state.currentTask = task;
@@ -4917,8 +4927,9 @@
         }
       })().finally(() => {
         queueRunner = null;
-        if (state.queue.length && !state.busy && !state.editingUser) {
-          stopBarrier.then(() => drainQueue()).catch(() => {});
+        // 不再看 state.busy：旧一轮的收尾可能比停止屏障晚一步，那也要再排一次队。
+        if (state.queue.length && !state.editingUser) {
+          Promise.resolve(stopBarrier).then(() => drainQueue()).catch(() => {});
         }
       });
       return queueRunner;
@@ -5130,8 +5141,11 @@
       };
       state.busy = true;
       const controller = new AbortController();
-      let resolveStreamDone;
-      activeStreamDone = new Promise(resolve => { resolveStreamDone = resolve; });
+      // 每轮回复拿到自己的代次；只有「最新一轮」才有资格做收尾并放开 state.busy，
+      // 否则被中止的旧一轮会在新一轮跑起来之后把忙碌标记卡死。
+      const mySeq = ++runSeq;
+      let resolveRunDone;
+      activeRunSettled = new Promise(resolve => { resolveRunDone = resolve; });
       const sessionId = state.currentId;
       sendController = controller;
       let requestId = crypto.randomUUID
@@ -5310,6 +5324,7 @@
           richInto(body, "这次没有连上喵：" + errorText);
         }
       } finally {
+        try {
         liveThink.classList.remove('running');
         if (contextNotice?.classList.contains('running')) {
           contextNotice.classList.remove('running'); contextNotice.textContent = '记忆整理已暂停喵';
@@ -5331,8 +5346,18 @@
         const __ownSession = state.currentId === sessionId && sendController === controller;
         if (activeRequestId === requestId) activeRequestId = "";
         turn.classList.remove("pending-turn");
-        if (!__ownSession) {
-          resolveStreamDone();
+        // 只有最新一轮能收尾；旧一轮的新一轮已经起跑时直接退出，绝不碰 state.busy。
+        if (mySeq !== runSeq || !__ownSession) {
+          if (mySeq === runSeq) {
+            streamSessionId = "";
+            state.busy = false;
+            sendController = null;
+            activeWrapEl = null;
+            activeStatusDiv = null;
+            activeLivePanel = null;
+            syncSendIcon();
+            renderTaskPanel();
+          }
           return;
         }
         streamSessionId = "";
@@ -5342,6 +5367,7 @@
           try { trace = await api("/api/traces/" + encodeURIComponent(runId)); }
           catch (e) { trace = null; }
         }
+        if (mySeq !== runSeq || state.currentId !== sessionId || sendController !== controller) return;
         const traceSteps = Array.isArray(trace && trace.spans) ? trace.spans : [];
         procText.dataset.done = "1";
         if (stopped) {
@@ -5393,7 +5419,9 @@
           await attachStreamOps(wrap, sentAt);
           if (!state.editingUser) input.focus();
         }
-        resolveStreamDone();
+        } finally {
+          resolveRunDone();
+        }
       }
     }
 
