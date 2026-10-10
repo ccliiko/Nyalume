@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$Version = "0.5.0",
+    [string]$Version = "0.4.2",
     # 本机构建默认保留原有 2D 角色；无素材构建显式传 -PersonalAssets:$false。
     [switch]$PersonalAssets = $true,
     # 带模型/动作的个人版：-ModelSource 下含 .pmx 的模型目录全带，动作只带 -MotionPick 白名单
