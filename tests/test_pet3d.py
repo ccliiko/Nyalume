@@ -193,7 +193,7 @@ def test_frame_bridge_drops_overlapping_frame(monkeypatch):
         if api._frame_slot is None and presented:
             break
         time.sleep(0.01)
-    assert ("new", 0, 0, 0) in presented
+    assert ("new", 0, 0, 0, False) in presented
     assert api._frame_slot is None
 
 
@@ -548,7 +548,7 @@ def test_restart_with_rewrites_model_flag(monkeypatch):
     monkeypatch.setattr(pet3d_win.subprocess, "Popen",
                         lambda argv, **kw: seen.setdefault("argv", argv))
     monkeypatch.setattr(pet3d_win, "_log", lambda *a, **k: None)  # 别往真日志里写测试噪音
-    api = pet3d_win._NativeApi.__new__(pet3d_win._NativeApi)  # 只要 restart_with
+    api = pet3d_win._NativeApi(enabled=False)
 
     monkeypatch.setattr(sys, "argv", ["pet3d_win", "--model", "旧模型", "--vmd", "动作目录"])
     assert api.restart_with(model="新模型") is True

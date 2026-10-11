@@ -1,7 +1,7 @@
 """持续追求的目标：自主 Agent 循环，逐步拆解、执行、评估，直到达成可交付结果。
 
-启动后进入自治模式——LLM 负责规划子任务、调用工具执行、判断是否达标，
-然后自动推进下一步，不需要用户每轮确认。
+启动后进入自治模式——LLM 先确定一个行动，调用工具执行，再根据结果判断
+是否达标并决定下一步，不需要用户每轮确认。
 """
 
 import json
@@ -41,19 +41,19 @@ PURSUIT_LLM_TIMEOUT = 120     # 每次 LLM 调用超时
 
 _PLAN_SYSTEM_PROMPT = """\
 你是一个目标执行专家。用户给你一个最终目标，你需要：
-1. 先分析这个目标，拆解为清晰的、可执行的子任务列表
-2. 每个子任务应该是一个具体的、可以用工具完成的步骤
-3. 按依赖顺序排列，但独立的步骤可以标注为可并行
+1. 简短说明你理解的目标和准备先做什么，不要列出完整步骤清单
+2. 只确定当前最有价值的一个可执行步骤，信息不足时先用工具检查相关上下文
+3. 简单目标可以直接完成；复杂目标从检查现状开始，后续步骤根据实际结果再决定
 
 输出格式（严格 JSON）：
 {
   "analysis": "对目标的简要分析",
   "plan": [
-    {"id": 1, "task": "具体任务描述", "depends_on": [], "status": "pending"},
-    {"id": 2, "task": "具体任务描述", "depends_on": [1], "status": "pending"}
+    {"id": 1, "task": "当前要做的具体任务", "depends_on": [], "status": "pending"}
   ]
 }
 
+plan 必须只有一个步骤。analysis 用一两句话自然说明行动方向，不要编号或罗列未来步骤。
 只输出 JSON，不要其他文字。"""
 
 _EXEC_SYSTEM_PROMPT = """\
@@ -64,11 +64,13 @@ _EXEC_SYSTEM_PROMPT = """\
 2. 使用可用的工具（读写文件、运行代码、搜索、下载等）来完成它
 3. 每轮可以调用多个工具
 4. 完成后输出执行结果和完成状态
+5. 以最终目标为准，根据工具结果调整当前行动，不要提前罗列所有后续步骤
+6. 普通检查与可逆操作主动执行；只有缺少无法自行获取的必要信息或需要授权时才请求用户输入
 
 输出格式（严格 JSON，在所有工具调用完成之后的最后一轮输出）：
 {
   "status": "completed" | "failed" | "partial" | "needs_input",
-  "result": "执行结果的详细描述",
+  "result": "简短说明实际发现、完成的工作和验证结果",
   "deliverables": ["产出的文件路径或关键结果"],
   "next_hint": "对下一步的建议（如果有）"
 }
@@ -80,7 +82,7 @@ _EXEC_SYSTEM_PROMPT = """\
 - 把关键数字、文件路径、代码结果写进 result"""
 
 _EVAL_SYSTEM_PROMPT = """\
-你是一个目标评估专家。评估当前计划的整体进展。
+你是一个目标评估专家。根据刚完成的行动和真实执行结果判断目标是否达成，并决定下一步。
 
 输入：
 - 最终目标
@@ -92,14 +94,20 @@ _EVAL_SYSTEM_PROMPT = """\
   "progress_pct": 0-100,
   "summary": "当前进展总结",
   "revision": null 或 {
-    "add": [{"task": "新增任务描述", "depends_on": []}],
-    "remove": [被移除的子任务 id],
-    "modify": [{"id": 任务id, "task": "修改后的描述"}]
+    "add": [{"task": "当前最有价值的一个后续行动", "depends_on": []}]
   },
   "deliverable_summary": "如果 overall_status 是 completed，总结最终交付物"
 }
 
-只输出 JSON。如果目标已经完成，设 overall_status 为 completed。"""
+规则：
+- 每轮只决定一个下一步，revision.add 最多一个任务，不要预先生成完整计划。
+- 如果目标尚未完成且可以继续，必须在 revision.add 中给出一个可执行的下一步。
+- 根据执行结果调整行动；失败时可以给出有依据的修复或替代行动，不要反复重试同一失败操作。
+- 完成当前步骤不代表最终目标完成，必须检查用户要求的交付物和必要验证。
+- 只有真实执行结果足以证明目标已完成才设 completed，不能因已知步骤全部结束就认定成功。
+- 只有无法继续且需要用户或外部条件变化时设 blocked，在 summary 中说明具体原因。
+- summary 用一两句话说明发现和下一步方向；deliverable_summary 直接说明最终交付结果，不附步骤清单。
+只输出 JSON。"""
 
 
 # ── 数据库操作 ──
@@ -312,7 +320,7 @@ def run_pursuit(
     try:
         yield {"type": "pursuit_start", "pursuit_id": pursuit_id, "goal": goal}
         # ── Phase 1: 规划 ──
-        yield {"type": "pursuit_phase", "phase": "planning", "message": "🧠 正在分析目标并制定计划…"}
+        yield {"type": "pursuit_phase", "phase": "planning", "message": "正在理解目标，确定先从哪里开始…"}
 
         reset_session_context(session_id)
         set_run_control(cancel_event, deadline)
@@ -323,7 +331,7 @@ def run_pursuit(
         plan_data = _llm_json(
             [
                 {"role": "system", "content": _PLAN_SYSTEM_PROMPT},
-                {"role": "user", "content": f"目标：{goal}\n\n请拆解为可执行的子任务计划。"},
+                {"role": "user", "content": f"目标：{goal}\n\n请简短说明行动方向，并只确定当前的第一步。"},
             ],
             cancel_event=cancel_event,
             deadline=deadline,
@@ -336,16 +344,18 @@ def run_pursuit(
             yield {"type": "error", "message": "计划制定失败，请换个方式描述目标"}
             return
 
-        plan = plan_data.get("plan", [])
+        # 即使模型返回完整清单，也只采用第一步；后续行动必须基于执行结果。
+        plan = plan_data.get("plan", [])[:1]
         if not plan:
             update_pursuit(pursuit_id, status="failed", summary="未能拆解出子任务")
             yield {"type": "error", "message": "目标可能太模糊了，能再具体一些吗？"}
             return
 
-        # 给每个步骤设置初始状态
+        # 第一步没有前置依赖，状态由执行器管理。
         for step in plan:
-            step.setdefault("status", "pending")
-            step.setdefault("depends_on", [])
+            step["id"] = 1
+            step["status"] = "pending"
+            step["depends_on"] = []
 
         update_pursuit(pursuit_id, plan_json=json.dumps(plan, ensure_ascii=False))
         for step in plan:
@@ -362,6 +372,7 @@ def run_pursuit(
         round_count = 0
         last_eval_progress = 0
         stuck_count = 0
+        final_eval = {}
 
         while round_count < PURSUIT_MAX_ROUNDS:
             _check(cancel_event, deadline)
@@ -369,7 +380,7 @@ def run_pursuit(
 
             current = _get_current_step(plan)
             if not current:
-                # 所有步骤都完成了，做最终评估
+                # 没有可执行行动，不能据此认定目标完成。
                 break
 
             step_id = current["id"]
@@ -393,6 +404,10 @@ def run_pursuit(
             exec_context = f"最终目标：{goal}\n\n当前子任务 #{step_id}：{current['task']}"
             if completed_results:
                 exec_context += "\n\n已完成的步骤结果：\n" + "\n".join(completed_results)
+            failed_results = [f"#{s['id']} {s['task']}: {s.get('result', '')[:200]}"
+                              for s in plan if s["status"] == "failed"]
+            if failed_results:
+                exec_context += "\n\n已失败的尝试（避免重复）：\n" + "\n".join(failed_results)
 
             # 执行子任务（多轮工具调用）
             tool_messages = []
@@ -552,7 +567,9 @@ def run_pursuit(
                         break
 
             # 更新步骤状态
+            current["deliverables"] = step_deliverables
             if step_completed:
+                stuck_count = 0
                 current["status"] = "completed"
                 current["result"] = step_result
                 save_step(pursuit_id, step_id, current["task"], "completed",
@@ -577,92 +594,65 @@ def run_pursuit(
                 }
                 stuck_count += 1
                 if stuck_count >= 3:
-                    yield {"type": "pursuit_stuck", "message": "连续多个步骤失败，可能需要调整计划"}
+                    yield {"type": "pursuit_stuck", "message": "连续尝试失败，正在检查是否还能继续"}
 
             update_pursuit(pursuit_id, plan_json=json.dumps(plan, ensure_ascii=False))
 
-            # 每完成一个步骤做一次快速评估（可选，每 3 步或有失败时）
-            if step_completed and (round_count % 3 == 0 or stuck_count > 0):
-                _check(cancel_event, deadline)
-                eval_data = _llm_json(
-                    [
-                        {"role": "system", "content": _EVAL_SYSTEM_PROMPT},
-                        {"role": "user", "content": (
-                            f"最终目标：{goal}\n\n"
-                            f"当前计划：\n{_format_plan(plan)}\n\n"
-                            f"请评估整体进展。"
-                        )},
-                    ],
-                    cancel_event=cancel_event,
-                    deadline=deadline,
-                )
+            # 每次行动后重新判断目标与下一步，避免按启动时的猜测一路执行。
+            _check(cancel_event, deadline)
+            yield {"type": "pursuit_phase", "phase": "evaluating", "message": "正在检查结果，判断是否需要继续…"}
+            final_eval = _llm_json(
+                [
+                    {"role": "system", "content": _EVAL_SYSTEM_PROMPT},
+                    {"role": "user", "content": (
+                        f"最终目标：{goal}\n\n"
+                        f"已执行的行动与结果：\n{json.dumps(plan, ensure_ascii=False)}\n\n"
+                        "请判断目标是否达成；若尚未达成，根据结果只给出一个下一步。"
+                    )},
+                ],
+                cancel_event=cancel_event,
+                deadline=deadline,
+            )
+            _check(cancel_event, deadline)
+            if "error" in final_eval:
+                final_eval["summary"] = "未能判断下一步，请检查执行结果后重试。"
+                break
 
-                if "error" not in eval_data:
-                    progress = eval_data.get("progress_pct", last_eval_progress)
-                    update_pursuit(
-                        pursuit_id,
-                        progress_pct=progress,
-                        summary=eval_data.get("summary", ""),
-                    )
-                    last_eval_progress = progress
-                    yield {
-                        "type": "pursuit_progress",
-                        "progress_pct": progress,
-                        "summary": eval_data.get("summary", ""),
-                        "formatted": _format_plan(plan),
-                    }
+            status = final_eval.get("overall_status")
+            # 只有最终确认完成才显示 100%，避免阶段完成被误当作目标完成。
+            last_eval_progress = max(0, min(99, int(final_eval.get("progress_pct", last_eval_progress))))
+            update_pursuit(pursuit_id, progress_pct=last_eval_progress,
+                           summary=final_eval.get("summary", ""))
+            yield {
+                "type": "pursuit_progress",
+                "progress_pct": last_eval_progress,
+                "summary": final_eval.get("summary", ""),
+            }
+            if status in ("completed", "blocked"):
+                break
+            if stuck_count >= 3:
+                final_eval["summary"] = "连续三次行动失败，暂时无法继续。" + final_eval.get("summary", "")
+                break
 
-                    # 如果评估认为需要修改计划
-                    revision = eval_data.get("revision")
-                    if revision and isinstance(revision, dict):
-                        for add_task in revision.get("add", []):
-                            new_id = max(s["id"] for s in plan) + 1 if plan else 1
-                            new_step = {
-                                "id": new_id,
-                                "task": add_task.get("task", ""),
-                                "depends_on": add_task.get("depends_on", []),
-                                "status": "pending",
-                            }
-                            plan.append(new_step)
-                            save_step(pursuit_id, new_id, new_step["task"], "pending")
-                        for remove_id in revision.get("remove", []):
-                            for s in plan:
-                                if s["id"] == remove_id and s["status"] == "pending":
-                                    s["status"] = "skipped"
-                                    save_step(pursuit_id, remove_id, s["task"], "skipped")
-                        for mod in revision.get("modify", []):
-                            for s in plan:
-                                if s["id"] == mod.get("id") and s["status"] == "pending":
-                                    s["task"] = mod.get("task", s["task"])
-                                    save_step(pursuit_id, s["id"], s["task"], "pending")
+            revision = final_eval.get("revision")
+            additions = revision.get("add", []) if isinstance(revision, dict) else []
+            next_task = additions[0].get("task", "").strip() if additions else ""
+            if status not in ("in_progress", "needs_revision") or not next_task:
+                final_eval["summary"] = "目标尚未完成，但未能确定可执行的下一步。" + final_eval.get("summary", "")
+                break
 
-                        update_pursuit(pursuit_id, plan_json=json.dumps(plan, ensure_ascii=False))
-                        if revision.get("add") or revision.get("remove") or revision.get("modify"):
-                            yield {
-                                "type": "pursuit_plan_revised",
-                                "formatted": _format_plan(plan),
-                            }
-
-        # ── Phase 3: 最终评估 ──
-        _check(cancel_event, deadline)
-
-        final_eval = _llm_json(
-            [
-                {"role": "system", "content": _EVAL_SYSTEM_PROMPT},
-                {"role": "user", "content": (
-                    f"最终目标：{goal}\n\n"
-                    f"最终计划与执行结果：\n{json.dumps(plan, ensure_ascii=False)}\n\n"
-                    f"请做最终评估，总结交付物。"
-                )},
-            ],
-            cancel_event=cancel_event,
-            deadline=deadline,
-        )
+            # 不接受预生成的后续清单或依赖，只安排当前可执行的一个行动。
+            new_step = {"id": max(s["id"] for s in plan) + 1, "task": next_task,
+                        "depends_on": [], "status": "pending"}
+            plan.append(new_step)
+            save_step(pursuit_id, new_step["id"], next_task, "pending")
+            update_pursuit(pursuit_id, plan_json=json.dumps(plan, ensure_ascii=False))
+            yield {"type": "pursuit_plan_revised", "plan": plan, "formatted": _format_plan(plan)}
 
         _check(cancel_event, deadline)
-        completed = final_eval.get("overall_status") == "completed" and all(
-            step["status"] in ("completed", "skipped") for step in plan)
-        final_summary = final_eval.get("deliverable_summary") or final_eval.get("summary") or "未能确认目标完成，请检查执行结果。"
+        completed = (final_eval.get("overall_status") == "completed"
+                     and plan[-1]["status"] == "completed")
+        final_summary = (final_eval.get("deliverable_summary") if completed else "") or final_eval.get("summary") or "未能确认目标完成，请检查执行结果。"
         update_pursuit(pursuit_id, status="completed" if completed else "failed",
                        progress_pct=100 if completed else last_eval_progress,
                        summary=final_summary, finished_at=time.time())
@@ -670,8 +660,7 @@ def run_pursuit(
         if not completed:
             yield {"type": "error", "message": final_summary}
             return
-        reply = final_summary + "\n\n" + _format_plan(plan)
-        reply_id = memory.save_message(session_id, "assistant", reply)
+        reply_id = memory.save_message(session_id, "assistant", final_summary)
 
         yield {
             "type": "pursuit_complete",

@@ -14,6 +14,11 @@ def _run_frozen_child() -> bool:
         return False
 
     role = sys.argv[1]
+    if role == "--startup-animation":
+        from nyalume.frontends.pet.startup_animation import main as startup_main
+
+        startup_main()
+        return True
     if role == "--pet3d":
         del sys.argv[1]
         from nyalume.frontends.pet.pet3d.pet3d_win import main as pet3d_main

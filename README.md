@@ -1,6 +1,6 @@
 # Nyalume
 
-**V0.4.2** · 面向 Windows 的 AI 助手与二次元桌宠
+**V0.45** · 面向 Windows 的 AI 助手与二次元桌宠
 
 Nyalume 将 AI 对话、桌面陪伴与日常工具放在一起。你可以通过桌宠、网页或命令行与它交流，使用长期记忆、文件处理、资料检索、陪伴专注等功能。
 
@@ -50,7 +50,7 @@ python -m nyalume.frontends.pet.pet3d.pet3d_win --model <模型目录或.pmx> [-
 
 ## Windows 便携版
 
-下载 [GitHub Releases](https://github.com/ccliiko/Nyalume/releases) 的 Windows x64 压缩包，解压完整文件夹后运行 `Nyalume.exe`。V0.4.2 保留原有的 2D 角色，更新聊天过程展示、记忆管理和 3D 互动。首次启动时填写模型服务商、API Key 和模型。
+下载 [GitHub Releases](https://github.com/ccliiko/Nyalume/releases) 的 Windows x64 压缩包，解压完整文件夹后运行 `Nyalume.exe`。V0.45 保留原有的 2D 角色，新增短入场与 3D 猫娘雕刻启动动画、随机趣味台词。首次启动时填写模型服务商、API Key 和模型。完整更新见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 数据与许可
 

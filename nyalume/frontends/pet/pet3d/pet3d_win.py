@@ -30,6 +30,7 @@ import ctypes
 import http.server
 import io
 import json
+import math
 import os
 import struct
 import subprocess
@@ -38,6 +39,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+from collections import deque
 from ctypes import wintypes
 from urllib.request import urlopen
 
@@ -45,6 +47,7 @@ import webview
 import numpy as np
 from PIL import Image
 from . import proactive, model_profile
+from ..startup_animation import STAGES, StartupAnimation
 # 台词先关掉：有 bug 而且 OOC，保留表情+轻弹即可
 # from nyalume.frontends.pet import interactions
 
@@ -166,6 +169,24 @@ _WM_MOUSEWHEEL = 0x020A
 _RAW_FROZEN_GAP = 0.25
 # 命中测试的容差档位（帧像素）：第一档是正常判定，后面几档只用来诊断"差多远"
 _HIT_PADS = (10, 25, 60, 150)
+
+
+def _pointer_scale(x: int, y: int) -> float:
+    """按下位置所在显示器的设备像素/逻辑像素比例。"""
+    try:
+        monitor_at = _user32.MonitorFromPoint
+        monitor_at.argtypes = [wintypes.POINT, wintypes.DWORD]
+        monitor_at.restype = wintypes.HANDLE
+        monitor = monitor_at(wintypes.POINT(x, y), 2)
+        dpi_x, dpi_y = wintypes.UINT(), wintypes.UINT()
+        get_dpi = ctypes.windll.shcore.GetDpiForMonitor
+        get_dpi.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                            ctypes.POINTER(wintypes.UINT), ctypes.POINTER(wintypes.UINT)]
+        if get_dpi(monitor, 0, ctypes.byref(dpi_x), ctypes.byref(dpi_y)) == 0:
+            return max(1.0, dpi_x.value / 96.0)
+    except (AttributeError, OSError):
+        pass
+    return 1.0
 
 
 def _cursor_frozen(now: float, sys_moved_at: float, gap: float = _RAW_FROZEN_GAP) -> bool:
@@ -455,7 +476,7 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
     api._display_hwnd = _create_layered_window()
     motions = api._motions
     index = {"i": 0}
-    state = {"drag": None, "spin": None}
+    state = {"spin": None}
 
     def next_motion() -> None:
         if motions:
@@ -528,6 +549,7 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
         if msg == _WM_MOUSEWHEEL:
             # 滚轮 = 放大/缩小（离镜头近/远）
             if over and not api._menu_rects:
+                api._finish_left(cancel=True)
                 # 缩放锚点：光标屏幕坐标 + 它在她那块画布里的归一化位置。**必须在这里算**：
                 # 画布是页面立刻改的、帧要晚一两拍才到，等 request_resize 时再拿帧尺寸
                 # 去除，分母已经是新尺寸了 —— 一乘回到原值，位置永远算成老位置（她就会
@@ -544,6 +566,7 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
                 and api.reply_at(x, y)):
             return False
         if api._menu_rects:  # 菜单开着时只判菜单项
+            api._finish_left(cancel=True)
             if msg in (_WM_LBUTTONDOWN, _WM_RBUTTONDOWN):
                 mx, my = x - api._x, y - api._y
                 _log(f"menu click at {mx:.0f},{my:.0f}")
@@ -634,47 +657,22 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
                 api._menu_page = "root"
                 api._pending = {"kind": "menu_close"}
             return False
-        drag = state["drag"]
+        drag = api._left
         spin = state["spin"]
         if msg == _WM_RBUTTONDOWN and over and spin is None and drag is None:
             # 右键按住拖 = 左右旋转；基本没动才算单击（弹菜单）
             state["spin"] = {"x": x, "last": x, "moved": 0}
             return False
-        if msg == _WM_LBUTTONDOWN and over and drag is None:
-            state["drag"] = {
-                "x": x, "y": y, "win": (api._x, api._y), "moved": 0,
-            }
-            # 归一化抓取点。窗口宽高是设备像素，光标是屏幕像素，用比例传才不会被 DPI 带偏
-            if api._w and api._h:
-                api._grab_xy = (
-                    round((x - api._x) / api._w, 4),
-                    round((y - api._y) / api._h, 4),
-                )
-                _log(f"grab {api._grab_xy[0]:.3f},{api._grab_xy[1]:.3f}")
+        if msg == _WM_LBUTTONDOWN and over and drag is None and spin is None:
+            api._start_left(x, y, bool(_user32.GetAsyncKeyState(0x12) & 0x8000),
+                            _pointer_scale(x, y))
             return False
         elif msg == _WM_MOUSEMOVE and drag is not None:
-            moved = abs(x - drag["x"]) + abs(y - drag["y"])
-            drag["moved"] = max(drag["moved"], moved)
-            last = drag.get("last")
-            if last is not None:
-                api._drag_dx += x - last[0]
-                api._drag_dy += y - last[1]
-            drag["last"] = (x, y)
-            api._x = drag["win"][0] + (x - drag["x"])
-            api._y = drag["win"][1] + (y - drag["y"])
+            api._move_left(x, y)
             return False
         elif msg == _WM_LBUTTONUP and drag is not None:
-            state["drag"] = None
-            api._grab_xy = None
-            _log(f"drag end moved={drag['moved']}")
-            if drag["moved"] < 6:
-                # 连续触摸都交给页面；切舞保留在动作菜单，避免双击打断互动。
-                if api._w and api._h:
-                    api._pending = {
-                        "kind": "tap",
-                        "x": round((drag["x"] - api._x) / api._w, 4),
-                        "y": round((drag["y"] - api._y) / api._h, 4),
-                    }
+            api._move_left(x, y)
+            api._finish_left()
             return False
         elif msg == _WM_MOUSEMOVE and spin is not None:
             dx = x - spin["last"]
@@ -709,7 +707,7 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
             api._sys_moved_at,
             # 正在拖她时门槛降到 60ms：游戏一按住鼠标就把光标重新锁死，
             # 不快点接手原始位移，整段拖动期间有效光标一动不动（= 拖不起来）
-            _RAW_DRAG_GAP if (state["drag"] or state["spin"]) else _RAW_FROZEN_GAP,
+            _RAW_DRAG_GAP if (api._left or state["spin"]) else _RAW_FROZEN_GAP,
         ):
             # 光标真的冻住了（游戏锁鼠标）才积分，见 _cursor_frozen 的注释
             (lx, ly), (hx, hy) = _virtual_screen()
@@ -720,10 +718,8 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
             api._locked = True  # 从现在起"有效光标"才算数
         api._last_sys_pos = (cx, cy)
         api._cursor_moved_at = now
-        drag = state["drag"]
-        if drag is not None:  # 游戏里按住拖拽：窗口跟着积分出来的光标走
-            api._x = drag["win"][0] + (api._eff_cursor[0] - drag["x"])
-            api._y = drag["win"][1] + (api._eff_cursor[1] - drag["y"])
+        if api._left is not None:
+            api._move_left(*api._eff_cursor)
 
     def hook_cb(code, wparam, lparam):
         if code >= 0:
@@ -764,6 +760,8 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
             _log(f"显示线程退出：GetMessage={got}（窗口随之销毁）")
             break
         if msg.message == _WM_RECOVER_DISPLAY:
+            api._finish_left(cancel=True)
+            state["spin"] = None
             force = int(msg.wParam) == 1  # 1 = 连叫几次都不醒，别再哄了，直接重建
             if force and _is_our_window(api._display_hwnd):
                 _user32.DestroyWindow(api._display_hwnd)  # 只有窗口线程能销毁自己的窗口
@@ -789,6 +787,7 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
         _user32.DispatchMessageW(ctypes.byref(msg))
     if hook:
         _user32.UnhookWindowsHookEx(hook)
+    api._finish_left(cancel=True)
     _log("显示线程结束（钩子已摘）")
 
 
@@ -837,7 +836,7 @@ def _no_taskbar(hwnd: int) -> None:
 _LAYER: dict = {}  # hwnd → 常驻的全屏 DIB（窗口固定，不再每帧重建）
 
 
-def _update_layered(hwnd: int, bgra: bytes, w: int, h: int, x: int, y: int) -> None:
+def _update_layered(hwnd: int, bgra: bytes, w: int, h: int, x: int, y: int) -> bool:
     """把"她那一块"(w×h) 贴进**固定铺满屏幕**的分层窗口里的 (x, y) 处。
 
     以前是每帧按她的大小 CreateDIBSection + UpdateLayeredWindow（顺带把窗口改成那个大小），
@@ -848,7 +847,7 @@ def _update_layered(hwnd: int, bgra: bytes, w: int, h: int, x: int, y: int) -> N
     """
     wa = _work_area()
     if wa is None:
-        return
+        return False
     win_x, win_y = wa[0], wa[1]
     win_w, win_h = wa[2] - wa[0], wa[3] - wa[1]
 
@@ -884,7 +883,7 @@ def _update_layered(hwnd: int, bgra: bytes, w: int, h: int, x: int, y: int) -> N
         dst[oy0 - win_y:oy1 - win_y, ox0 - win_x:ox1 - win_x] = 0
     src = np.frombuffer(bgra, dtype=np.uint8)
     if src.size != w * h * 4:
-        return
+        return False
     src = src.reshape(h, w, 4)
     x0, y0 = max(x, win_x), max(y, win_y)
     x1, y1 = min(x + w, win_x + win_w), min(y + h, win_y + win_h)
@@ -893,17 +892,20 @@ def _update_layered(hwnd: int, bgra: bytes, w: int, h: int, x: int, y: int) -> N
         st["rect"] = (x0, y0, x1, y1)
     else:
         st["rect"] = None
+        return False
 
     pt_dst = wintypes.POINT(win_x, win_y)
     size = wintypes.SIZE(win_w, win_h)
     pt_src = wintypes.POINT(0, 0)
     blend = _BlendFunction(_AC_SRC_OVER, 0, 255, _AC_SRC_ALPHA)
     hdc_screen = _user32.GetDC(None)
-    _user32.UpdateLayeredWindow(
-        hwnd, hdc_screen, ctypes.byref(pt_dst), ctypes.byref(size),
-        st["dc"], ctypes.byref(pt_src), 0, ctypes.byref(blend), _ULW_ALPHA,
-    )
-    _user32.ReleaseDC(None, hdc_screen)
+    try:
+        return bool(_user32.UpdateLayeredWindow(
+            hwnd, hdc_screen, ctypes.byref(pt_dst), ctypes.byref(size),
+            st["dc"], ctypes.byref(pt_src), 0, ctypes.byref(blend), _ULW_ALPHA,
+        ))
+    finally:
+        _user32.ReleaseDC(None, hdc_screen)
 
 
 _STATE_DIR = os.path.join(os.path.expanduser("~"), ".nyalume")
@@ -1180,6 +1182,12 @@ class _NativeApi:
         self._menu_rects: list = []
         self._reply_target = None
         self._pending = None
+        self._left = None
+        self._interaction_id = 0
+        self._interaction_events = deque()
+        self._interaction_records = {}
+        self._interaction_lock = threading.RLock()
+        self._interaction_polled_at = 0.0
         self._state = None
         self._web_working = False
         self._drag_dx = 0
@@ -1230,12 +1238,13 @@ class _NativeApi:
         self._auto_fps = bool(cfg.get("autofps", True))
         self._ik = bool(cfg.get("ik", True))  # 脚部 IK：换别人的动作配布对不上时可关
         self._fps_now = 0  # 当前推帧上限，0=还没同步
-        self._grab_xy = None  # 这次拖拽抓在帧里的归一化位置，页面拿它射线选骨骼
         self._hook_events = 0  # DEBUG：钩子还活着吗（拿它看线程有没有被异常打死）
         self._raw_events = 0
         self._timing: list = []
         self._frame_lock = threading.Lock()
         self._frame_slot = None        # 单槽：桥接线程只放"最新一帧"，呈递线程来取
+        self._startup = None
+        self._startup_finished = False
         self._presenter = None
         self._frames_in = 0            # 桥接线程收到了几帧（/pet_state 用来看有没有在送）
         self._last_batch = time.time()
@@ -1249,6 +1258,105 @@ class _NativeApi:
         self._frame_size = (0, 0)  # 最近一帧的显示尺寸（设备像素）
         self._anchored_size = (0, 0)  # 上次按锚点摆位时用的画布尺寸
         self._zoom_at = None  # 缩放锚点：(光标屏幕x, 光标屏幕y, 归一化x, 归一化y)
+
+    def _interaction_event(self, phase: str, left: dict) -> dict:
+        x, y = left["last"]
+        wx, wy = left["win"]
+        w, h = left["size"]
+        return {"kind": "interaction", "id": left["id"], "phase": phase,
+                "x": (x - wx) / w, "y": (y - wy) / h,
+                "at": time.monotonic(), "moved": left["moved"],
+                "width": w / left["scale"], "height": h / left["scale"]}
+
+    def _queue_interaction(self, event: dict) -> None:
+        # 页面挂起时不无限积累手势；先取消旧状态，再接收新的一轮。
+        if len(self._interaction_events) >= 64:
+            self._interaction_events.clear()
+            self._interaction_records.clear()
+            self._interaction_events.append({"kind": "interaction", "phase": "cancel", "id": None})
+        self._interaction_events.append(event)
+
+    def _start_left(self, x: int, y: int, alt: bool, scale: float = 1.0) -> None:
+        """调用者已经命中角色；模式只在按下时决定。"""
+        with self._interaction_lock:
+            self._finish_left(cancel=True)
+            if not self._w or not self._h:
+                return
+            self._interaction_id += 1
+            self._left = left = {"id": self._interaction_id, "mode": "touch" if alt else "move",
+                "x": x, "y": y, "last": (x, y), "win": (self._x, self._y),
+                "size": (self._w, self._h), "scale": scale, "moved": 0,
+                "started": time.monotonic(), "moving": False}
+            self._drag_dx = self._drag_dy = 0
+            if alt:
+                self._queue_interaction(self._interaction_event("begin", left))
+                self._interaction_records[left["id"]] = {"region": None}
+
+    def _move_left(self, x: int, y: int) -> None:
+        """普通鼠标与 Raw Input 共用，热路径不拾取模型或写陪伴存档。"""
+        with self._interaction_lock:
+            left = self._left
+            if left is None:
+                return
+            left["moved"] = max(left["moved"], math.hypot(x - left["x"], y - left["y"]) / left["scale"])
+            last = left["last"]
+            left["last"] = (x, y)
+            if left["mode"] != "move" or left["moved"] <= 6:
+                return
+            if not left["moving"]:
+                left["moving"] = True
+                last = (left["x"], left["y"])
+            self._drag_dx += x - last[0]
+            self._drag_dy += y - last[1]
+            self._x = left["win"][0] + x - left["x"]
+            self._y = left["win"][1] + y - left["y"]
+
+    def _finish_left(self, cancel: bool = False) -> None:
+        with self._interaction_lock:
+            left, self._left = self._left, None
+            if left is None:
+                return
+            if left["mode"] == "touch":
+                self._queue_interaction(self._interaction_event("cancel" if cancel else "end", left))
+            elif not cancel and not left["moving"] and left["moved"] <= 6:
+                event = self._interaction_event("end", left)
+                self._queue_interaction({"kind": "tap", "x": event["x"], "y": event["y"], "bounce": True})
+            if cancel:
+                self._drag_dx = self._drag_dy = 0
+
+    def interaction_info(self, gesture_id, region, phase) -> None:
+        """渲染器确认有效接触；一轮只记一次，更新位置不增加次数。"""
+        beginning = ending = False
+        with self._interaction_lock:
+            record = self._interaction_records.get(gesture_id)
+            if record is None:
+                return
+            if phase == "begin" and region and region != "-" and not record["region"]:
+                record["region"] = region
+                beginning = True
+            elif phase == "end":
+                self._interaction_records.pop(gesture_id, None)
+                ending = bool(record["region"])
+        # 陪伴记录会写数据库，不能持有鼠标热路径的锁。
+        if beginning:
+            with self._pet_state.lock:
+                self._pet_state.last_interaction = time.time()
+                self._pet_state._dirty = True
+        if ending:
+            self._pet_state.bump("tap")
+        if beginning or ending:
+            self._note_touch()
+
+    def _poll_interaction(self):
+        with self._interaction_lock:
+            left = self._left
+            # 按下后的第一轮留 100ms，避免钩子与系统异步键态的交接误判。
+            if (left and time.monotonic() - left["started"] > 0.1
+                    and not (_user32.GetAsyncKeyState(0x01) & 0x8000)):
+                self._finish_left(cancel=True)
+            if self._interaction_events:
+                return self._interaction_events.popleft()
+        return None
 
     def _ensure_display(self, w: int, h: int) -> int:
         deadline = time.time() + 5
@@ -1328,7 +1436,8 @@ class _NativeApi:
         return
 
     def set_frame(
-        self, b64: str, encode_ms: float = 0, display_w: int = 0, display_h: int = 0
+        self, b64: str, encode_ms: float = 0, display_w: int = 0, display_h: int = 0,
+        startup_ready: bool = False,
     ) -> None:
         """桥接线程只做一件事：把最新一帧放进单槽就返回。
 
@@ -1337,7 +1446,7 @@ class _NativeApi:
         卡住只会让画面停一小下，桥和页面都不受影响；旧帧被新帧覆盖，正好是要的语义。
         """
         self._frames_in += 1
-        self._frame_slot = (b64, encode_ms, display_w, display_h)
+        self._frame_slot = (b64, encode_ms, display_w, display_h, bool(startup_ready))
         if self._presenter is None:
             self._presenter = threading.Thread(target=self._present_loop, daemon=True)
             self._presenter.start()
@@ -1356,7 +1465,8 @@ class _NativeApi:
                 _log(f"呈递失败 {type(e).__name__}: {e}")
 
     def _present_frame(
-        self, b64: str, encode_ms: float = 0, display_w: int = 0, display_h: int = 0
+        self, b64: str, encode_ms: float = 0, display_w: int = 0, display_h: int = 0,
+        startup_ready: bool = False,
     ) -> None:
         if not self.enabled:
             return
@@ -1430,7 +1540,13 @@ class _NativeApi:
                 self.restart_with()
             return
         t_up = time.perf_counter()
-        _update_layered(hwnd, bgra, w, h, self._x, self._y)
+        if not _update_layered(hwnd, bgra, w, h, self._x, self._y):
+            return
+        if startup_ready and not blank and not self._startup_finished:
+            self._startup_finished = True
+            if self._startup is not None:
+                self._startup.send("ready")
+            _log("启动就绪：初始化后的有效帧已显示到桌面")
         presented_at = time.perf_counter()
         spent = presented_at - t_up
         if spent > 1.0:  # 贴一帧要一秒以上：就是这里把整条推帧链卡住的（画面会停住）
@@ -1454,6 +1570,23 @@ class _NativeApi:
                 f"update={sum(t[2] for t in self._timing)/n*1000:.1f}ms"
             )
             self._timing = []
+
+    def startup_state(self, stage: str, message: str = "") -> None:
+        if self._startup_finished:
+            return
+        if stage == "error":
+            self._startup_finished = True
+            _log(f"启动失败：{message}")
+            if self._startup is not None:
+                self._startup.close()
+            # The JS bridge must return promptly even while the error is open.
+            threading.Thread(target=_message_box, args=(
+                f"3D 桌宠初始化失败：\n{str(message)[:500]}\n\n请检查模型、贴图和动作后重新启动。",
+            ), daemon=True).start()
+        elif stage in STAGES:
+            if self._startup is not None:
+                self._startup.send("stage", STAGES[stage], stage)
+            _log(f"启动阶段：{STAGES[stage]}")
 
     def motion_loaded(self, result) -> None:
         """页面切完动作后回报一句，方便排查"按了没反应"。"""
@@ -1507,6 +1640,13 @@ class _NativeApi:
             return [{'id': 'page:root', 'label': '← 返回'}] + [
                 {'id': 'interact:' + kind, 'label': label} for kind, label in
                 [('pat', '摸摸头 ♡'), ('wave', '打个招呼'), ('nod', '点点头'), ('cheer', '一起加油 ✨')]
+            ] + [{'id': 'page:help', 'label': '鼠标互动说明 ▸'}]
+        if page == 'help':
+            return [{'id': 'page:interactions', 'label': '← 返回'}] + [
+                {'id': 'none', 'label': label} for label in
+                ['左键轻点：按部位回应并轻弹', '左键按住拖动：立即移动桌宠', 'Alt＋左键单点：表情互动，不轻弹', 'Alt＋左键按住头部轻移：抚摸',
+                 'Alt＋左键按住手部：握手', 'Alt＋左键长按衣袖 / 衣摆并拉动：局部互动',
+                 '右键拖动：旋转；轻点：菜单', '滚轮：放大 / 缩小']
             ]
         if page == "config":
             return paginate([
@@ -1927,6 +2067,7 @@ class _NativeApi:
 
     def restart_with(self, model: str = "", vmd: str = "") -> bool:
         """换模型/换动作目录：用新参数起一只新的，自己退出（运行期换太容易留脏状态）。"""
+        self._finish_left(cancel=True)
         argv = list(sys.argv[1:])
 
         def put(flag: str, value: str) -> None:
@@ -1988,6 +2129,7 @@ class _NativeApi:
         这里只校验参数并记一笔日志 —— 定位不在这儿做：画布是页面立刻改的、帧要晚一两拍
         才到，只有拿到某一帧的真实尺寸才能算出"光标底下那点不动"的位置。
         """
+        self._finish_left(cancel=True)
         if not self.enabled or not self._frame_size:
             return
         tw = max(160, int(round(css_w * dpr)))
@@ -2005,6 +2147,11 @@ class _NativeApi:
 
     def poll_action(self):
         """页面定时来取一条待办（拖拽/点击/菜单都走这里，Python 侧永不阻塞）。"""
+        if self._pending and self._pending.get('kind') in ('menu', 'switch_model', 'zoom'):
+            self._finish_left(cancel=True)
+        interaction = self._poll_interaction()
+        if interaction is not None:
+            return interaction
         # 视线跟随每轮现算：钩子和原始输入那两个热路径只记位置，不做换算
         self.update_look(*(self._eff_cursor if self._locked else _cursor_pos()))
         # 游戏把鼠标捕获住时光标是不动的（按 Alt 才给真光标），这时别一直盯着
@@ -2020,7 +2167,8 @@ class _NativeApi:
             action, self._pending = self._pending, None
             if action.get('delivery_id'):
                 from nyalume.core import companionship
-                if (self._desk.get('busy') or self._desk.get('quiet') or self._desk.get('fullscreen')
+                if (self._left or self._desk.get('busy') or self._desk.get('quiet') or self._desk.get('fullscreen')
+                        or time.time() - self._pet_state.snapshot()['last_interaction'] < proactive.RECENT_TOUCH
                         or self._desk.get('category') == '会议' or self._chat_opening
                         or self._web_working or not self._proactive or not companionship.delivery_valid(action['delivery_id'])):
                     return None
@@ -2043,11 +2191,12 @@ class _NativeApi:
             self._drag_dx = self._drag_dy = 0
             _dbg(f"drag {dx},{dy}")
             action = {"kind": "drag", "dx": dx, "dy": dy}
-            if self._grab_xy is not None:
-                # 只在这次拖拽的第一条里带：页面据此决定抓的是头发还是袖口
-                action["gx"], action["gy"] = self._grab_xy
-                self._grab_xy = None
             return action
+        with self._interaction_lock:
+            if (self._left and self._left["mode"] == "touch"
+                    and time.monotonic() - self._interaction_polled_at >= 0.035):
+                self._interaction_polled_at = time.monotonic()
+                return self._interaction_event("update", self._left)
         if self._cursor is not None:
             cur, self._cursor = self._cursor, None
             if cur != self._last_look:  # 位置没变就别过桥：这一条每秒 25 次，白跑
@@ -2874,93 +3023,95 @@ def main() -> int:
     vmd, vmd_root = _resolve_motion(args.vmd)
     # 下次不带参数也能起来。动作目录只在"这次给的是目录"时记：直接拖个 .vmd 文件
     # 进来时 vmd_root 是那个文件的父目录（可能只有一支动作），记下来会把动作库换掉。
-    _remember_dirs(model_dir, vmd_root if (not args.vmd or os.path.isdir(args.vmd)) else "", pmx)
-    _log_launcher_chain()  # 谁拉起来的（排查"莫名重启一次"）
-    api = _NativeApi(enabled=not args.debug, win_size=(width, height))
-    api._model_dir = os.path.abspath(model_dir)
-    api.configure_model(os.path.join(model_dir, pmx), args.scale, args.rotate)
-    api.load_library(vmd_root, model_dir)
-    if vmd and vmd != DEFAULT_VMD and not model_profile.allows_motion(vmd, vmd_root, api._model_profile):
-        _log("启动动作不在当前模型白名单内，回到自然待机")
-        vmd = DEFAULT_VMD
-    port = start_server(model_dir, vmd_root, api)
-    _write_endpoint(port, model_dir)
-    motion_url, use_idle = "", 0
-    if vmd:
-        if os.path.normcase(vmd) == os.path.normcase(DEFAULT_VMD):
-            use_idle = 1  # 自带 idle：让它循环就行
-        elif os.path.isdir(os.path.abspath(args.vmd)):
-            # 传的是动作目录 = 动作库：开局待机，想跳哪支用右键菜单/双击挑
-            use_idle = 1
+    with StartupAnimation(_log, enabled=not args.debug, on_error=_message_box) as startup:
+        _remember_dirs(model_dir, vmd_root if (not args.vmd or os.path.isdir(args.vmd)) else "", pmx)
+        _log_launcher_chain()  # 谁拉起来的（排查"莫名重启一次"）
+        api = _NativeApi(enabled=not args.debug, win_size=(width, height))
+        api._startup = startup
+        api._model_dir = os.path.abspath(model_dir)
+        api.configure_model(os.path.join(model_dir, pmx), args.scale, args.rotate)
+        api.load_library(vmd_root, model_dir)
+        if vmd and vmd != DEFAULT_VMD and not model_profile.allows_motion(vmd, vmd_root, api._model_profile):
+            _log("启动动作不在当前模型白名单内，回到自然待机")
+            vmd = DEFAULT_VMD
+        port = start_server(model_dir, vmd_root, api)
+        _write_endpoint(port, model_dir)
+        motion_url, use_idle = "", 0
+        if vmd:
+            if os.path.normcase(vmd) == os.path.normcase(DEFAULT_VMD):
+                use_idle = 1  # 自带 idle：让它循环就行
+            elif os.path.isdir(os.path.abspath(args.vmd)):
+                # 传的是动作目录 = 动作库：开局待机，想跳哪支用右键菜单/双击挑
+                use_idle = 1
+            else:
+                rel = os.path.relpath(vmd, vmd_root).replace("\\", "/")
+                motion_url = "/vmd/" + urllib.parse.quote(rel)
+                use_idle = 1
+        url = (
+            f"http://127.0.0.1:{port}/viewer.html"
+            f"?pmx=/model/{urllib.parse.quote(pmx)}"
+            f"&motion={urllib.parse.quote(motion_url)}&idle={use_idle}"
+            f"&physics={0 if args.no_physics else 1}"
+            f"&ik={int(api._ik)}"
+            f"&fps={args.fps}"
+            f"&style={api._style_index}&quiet={int(api._effective_quiet)}"
+            f"&box={width}x{height}"  # 她那一块画布的基准尺寸（缩放从这里乘）
+        )
+        if args.debug:
+            rx, ry = _bottom_right(width, height)
+            if rx is None:
+                rx, ry = 100, 100
         else:
-            rel = os.path.relpath(vmd, vmd_root).replace("\\", "/")
-            motion_url = "/vmd/" + urllib.parse.quote(rel)
-            use_idle = 1
-    url = (
-        f"http://127.0.0.1:{port}/viewer.html"
-        f"?pmx=/model/{urllib.parse.quote(pmx)}"
-        f"&motion={urllib.parse.quote(motion_url)}&idle={use_idle}"
-        f"&physics={0 if args.no_physics else 1}"
-        f"&ik={int(api._ik)}"
-        f"&fps={args.fps}"
-        f"&style={api._style_index}&quiet={int(api._effective_quiet)}"
-        f"&box={width}x{height}"  # 她那一块画布的基准尺寸（缩放从这里乘）
-    )
-    if args.debug:
-        rx, ry = _bottom_right(width, height)
-        if rx is None:
-            rx, ry = 100, 100
-    else:
-        rx, ry = -3200, 0  # 离屏渲染器，真身是分层窗口
-    win = webview.create_window(
-        "Nyalume 3D Renderer",
-        url,
-        width=win_w,
-        height=win_h,
-        x=rx,
-        y=ry,
-        frameless=True,
-        easy_drag=False,
-        on_top=False,
-        resizable=True,  # 缩放要程序化 resize；窗口本身是无边框且离屏的
-        shadow=False,
-        transparent=True,
-        background_color="#000000",
-        focus=False,
-        min_size=(120, 120),
-        js_api=api,
-    )
-    threading.Thread(target=_stdin_commands, args=(win, vmd_root, api), daemon=True).start()
-    threading.Thread(target=_state_loop, args=(api,), daemon=True).start()
-    threading.Thread(target=_fps_watch, args=(api,), daemon=True).start()
-    threading.Thread(target=_desktop_watch, args=(api,), daemon=True).start()
-    threading.Thread(target=_archive_loop, daemon=True).start()
-    # 主动搭话读取聊天设置写入的同一份 .env（独立 3D 进程需自行加载）。
-    try:
-        from nyalume.core import llm as _llm_config  # noqa: F401
+            rx, ry = -3200, 0  # 离屏渲染器，真身是分层窗口
+        win = webview.create_window(
+            "Nyalume 3D Renderer",
+            url,
+            width=win_w,
+            height=win_h,
+            x=rx,
+            y=ry,
+            frameless=True,
+            easy_drag=False,
+            on_top=False,
+            resizable=True,  # 缩放要程序化 resize；窗口本身是无边框且离屏的
+            shadow=False,
+            transparent=True,
+            background_color="#000000",
+            focus=False,
+            min_size=(120, 120),
+            js_api=api,
+        )
+        threading.Thread(target=_stdin_commands, args=(win, vmd_root, api), daemon=True).start()
+        threading.Thread(target=_state_loop, args=(api,), daemon=True).start()
+        threading.Thread(target=_fps_watch, args=(api,), daemon=True).start()
+        threading.Thread(target=_desktop_watch, args=(api,), daemon=True).start()
+        threading.Thread(target=_archive_loop, daemon=True).start()
+        # 主动搭话读取聊天设置写入的同一份 .env（独立 3D 进程需自行加载）。
+        try:
+            from nyalume.core import llm as _llm_config  # noqa: F401
 
-        if proactive.llm_ready():
-            threading.Thread(target=proactive.run_loop, args=(api,), daemon=True).start()
-            _log("主动搭话：开（LLM 已配置）")
-        else:
+            if proactive.llm_ready():
+                threading.Thread(target=proactive.run_loop, args=(api,), daemon=True).start()
+                _log("主动搭话：开（LLM 已配置）")
+            else:
+                api._proactive = False
+                _log("主动搭话：关（没配 LLM_API_KEY）")
+        except Exception as e:
             api._proactive = False
-            _log("主动搭话：关（没配 LLM_API_KEY）")
-    except Exception as e:
-        api._proactive = False
-        _log(f"主动搭话：关（{type(e).__name__}: {e}）")
-    threading.Thread(
-        target=_display_window_thread_guarded, args=(api, win, vmd_root, model_dir), daemon=True
-    ).start()
-    try:
-        webview.start()
-    finally:
-        # 桌宠退出时收掉自己拉起的聊天窗（运行期两个窗口是并存的，不是交接）
-        if api._chat is not None:
-            api._chat.close()
-        if api._quick_chat is not None:
-            api._quick_chat.close()
-        if api._fantasy_chat is not None:
-            api._fantasy_chat.close()
+            _log(f"主动搭话：关（{type(e).__name__}: {e}）")
+        threading.Thread(
+            target=_display_window_thread_guarded, args=(api, win, vmd_root, model_dir), daemon=True
+        ).start()
+        try:
+            webview.start()
+        finally:
+            # 桌宠退出时收掉自己拉起的聊天窗（运行期两个窗口是并存的，不是交接）
+            if api._chat is not None:
+                api._chat.close()
+            if api._quick_chat is not None:
+                api._quick_chat.close()
+            if api._fantasy_chat is not None:
+                api._fantasy_chat.close()
     return 0
 
 

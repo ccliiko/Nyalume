@@ -13,6 +13,8 @@ import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
+from functools import partial
+from typing import Literal
 
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -587,6 +589,7 @@ class ChatIn(BaseModel):
     session_id: str = "web-default"
     message: str
     request_id: str = ""
+    mode: Literal["chat", "plan"] = "chat"
 
 
 class PersonaIn(BaseModel):
@@ -1296,6 +1299,10 @@ def chat(body: ChatIn):
     """SSE 流式聊天；遇到 approval 事件会挂起等用户点按钮再继续。"""
     if body.session_id == fantasy.SESSION_ID:
         raise HTTPException(status_code=400, detail="请使用奇幻冒险入口")
+    if body.mode == "plan":
+        if permission_mode() == "daily" or body.session_id == memory.DAILY_SESSION_ID:
+            raise HTTPException(status_code=400, detail="请先切回工作模式，再进入计划模式")
+        return _chat_response(body, partial(run_stream, plan_mode=True))
     if permission_mode() == "daily":
         body.session_id = memory.daily_session()
     return _chat_response(body, run_stream)

@@ -352,7 +352,8 @@ def run_loop(api, interval: float = 5.0) -> None:
                 proposer.next_allowed_at = max(now, proposer.last_proposal) + random.uniform(*span) if span else float("inf")
             if not getattr(api, "_proactive", True) or mode == "quiet":
                 continue
-            if getattr(api, "_pending", None) or getattr(api, "_chat_opening", False) or getattr(api, "_web_working", False):
+            if (getattr(api, "_left", None) or getattr(api, "_pending", None)
+                    or getattr(api, "_chat_opening", False) or getattr(api, "_web_working", False)):
                 continue
             quick_chat = getattr(api, "_quick_chat", None)
             fantasy_chat = getattr(api, "_fantasy_chat", None)
@@ -390,7 +391,7 @@ def run_loop(api, interval: float = 5.0) -> None:
             # 模型请求期间用户可能开始互动、开会或关闭功能；迟到结果不抢占。
             quick_chat = getattr(api, "_quick_chat", None)
             fantasy_chat = getattr(api, "_fantasy_chat", None)
-            if (api._pending or api._talk_mode != mode or api._desk.get("quiet")
+            if (getattr(api, "_left", None) or api._pending or api._talk_mode != mode or api._desk.get("quiet")
                     or not getattr(api, "_proactive", True) or getattr(api, "_chat_opening", False) or getattr(api, "_web_working", False)
                     or any(chat and chat._visible and chat._alive() for chat in (quick_chat, fantasy_chat, getattr(api, "_chat", None)))
                     or api._desk.get("fullscreen") or api._desk.get("busy")
@@ -414,7 +415,7 @@ def run_loop(api, interval: float = 5.0) -> None:
                         {"title": proposal["title"], "goal": proposal["goal"],
                          "location": proposal["location"], "narrative": action["narrative"][:1000]}, ensure_ascii=False)
                     book = fantasy_worldbook.generate(seed)
-                    if (api._pending or api._talk_mode != mode or api._desk.get("quiet")
+                    if (getattr(api, "_left", None) or api._pending or api._talk_mode != mode or api._desk.get("quiet")
                             or not getattr(api, "_proactive", True) or getattr(api, "_chat_opening", False) or getattr(api, "_web_working", False)
                             or api._desk.get("fullscreen") or api._desk.get("busy")
                             or api._desk.get("category") == "会议"

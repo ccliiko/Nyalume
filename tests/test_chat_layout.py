@@ -291,22 +291,30 @@ def test_slash_menu_keyboard_goal_stream_and_exit(chat_page, tmp_path):
           return Promise.resolve(new Response(JSON.stringify({pursuit: {id: 'test-goal'}})));
         }
         if (url === '/api/pursuit/test-goal/run') {
-          const events = [
+          const initial = [
             {type:'user_id', message_id:11},
-            {type:'pursuit_plan', analysis:'制定计划', formatted:'⬜ #1 计算'},
-            {type:'pursuit_step_start', task:'计算'},
+            {type:'pursuit_plan', analysis:'先计算并检查结果', formatted:'⬜ #1 计算\\n⬜ #2 预先生成的步骤'},
+            {type:'pursuit_step_start', task:'计算'}
+          ];
+          const rest = [
             {type:'pursuit_step_done', result:'结果是 4'},
+            {type:'pursuit_progress', summary:'计算结果已验证', formatted:'✅ #1 计算'},
             {type:'pursuit_complete', summary:'目标已完成', formatted:'✅ #1 计算'},
             {type:'done', message_id:12}
           ];
-          return Promise.resolve(new Response(events.map(e => 'data: ' + JSON.stringify(e) + '\\n\\n').join('')));
+          const encoder = new TextEncoder();
+          return Promise.resolve(new Response(new ReadableStream({start(controller) {
+            const emit = e => controller.enqueue(encoder.encode('data: ' + JSON.stringify(e) + '\\n\\n'));
+            initial.forEach(emit);
+            window.finishGoal = () => { rest.forEach(emit); controller.close(); };
+          }})));
         }
         return previous(url, options);
       };
     }""")
     page.locator('#input').fill('/')
     expect(page.locator('#slash-menu')).to_be_visible()
-    expect(page.locator('#slash-menu button')).to_have_count(4)
+    expect(page.locator('#slash-menu button')).to_have_count(5)
     page.locator('#input').press('ArrowDown')
     expect(page.locator('#slash-menu button').nth(1)).to_have_attribute('aria-selected', 'true')
     page.locator('#input').press('ArrowUp')
@@ -321,8 +329,16 @@ def test_slash_menu_keyboard_goal_stream_and_exit(chat_page, tmp_path):
     expect(page.locator('#input')).to_have_value('')
     page.locator('#input').fill('计算 2+2')
     page.locator('#send').click()
+    expect(page.locator('.latest-turn .process-commentary')).to_have_text('先计算并检查结果')
+    expect(page.locator('.latest-turn .process-commentary')).to_be_visible()
+    expect(page.locator('.latest-turn .work-status-text').last).to_contain_text('正在执行：计算')
+    expect(page.locator('.latest-turn .reply-body')).to_be_empty()
+    expect(page.locator('.latest-turn')).not_to_contain_text('预先生成的步骤')
+    page.evaluate('finishGoal()')
     expect(page.locator('.latest-turn .reply-body')).to_contain_text('目标已完成')
     page.wait_for_function('!state.busy')
+    expect(page.locator('.latest-turn .reply-body')).to_have_text('目标已完成')
+    expect(page.locator('.latest-turn .process-commentary')).to_have_count(2)
     assert page.evaluate('goalPayload.goal') == '计算 2+2'
     assert page.evaluate('goalPayload.session_id') == 'demo'
     page.locator('#goal-exit').click()
@@ -350,7 +366,7 @@ def test_slash_menu_handles_ime_commit_fullwidth_and_refocus(chat_page):
     field.dispatch_event('keydown', {'key': 'Enter', 'isComposing': False})
     assert not page.evaluate('state.busy || state.pursuitMode')
     page.evaluate("document.getElementById('input').dispatchEvent(new CompositionEvent('compositionend', {bubbles:true,data:'/'}))")
-    expect(page.locator('#slash-menu button')).to_have_count(4)
+    expect(page.locator('#slash-menu button')).to_have_count(5)
     field.fill('／goal')
     expect(page.locator('#slash-menu button')).to_have_count(1)
     field.press('Enter')
@@ -361,6 +377,91 @@ def test_slash_menu_handles_ime_commit_fullwidth_and_refocus(chat_page):
     page.locator('#send').focus()
     field.focus()
     expect(page.locator('#slash-menu')).to_be_visible()
+    assert not errors
+
+
+@pytest.mark.parametrize('chat_page', ['', '?quick=1'], indirect=True)
+def test_plan_mode_slash_queue_and_exit(chat_page, tmp_path):
+    page, errors, _ = chat_page
+    page.evaluate("""() => {
+      const previous = window.fetch; window.chatPayloads = [];
+      window.fetch = (url, options) => {
+        if (url === '/api/chat') chatPayloads.push(JSON.parse(options.body));
+        return previous(url, options);
+      };
+    }""")
+    field = page.locator('#input')
+    toggle = page.locator('#plan-toggle')
+    field.fill('／plan')
+    expect(page.locator('#slash-menu button')).to_have_count(1)
+    field.press('Enter')
+    expect(toggle).to_have_attribute('aria-pressed', 'true')
+    expect(field).to_be_focused()
+    expect(field).to_have_value('')
+    assert not page.evaluate('state.busy || state.pursuitMode')
+    field.fill('为这个项目制定改造计划')
+    page.locator('#send').click()
+    page.wait_for_function('state.busy')
+    toggle.click()
+    expect(toggle).to_have_attribute('aria-pressed', 'true')
+    field.fill('补充：保持现有接口')
+    page.locator('#send').click()
+    assert page.evaluate('state.queue[0].plan') is True
+    page.evaluate("finishReply('先确认目标，再拆分修改与验证步骤。')")
+    expect(page.locator('.latest-turn .msg.user')).to_contain_text('保持现有接口')
+    page.evaluate("finishReply('计划已调整，保留现有接口。')")
+    page.wait_for_function('!state.busy')
+    assert [row['mode'] for row in page.evaluate('chatPayloads')] == ['plan', 'plan']
+    for width, height in [(760, 600), (480, 640)]:
+        page.set_viewport_size({'width': width, 'height': height})
+        assert_layout(page)
+        assert toggle.bounding_box()['x'] + toggle.bounding_box()['width'] <= width
+    page.screenshot(path=str(tmp_path / 'plan-mode.png'))
+    print('PREVIEW', tmp_path / 'plan-mode.png')
+    toggle.click()
+    expect(toggle).to_have_attribute('aria-pressed', 'false')
+    field.fill('按计划执行')
+    field.press('Enter')
+    page.evaluate("finishReply('已进入普通工作模式。')")
+    page.wait_for_function('!state.busy')
+    assert page.evaluate('chatPayloads.at(-1).mode') == 'chat'
+    assert not errors
+
+
+def test_plan_mode_shortcuts_inline_command_and_session_reset(chat_page):
+    page, errors, _ = chat_page
+    toggle = page.locator('#plan-toggle')
+    field = page.locator('#input')
+    page.keyboard.press('Control+k')
+    page.locator('#command-search').fill('plan')
+    page.locator('#command-search').press('Enter')
+    expect(page.locator('#command-dialog')).not_to_be_visible()
+    expect(toggle).to_have_attribute('aria-pressed', 'true')
+    field.fill('/goal')
+    field.press('Enter')
+    expect(toggle).to_have_attribute('aria-pressed', 'false')
+    expect(page.locator('#goal-mode')).to_be_visible()
+    toggle.click()
+    expect(page.locator('#goal-mode')).to_be_hidden()
+    expect(toggle).to_have_attribute('aria-pressed', 'true')
+    page.locator('#new-btn').click()
+    expect(toggle).to_have_attribute('aria-pressed', 'false')
+    field.fill('/plan')
+    page.locator('#send').click()
+    expect(toggle).to_have_attribute('aria-pressed', 'true')
+    expect(field).to_have_value('')
+    assert not page.evaluate('state.busy')
+    toggle.click()
+    field.fill('/plan 分析当前实现并列出步骤')
+    field.press('Enter')
+    expect(page.locator('.latest-turn .msg.user')).to_contain_text('分析当前实现并列出步骤')
+    expect(toggle).to_have_attribute('aria-pressed', 'true')
+    page.evaluate("finishReply('步骤：检查实现，确认方案，安排验证。')")
+    page.wait_for_function('!state.busy')
+    page.evaluate("state.renderPerm('daily')")
+    expect(toggle).to_have_attribute('aria-pressed', 'false')
+    toggle.click()
+    expect(toggle).to_have_attribute('aria-pressed', 'false')
     assert not errors
 
 

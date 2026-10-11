@@ -16,6 +16,38 @@
 </head>
 <body>
 <div id="tip">载入模型…</div>
+<script>
+// Install before module imports: failed imports/WebGL setup otherwise leave an
+// offscreen renderer and its startup window waiting without a visible error.
+if (new URLSearchParams(location.search).get('web') !== '1') {
+  window.__nyalumeStartup = {
+    current: 'renderer', failed: '',
+    notify(stage, message = '') {
+      const api = window.pywebview?.api?.startup_state;
+      if (api) Promise.resolve(api(stage, message)).catch(() => {});
+    },
+    stage(stage) {
+      if (this.failed) return;
+      this.current = stage;
+      this.notify(stage);
+    },
+    failure(message) {
+      if (this.failed) return;
+      this.failed = String(message);
+      this.notify('error', this.failed);
+    },
+  };
+  window.addEventListener('pywebviewready', () => {
+    const state = window.__nyalumeStartup;
+    state.notify(state.failed ? 'error' : state.current, state.failed);
+  });
+  window.addEventListener('error', event => {
+    if (event.message) window.__nyalumeStartup.failure(event.message);
+    else if (event.target?.tagName === 'SCRIPT') window.__nyalumeStartup.failure('渲染脚本加载失败');
+  }, true);
+  window.addEventListener('unhandledrejection', event => window.__nyalumeStartup.failure(event.reason));
+}
+</script>
 <script type="importmap">
 {
   "imports": {
@@ -134,6 +166,9 @@ function applyLightPreset(i) {
 let model = null;
 let helper = null;
 let loaderRef = null;
+let startupAssetsLoaded = false;
+let startupInitialized = false;
+let renderedStartupReady = false;
 let mainClip = null;
 let mainAction = null;
 let idleAction = null;
@@ -167,7 +202,10 @@ let reactMorphs = [];
 let reactLevel = 0; // 反应表情当前强度
 let reactHold = 0; // 峰值还能保持多久（秒）
 const REACT_HOLD = 0.35;
-const REACT_FADE = 1.6; // 每秒回落量：保持 0.35s 再 ~0.6s 淡掉
+const REACT_IN = 0.2, REACT_OUT = 0.4;
+let reactWeights = [];
+let lastReactCombo = '';
+let lastTouchSymbol = -10;
 let stateMorphs = []; // 持续表情：跟着状态走，不衰减
 let bubbleUntil = 0;
 let bubbleReply = null;
@@ -181,9 +219,13 @@ const dragLag = { x: 0, y: 0, tx: 0, ty: 0 };
 // 抓到具体部位：按下时按抓取点射线选骨骼，之后给这根骨一个局部弹簧偏移，
 // 跟整体滞后叠加——拖头发就是头发在甩，拖袖口就是袖子在甩。
 let grabBone = null;
+let grabInfluences = [];
+let grabRadius = 0;
 window.__grabName = null;
 const grabOff = new THREE.Vector3();
 const grabTgt = new THREE.Vector3();
+const grabVelocity = new THREE.Vector3();
+const _grabDelta = new THREE.Vector3();
 // 抓到的是躯干/肚子这种不可抓部位时，整只歪一下——保证任何位置拖拽都有反馈
 let leanZ = 0;
 let leanTgt = 0;
@@ -210,6 +252,11 @@ let physicsResetPending = false;
 let headTapAt = -10;
 const HEAD_TAP_DURATION = 0.9;
 const touch = {kind: 'idle', lastAt: -10, region: '', rapid: 0, gentle: 0, until: 0, attentionUntil: 0, dodge: 0, side: 1};
+let contact = null;
+let contactStrength = 0;
+let heldHand = null;
+let heldArm = null;
+let contactPoseRegion = '';
 // ---- 反应符号气泡：脸只有 40px 宽，符号比表情更容易被看到 ----
 const SYMBOL_BY_REGION = {
   // 用 ♥ 不用 ❤：❤ 走彩色 emoji 字形，从 canvas 传成 WebGL 贴图后画不出来（实测 0 像素）
@@ -260,12 +307,12 @@ function scheduleResize() {
     }
   }, 140);
 }
-// 只有这些能抓：头发/裙摆/袖口/手脚，外加头颈（力度减半，不然脖子会被拉断）。
-// 躯干（上半身/下半身/センター）不抓——平移它们等于把整个人切歪，退回整体滞后
-const GRABBABLE = /髪|马尾|Hair|スカート|带|披风|袖|手|指|腕|ひじ|足|ひざ|つま先|首|頭/;
+// 只平移衣物骨骼；身体关节用旋转回应，保持骨骼长度。
+const GRABBABLE = /スカート|裙|裾|hem|skirt|带|披风|cape|袖|sleeve/i;
 const NEVER_GRAB = /捩|IK|親$|D$/;
-const grabGain = (name) => (/首|頭/.test(name) ? 1.0 : 2.6);
-const grabMax = (name) => (/首|頭/.test(name) ? 0.45 : 1.2);
+const SKIRT_BONE = /スカート|skirt|裙|裾|hem/i;
+const GRAB_GAIN = 2.6;
+const GRAB_MAX = 1.2;
 
 // 拾取代理：每 20 个顶点留一个采样点，记下它的主骨。按下时把这些点按当前骨骼
 // 位置投到屏幕上，取离光标最近、且最靠前的那个点 → 得到抓的是哪根骨。
@@ -354,7 +401,7 @@ function regionOf(hit) {
   if (/髪|马尾|Hair/.test(name)) return 'head';
   if (/スカート|Skirt/.test(name)) return 'skirt';
   if (/披风|带|cape/i.test(name)) return 'cloth';
-  if (/袖|手|指|腕|ひじ/.test(name)) return 'hand';
+  if (/袖|手|指|腕|ひじ|hand|wrist|finger|sleeve|arm|elbow/i.test(name)) return 'hand';
   if (/足|ひざ|つま先/.test(name)) return 'leg';
   const y = hit.world.y;
   const at = (n, axis) => {
@@ -414,6 +461,7 @@ function tick() {
     if (!webMode || (!browserPaused && !document.hidden)) tickFrame();
     else clock.getDelta();
   } catch (err) {
+    if (!renderedStartupReady) window.__nyalumeStartup?.failure('渲染失败：' + err);
     reportTickError(err);
   } finally {
     requestAnimationFrame(tick);
@@ -455,15 +503,27 @@ function applyLookPose(delta) {
       lookBones.head.rotateY(lookX * 0.25);
       lookBones.head.rotateX(lookY * 0.20);
       if (!mainAction) {
+        lookBones.head.rotateZ(contactStrength * (contactPoseRegion === 'head' ? 0.065 : 0.025));
+        lookBones.head.rotateX(contactStrength * 0.04);
         lookBones.head.rotateY(touch.dodge * touch.side * 0.24);
         lookBones.head.rotateZ(touch.dodge * touch.side * 0.12);
       }
       const age = clock.elapsedTime - headTapAt;
       if (!mainAction && age >= 0 && age < HEAD_TAP_DURATION) {
-        // 点头只转头部，首尾都是零偏移；手臂继续使用自然站姿 VMD。
         const phase = Math.PI * age / HEAD_TAP_DURATION;
         lookBones.head.rotateX(0.11 * Math.sin(phase) * Math.sin(2 * phase));
       }
+    }
+    if (heldHand && !mainAction && contactStrength > 0) {
+      const sway = Math.sin((clock.elapsedTime - heldArm.start) * 4) * .025;
+      const strength = contactStrength, side = heldArm.side;
+      // 关节轻轻向前弯曲，左右镜像；不追随光标平移手腕或上臂。
+      heldArm.shoulder?.rotateZ(strength * side * .025);
+      heldArm.arm?.rotateX(-strength * .12);
+      heldArm.arm?.rotateZ(strength * side * .08);
+      heldArm.elbow?.rotateX(-strength * (.32 + sway));
+      heldHand.rotateZ(strength * side * .08);
+      heldHand.rotateX(strength * sway);
     }
   }
 }
@@ -472,6 +532,7 @@ function tickFrame() {
   const delta = Math.min(clock.getDelta(), 0.05);
   lookFrameDelta = delta;
   if (model) {
+    updateContact(delta);
     const t = clock.elapsedTime;
     if (t >= touch.until && touch.kind !== 'idle') touch.kind = t < touch.attentionUntil ? 'linger' : 'idle';
     touch.dodge += ((touch.kind === 'dodge' && !mainAction ? 1 : 0) - touch.dodge) * frameBlend(0.12, delta);
@@ -520,22 +581,37 @@ function tickFrame() {
   if (helper) {
     // VMD 动画、IK 和骨骼物理都在这一步推进
     helper.update(delta);
+    // VMD 混音器会重写表情；保留局部互动渐变，不重写舞蹈的其他表情。
+    const influences = model.morphTargetInfluences;
+    if (influences) {
+      for (let i = 0; i < influences.length; i++) {
+        if (reactWeights[i] > 0) influences[i] = Math.max(influences[i], reactWeights[i]);
+      }
+    }
     // 关闭物理时 helper 不调用 onBeforePhysics，仍保留视线反馈。
     if (!helper.objects.get(model).physics || !helper.enabled.physics) applyLookPose(delta);
     // 抓取弹簧要放在物理之后：物理每帧会把骨头写回自己的结果，先加就白加了。
     // 每帧在当前值上叠加（不是从快照重算）——helper 每帧 restore 骨骼，不会累积
     if (grabBone) {
-      grabOff.lerp(grabTgt, frameBlend(0.25, delta));
+      if (grabRadius) {
+        // 一片裙摆共用阻尼弹簧，松手有轻微回摆，不把尖锐拉伸留在单根骨上。
+        grabVelocity.addScaledVector(_grabDelta.copy(grabTgt).sub(grabOff), 180 * delta);
+        grabVelocity.multiplyScalar(Math.exp(-16 * delta));
+        grabOff.addScaledVector(grabVelocity, delta);
+      } else grabOff.lerp(grabTgt, frameBlend(0.25, delta));
       grabTgt.multiplyScalar(frameDecay(0.82, delta));
-      if (grabOff.lengthSq() > 1e-7) {
-        _grabM3.setFromMatrix4(grabBone.parent.matrixWorld).invert();
-        grabBone.position.add(grabOff.clone().applyMatrix3(_grabM3));
+      if (!mainAction && grabOff.lengthSq() > 1e-7) {
+        applyGrabOffset();
+      }
+      if (!contact?.engaged && grabOff.lengthSq() < 1e-7 && grabVelocity.lengthSq() < 1e-7) {
+        grabBone = null; grabInfluences = []; grabRadius = 0; window.__grabName = null;
       }
     }
   }
   updateBubblePosition();
   updateTouchParticles();
   renderer.render(scene, camera);
+  renderedStartupReady = startupInitialized && startupAssetsLoaded && !window.__nyalumeStartup?.failed;
   boxDirty = false; // 新尺寸已经画出来了，可以继续推帧
 }
 
@@ -599,23 +675,29 @@ let gesture = {kind: '', start: 0};
 const touchParticles = [];
 const particleTextures = new Map();
 function burstTouch(symbol) {
-  if (!model) return;
+  if (!model || clock.elapsedTime - lastTouchSymbol < 2) return;
+  lastTouchSymbol = clock.elapsedTime;
   if (!particleTextures.has(symbol)) {
     const canvas = document.createElement('canvas'); canvas.width = canvas.height = 80;
-    const g = canvas.getContext('2d'); g.font = '56px "Segoe UI Emoji", "Segoe UI Symbol", sans-serif';
-    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#ef9bbc'; g.fillText(symbol, 40, 40);
+    const g = canvas.getContext('2d'), font = '56px "Segoe UI Symbol", "Segoe UI Emoji", sans-serif';
+    g.font = font; canvas.width = Math.max(80, Math.ceil(g.measureText(symbol).width) + 16); g.font = font;
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#e0559a'; g.globalAlpha = .75; g.fillText(symbol, canvas.width / 2, 40);
     const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
     particleTextures.set(symbol, texture);
   }
-  for (let i = 0; i < 5; i++) {
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map: particleTextures.get(symbol), transparent: true, depthTest: false}));
-    sprite.scale.setScalar(height * .075); scene.add(sprite);
-    const origin = new THREE.Vector3();
-    if (lookBones?.head) lookBones.head.getWorldPosition(origin);
-    else origin.set(0, height * .35, 1.5);
-    origin.z = 1.6;
-    touchParticles.push({sprite, origin, at: clock.elapsedTime, vx: (i - 2) * height * .08});
-  }
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map: particleTextures.get(symbol), transparent: true, depthTest: false, depthWrite: false}));
+  sprite.renderOrder = 999;
+  const image = particleTextures.get(symbol).image;
+  sprite.scale.set(height * .075 * image.width / image.height, height * .075, 1); scene.add(sprite);
+  const origin = new THREE.Vector3();
+  if (lookBones?.head) lookBones.head.getWorldPosition(origin);
+  else origin.set(0, height * .35, 1.5);
+  origin.y += height * .1;
+  origin.z = 1.6;
+  sprite.position.copy(origin);
+  const angle = (Math.random() - .5) * THREE.MathUtils.degToRad(120);
+  touchParticles.push({sprite, origin, at: clock.elapsedTime,
+    vx: Math.sin(angle) * height * .16, vy: Math.cos(angle) * height * .16});
   while (touchParticles.length > 20) {
     const item = touchParticles.shift(); scene.remove(item.sprite); item.sprite.material.dispose();
   }
@@ -626,7 +708,7 @@ function updateTouchParticles() {
     if (age > 1.8) { scene.remove(item.sprite); item.sprite.material.dispose(); touchParticles.splice(i, 1); continue; }
     item.sprite.position.copy(item.origin);
     item.sprite.position.x += item.vx * age;
-    item.sprite.position.y += height * (.1 + age * .12);
+    item.sprite.position.y += item.vy * age;
     item.sprite.material.opacity = Math.max(0, 1 - age / 1.8);
   }
 }
@@ -635,13 +717,13 @@ window.__interact = function(kind) {
   gesture = {kind, start: clock.elapsedTime}; lastTouch = Date.now();
   if (kind === 'pat') window.__touch('head');
   else {
-    window.__react(kind === 'wave' ? 'hand' : 'head', '');
-    burstTouch(kind === 'cheer' ? '✨' : '♡');
+    window.__react(kind === 'wave' ? 'hand' : 'head', '', kind === 'cheer' ? '✨' : '♡');
   }
   return true;
 };
 
 function showBubble(text, secs = 2.4, plain = false, drift = false, reply = false) {
+  if (plain && drift && !reply && [...String(text)].length <= 3) { burstTouch(String(text)); return; }
   if (drift && bubbleReply && bubble.visible && clock.elapsedTime < bubbleUntil) return;
   bubbleReply = null;
   // 符号（❤ ♪ ！）雅黑里没有，得让字形回落到符号字体，否则画出来是空白
@@ -675,15 +757,12 @@ function showBubble(text, secs = 2.4, plain = false, drift = false, reply = fals
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   if (plain) {
-    // 无框：白描边 + 粉填充，压在桌面/头发/衣服上都看得清
+    // 无框透明底，只画半透明文字，不加白色描边。
     // 短的是符号（♥ ♪ …），用大字号；成句的台词保持正常字号
     const big = [...text].length <= 3;
     if (big) g.font = '700 46px "Microsoft YaHei", "Segoe UI Symbol", "Segoe UI Emoji", sans-serif';
-    g.lineWidth = big ? 8 : 6;
-    g.strokeStyle = 'rgba(255,255,255,0.92)';
-    g.fillStyle = '#e0559a';
+    g.fillStyle = 'rgba(224,85,154,0.75)';
     lines.forEach((line, i) => {
-      g.strokeText(line, w / 2, pad + lineH * i + lineH / 2 - 2);
       g.fillText(line, w / 2, pad + lineH * i + lineH / 2 - 2);
     });
   } else {
@@ -758,15 +837,14 @@ setInterval(() => {
 
 // 待机自发小动作：没人碰的时候过一会儿自己动一下（换个重心、看看别处、待久了犯困）
 function idleBeat() {
-  if (quietMode) { // 开会那种场合：别自己冒泡
+  if (quietMode || contact) { // 互动时不抢表情，也不自己冒泡
     scheduleIdleBeat();
     return;
   }
   const quietSecs = (Date.now() - lastTouch) / 1000;
   if (quietSecs > 8 && !mainAction && model) {
     if (quietSecs > 150) {
-      window.__react('belly', '');
-      showBubble('zzz', 1.8, true, true);
+      window.__react('belly', '', 'zzz');
     } else {
       const regions = ['head', 'chest', 'hand', 'belly', 'skirt'];
       // 跟单击一样：弹一下 + 表情（__react 里已经带了弹跳）
@@ -913,43 +991,59 @@ function applyMorphs(delta) {
   if (!influences) return;
   for (let i = 0; i < influences.length; i++) influences[i] = 0;
   for (const index of stateMorphs) influences[index] = 1.0;
-  if (!reactMorphs.length) return;
-  if (reactHold > 0) {
-    reactHold -= delta;
-    reactLevel = 1;
-  } else {
-    reactLevel = Math.max(0, reactLevel - delta * REACT_FADE);
+  const active = reactHold > 0;
+  reactHold = Math.max(0, reactHold - delta);
+  const targets = active ? new Set(reactMorphs) : null;
+  reactLevel = 0;
+  for (let i = 0; i < influences.length; i++) {
+    const target = targets?.has(i) ? 1 : 0;
+    const current = reactWeights[i] || 0;
+    const step = delta / (target ? REACT_IN : REACT_OUT);
+    reactWeights[i] = target > current ? Math.min(target, current + step) : Math.max(target, current - step);
+    influences[i] = Math.max(influences[i], reactWeights[i]);
+    reactLevel = Math.max(reactLevel, reactWeights[i]);
   }
-  if (reactLevel <= 0) {
-    reactMorphs = [];
-    reactLevel = 0;
-    return;
-  }
-  for (const index of reactMorphs) influences[index] = reactLevel;
+  if (!active && reactLevel === 0) reactMorphs = [];
+}
+
+function reactionNames(region) {
+  const dict = model?.morphTargetDictionary || {};
+  const custom = modelProfile.expressions?.[region];
+  if (custom) return custom; // 空数组是用户明确关闭此反馈。
+  const available = (REACT_POOLS[region] || []).filter(names => names.some(name => dict[name] !== undefined));
+  const different = available.filter(names => names.join('+') !== lastReactCombo);
+  const pool = different.length ? different : available;
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : [];
+}
+
+function touchSymbol(region) {
+  const symbol = region === 'head' || region === 'hand' ? '♡' : SYMBOL_BY_REGION[region];
+  if (symbol) burstTouch(symbol);
 }
 
 // 部位 → 随机挑一条反应（同一个地方多戳几下反应不一样）
-window.__react = function (region, text) {
+window.__react = function (region, text, symbol = '') {
   if (!model) return false;
   const dict = model.morphTargetDictionary || {};
   const pool = REACT_POOLS[region];
   if (!pool) return false;
-  const combo = modelProfile.expressions?.[region] ?? pool[Math.floor(Math.random() * pool.length)];
+  const combo = reactionNames(region);
+  lastReactCombo = combo.join('+');
   reactMorphs = combo
     .map((name) => dict[name])
     .filter((index) => index !== undefined);
   window.__lastReact = [region, combo.join('+')];
   reactLevel = 1;
   reactHold = REACT_HOLD;
-  reactLeft = 0.5;
-  const symbol = SYMBOL_BY_REGION[region];
+  reactLeft = region === 'head' || mainAction ? 0 : 0.5;
   if (text) showBubble(text);
-  else if (symbol) showBubble(symbol, 1.4, true, true); // 透明无框 + 往头顶飘着淡出
+  else if (symbol) burstTouch(symbol);
+  else touchSymbol(region);
   return true;
 };
 
 // 仅真实触摸进入这一层；自发待机、任务完成和 agent 表情不累积连摸次数。
-window.__touch = function (region) {
+window.__touch = function (region, reuseReaction = false) {
   if (!model || !REACT_POOLS[region]) return false;
   const now = clock.elapsedTime, gap = now - touch.lastAt;
   touch.rapid = gap <= 0.45 ? touch.rapid + 1 : 1;
@@ -958,7 +1052,6 @@ window.__touch = function (region) {
   const stillDodging = touch.kind === 'dodge' && now < touch.until;
   touch.lastAt = now; touch.region = region;
   touch.attentionUntil = now + 4;
-  if (region === 'head' || region === 'hand') burstTouch('♡');
   lastTouch = Date.now();
   if (touch.rapid >= 3 || stillDodging) {
     if (!stillDodging) touch.side *= -1;
@@ -972,13 +1065,231 @@ window.__touch = function (region) {
     const dict = model.morphTargetDictionary || {};
     reactMorphs = names.map(name => dict[name]).filter(index => index !== undefined);
     reactLeft = 0; reactHold = 1.8;
-    headTapAt = now;
   } else {
     touch.kind = 'notice'; touch.until = now + 0.95;
-    window.__react(region, '');
-    if (region === 'head') { headTapAt = now; reactHold = 0.95; reactLeft = 0; }
+    if (!reuseReaction) window.__react(region, '');
+    if (region === 'head') { headTapAt = now; reactHold = 0.95; }
   }
+  // 摸头只轻微点头，不把整个人当球弹；其他部位保留轻点弹动。
+  reactLeft = region === 'head' || mainAction ? 0 : 0.5;
   return true;
+};
+
+// 连续互动只用手部骨骼，衣袖、上臂仍有轻点反馈，但不能握住。
+function handBone(hit) {
+  if (!hit || /袖|ひじ|elbow|sleeve|(?:^|[_ .])arm/i.test(hit.bone.name)) return null;
+  if (!/手首|手掌|手腕|指|hand|wrist|finger/i.test(hit.bone.name)) return null;
+  let bone = hit.bone;
+  while (bone && bone !== model) {
+    if (/手首|手掌|手腕|hand|wrist/i.test(bone.name) && !NEVER_GRAB.test(bone.name)) return bone;
+    bone = bone.parent;
+  }
+  return null;
+}
+
+function contactHand(hit, nx, ny) {
+  const direct = handBone(hit);
+  if (direct || regionOf(hit) !== 'hand') return direct;
+  // 手的采样点可能归到袖口骨；只在真实手腕附近补拾取，不把整条手臂当手。
+  const w = renderer.domElement.clientWidth, h = renderer.domElement.clientHeight;
+  const radius = Math.max(10, Math.min(22, height * .035 * pixelsPerUnit() * h / renderer.domElement.height));
+  let result = null, distance = radius * radius;
+  for (const bone of model.skeleton.bones) {
+    if (!/手首|手掌|手腕|hand|wrist/i.test(bone.name) || NEVER_GRAB.test(bone.name)) continue;
+    const p = new THREE.Vector3(); bone.getWorldPosition(p); p.project(camera);
+    const d = Math.pow(((p.x + 1) / 2 - nx) * w, 2) + Math.pow(((1 - p.y) / 2 - ny) * h, 2);
+    if (d < distance) { result = bone; distance = d; }
+  }
+  return result;
+}
+
+function handArmBones(hand) {
+  if (!hand) return null;
+  const result = {arm: null, elbow: null, shoulder: null, start: clock.elapsedTime, side: 1};
+  for (let bone = hand.parent; bone && bone !== model; bone = bone.parent) {
+    if (NEVER_GRAB.test(bone.name)) continue;
+    if (/ひじ|肘|elbow|forearm|lowerarm/i.test(bone.name)) result.elbow ||= bone;
+    else if (/腕|上臂|upperarm|(?:^|[_ .])arm/i.test(bone.name)) result.arm ||= bone;
+    else if (/肩|shoulder/i.test(bone.name)) result.shoulder ||= bone;
+  }
+  const reference = result.arm || hand.parent;
+  if (reference) {
+    // 在模型坐标中判断左右，旋转窗口或模型后仍保持一致。
+    result.side = Math.sign(model.worldToLocal(hand.getWorldPosition(new THREE.Vector3())).x
+      - model.worldToLocal(reference.getWorldPosition(new THREE.Vector3())).x) || 1;
+  }
+  return result;
+}
+
+function grabBoneOf(hit) {
+  // 脸部顶点也可能绑定头骨，不能只靠头部分类阻止抓取。
+  if (['head', 'face'].includes(regionOf(hit))) return null;
+  for (let bone = hit?.bone; bone && bone !== model; bone = bone.parent) {
+    if (GRABBABLE.test(bone.name) && !NEVER_GRAB.test(bone.name)) return bone;
+  }
+  return null;
+}
+
+function buildGrabInfluences(anchor) {
+  grabRadius = 0;
+  if (!anchor) return [];
+  if (!SKIRT_BONE.test(anchor.name)) return [{bone: anchor, deltaWeight: 1, weight: 1}];
+  const family = bone => {
+    while (bone.parent && SKIRT_BONE.test(bone.parent.name)) bone = bone.parent;
+    return bone.parent;
+  };
+  const parent = family(anchor), origin = new THREE.Vector3(); anchor.getWorldPosition(origin);
+  grabRadius = height * .13;
+  const weights = new Map();
+  for (const bone of model.skeleton.bones) {
+    if (!SKIRT_BONE.test(bone.name) || NEVER_GRAB.test(bone.name) || family(bone) !== parent) continue;
+    const p = new THREE.Vector3(); bone.getWorldPosition(p);
+    const t = Math.min(1, p.distanceTo(origin) / grabRadius);
+    weights.set(bone, 1 - t * t * (3 - 2 * t));
+  }
+  weights.set(anchor, 1);
+  // 子骨只补上与父骨的权重差，避免一条裙骨链把位移逐节累加。
+  return [...weights].map(([bone, weight]) => ({bone, weight,
+    deltaWeight: weight - (weights.get(bone.parent) || 0)})).filter(item => Math.abs(item.deltaWeight) > 1e-6);
+}
+
+function applyGrabOffset() {
+  for (const {bone, deltaWeight} of grabInfluences) {
+    _grabM3.setFromMatrix4(bone.parent.matrixWorld).invert();
+    _grabDelta.copy(grabOff).multiplyScalar(deltaWeight).applyMatrix3(_grabM3);
+    bone.position.add(_grabDelta);
+  }
+}
+
+function finishContact(cancel = false, at = null) {
+  if (!contact) return null;
+  const ended = contact;
+  contact = null;
+  grabTgt.set(0, 0, 0);
+  leanTgt = 0;
+  const now = clock.elapsedTime;
+  const age = at == null ? now - ended.localStart : at - ended.at;
+  if (!cancel && !ended.engaged && age < 0.35 && ended.moved <= 6 && !ended.outside) {
+    window.__touch(ended.region, true);
+  } else {
+    reactHold = 0;
+    touch.kind = 'linger'; touch.until = now;
+    touch.attentionUntil = now + 3;
+  }
+  reactLeft = 0; // Alt 互动松手仅回应表情/符号，不补普通点击的轻弹。
+  touch.rapid = cancel || ended.engaged || age >= 0.35 ? 0 : touch.rapid;
+  lastTouch = Date.now();
+  return {id: ended.id, region: ended.region, phase: 'end'};
+}
+
+function updateContact(delta) {
+  const now = clock.elapsedTime;
+  // 头部姿态会让边界稍微移动；在 0.2s 离开宽限内不闪断反馈。
+  const target = contact?.engaged ? 1 : 0;
+  contactStrength = target ? Math.min(1, contactStrength + delta / REACT_IN)
+                           : Math.max(0, contactStrength - delta / REACT_OUT);
+  if (!contact && contactStrength === 0) { heldHand = null; heldArm = null; contactPoseRegion = ''; }
+  if (!contact) return;
+  lastTouch = Date.now();
+  const age = Math.max(contact.age, now - contact.localStart);
+  if (now - contact.updated > 0.5 || (contact.outside && now - contact.outsideAt >= 0.2)) {
+    const ended = finishContact(true);
+    petApi()?.interaction_info?.(ended.id, ended.region, ended.phase);
+    return;
+  }
+  if (contact.outside) return;
+  const engage = (contact.region === 'head' && contact.distance >= 8 && age >= 0.6)
+             || (age >= 0.35 && (contact.canHold || contact.grab));
+  if (engage && !contact.engaged) {
+    contact.engaged = true;
+    touch.kind = contact.region === 'head' ? 'relax' : contact.canHold ? 'hold' : 'pull';
+    contactPoseRegion = contact.region;
+    heldHand = contact.hand;
+    heldArm = handArmBones(heldHand);
+    grabBone = contact.grab;
+    grabInfluences = buildGrabInfluences(grabBone);
+    grabVelocity.set(0, 0, 0);
+    grabOff.set(0, 0, 0); grabTgt.set(0, 0, 0);
+    window.__grabName = grabBone?.name || null;
+    const names = modelProfile.expressions?.calm ?? modelProfile.expressions?.[contact.region]
+                  ?? ['なごみ', '笑い', '照れ'];
+    const dict = model.morphTargetDictionary || {};
+    reactMorphs = names.map(name => dict[name]).filter(index => index !== undefined);
+    if (!reactMorphs.length && names.length) reactMorphs = reactionNames('head').map(name => dict[name]).filter(index => index !== undefined);
+    reactLeft = 0;
+    touchSymbol(contact.region);
+  }
+  if (contact.engaged) {
+    reactHold = 0.5;
+    touch.until = now + 0.5;
+    touch.attentionUntil = now + 3;
+    if (grabBone && !mainAction) {
+      // 长按抓住局部，光标拉动骨骼；窗口和整体模型位置保持不动。
+      const unit = pixelsPerUnit() * renderer.domElement.clientHeight / renderer.domElement.height;
+      const dx = (contact.x - contact.startX) * contact.width / unit;
+      const dy = -(contact.y - contact.startY) * contact.height / unit;
+      const cap = grabRadius ? Math.min(height * .035, grabRadius * .23)
+        : Math.min(GRAB_MAX, height * .075);
+      const gain = grabRadius ? 1.2 : GRAB_GAIN;
+      grabTgt.set(THREE.MathUtils.clamp(dx * gain, -cap, cap),
+        THREE.MathUtils.clamp(dy * gain, -cap, cap), 0);
+      if (grabRadius) grabTgt.clampLength(0, cap);
+    }
+  }
+}
+
+window.__interaction = async function(action) {
+  if (action.phase === 'cancel' && action.id == null) {
+    const ended = finishContact(true);
+    if (ended) await petApi()?.interaction_info?.(ended.id, ended.region, ended.phase);
+    return;
+  }
+  if (action.phase === 'begin') {
+    const ended = finishContact(true);
+    if (ended) await petApi()?.interaction_info?.(ended.id, ended.region, ended.phase);
+    if (!model) return;
+    const hit = pickBone(action.x, action.y), region = regionOf(hit);
+    if (!region) {
+      await petApi()?.interaction_info?.(action.id, null, 'end');
+      return;
+    }
+    const hand = region === 'hand' ? contactHand(hit, action.x, action.y) : null;
+    const canHold = region === 'hand' && (Boolean(hand) || /手首|手掌|手腕|指|hand|wrist|finger/i.test(hit.bone.name));
+    const grab = grabBoneOf(hit);
+    contact = {id: action.id, region, at: action.at, age: 0, localStart: clock.elapsedTime,
+      updated: clock.elapsedTime, x: action.x, y: action.y, distance: 0, moved: 0,
+      startX: action.x, startY: action.y, width: action.width, height: action.height,
+      outside: false, outsideAt: 0, engaged: false, hand, canHold,
+      grab: canHold ? null : grab};
+    const dodging = touch.kind === 'dodge' && clock.elapsedTime < touch.until;
+    if (!dodging) { touch.kind = 'notice'; touch.until = clock.elapsedTime + 0.95; }
+    touch.attentionUntil = clock.elapsedTime + 3;
+    if (!dodging) window.__react(region, '');
+    reactLeft = 0; // Alt 互动按下时也不触发整体轻弹。
+    lastTouch = Date.now();
+    await petApi()?.interaction_info?.(action.id, region, 'begin');
+    return;
+  }
+  if (!contact || contact.id !== action.id) return;
+  contact.age = Math.max(0, action.at - contact.at);
+  contact.moved = Math.max(contact.moved, action.moved || 0);
+  contact.updated = clock.elapsedTime;
+  if (action.phase === 'update' || action.phase === 'end') {
+    // 可抓部位按下后锁定；拉离原轮廓仍然握住，直到松手/取消。
+    const valid = contact.grab || contact.canHold || regionOf(pickBone(action.x, action.y)) === contact.region;
+    if (valid && !contact.outside) {
+      contact.distance += Math.hypot((action.x - contact.x) * action.width,
+                                    (action.y - contact.y) * action.height);
+    }
+    if (!valid && !contact.outside) contact.outsideAt = clock.elapsedTime;
+    contact.outside = !valid;
+    contact.x = action.x; contact.y = action.y;
+    updateContact(0);
+  }
+  if (action.phase === 'end' || action.phase === 'cancel') {
+    const ended = finishContact(action.phase === 'cancel', action.at);
+    if (ended) await petApi()?.interaction_info?.(ended.id, ended.region, ended.phase);
+  }
 };
 
 // agent 用情绪名指挥表情：happy / shy / surprise / angry / sad / sleepy / calm / love，
@@ -995,8 +1306,7 @@ window.__face = function (emotion) {
   }
   const region = REACT_POOLS[key] ? key : (EMOTION_TO_REGION[key] || 'head');
   if (key === 'sleepy') {
-    window.__react(region, '');
-    showBubble('zzz', 1.8, true, true);
+    window.__react(region, '', 'zzz');
     return true;
   }
   return window.__react(region, '');
@@ -1106,7 +1416,7 @@ function pushFrame() {
     const encodeMs = performance.now() - t0;
     frameSentCount++;
     // 目标尺寸：渲染分辨率的倒数，Python 负责放大到这个尺寸再合成
-    Promise.resolve(api(b64, encodeMs, renderer.domElement.width, renderer.domElement.height))
+    Promise.resolve(api(b64, encodeMs, renderer.domElement.width, renderer.domElement.height, renderedStartupReady))
       .then(() => {
         lastFrameOkAt = performance.now();
         frameAckedCount++;
@@ -1270,6 +1580,7 @@ async function start(mesh, loader) {
   }
 
   try {
+    window.__nyalumeStartup?.stage('animation');
     if (usePhysics) {
       // three 自带 ammo.wasm.js：物理关掉时就不下载
       await loadScript('/node_modules/three/examples/jsm/libs/ammo.wasm.js');
@@ -1349,9 +1660,12 @@ async function start(mesh, loader) {
       }
     }
     tip.textContent = '';
+    startupInitialized = true;
+    window.__nyalumeStartup?.stage(startupAssetsLoaded ? 'display' : 'model');
     if (webMode) petApi()?.ready?.();
   } catch (err) {
     tip.textContent = '动作/物理加载失败：' + err;
+    window.__nyalumeStartup?.failure(tip.textContent);
     if (webMode) petApi()?.failure?.(tip.textContent);
   }
 }
@@ -1541,7 +1855,7 @@ function settlePhysics() {
 }
 
 // Python 只摆待办，这里定时来取 —— 反过来的通道不会被 promise 堵住
-async function pollActions() {
+async function pullActions() {
   const api = petApi();
   if (!api || !api.poll_action) return;
   if (!styleReported && api.style_info) {
@@ -1557,16 +1871,19 @@ async function pollActions() {
     return;
   }
   if (!action) return;
-  if (['tap', 'react', 'drag', 'spin', 'motion'].includes(action.kind)) lastTouch = Date.now();
+  if (['tap', 'react', 'drag', 'spin', 'motion', 'interaction'].includes(action.kind)) lastTouch = Date.now();
   // 这几类不该关菜单：视线跟随每 40ms 就来一条；她主动搭话/做个表情是"自己冒出来的"，
   // 正在右键浏览菜单时被气泡挤掉很烦（用户反馈）。菜单自己选完会用 menu_close 关。
   // 换风格要连点（菜单那行左右半边），所以 style/style_step 也不能关菜单
   const keepMenu = ['menu', 'look', 'say', 'face', 'style', 'style_step'].includes(action.kind);
   if (!keepMenu) window.__menu_close();
-  if (action.kind === 'motion') {
+  if (action.kind === 'interaction') {
+    await window.__interaction(action);
+  } else if (action.kind === 'motion') {
     window.__setMotion(action.url || '');
   } else if (action.kind === 'tap') {
     const region = window.__tap(action.x, action.y);
+    if (region && action.bounce && !mainAction && touch.kind !== 'dodge') reactLeft = .5;
     const tapi = petApi();
     if (tapi && tapi.tap_info) tapi.tap_info(region || '-');
   } else if (action.kind === 'interact') {
@@ -1631,30 +1948,8 @@ async function pollActions() {
     // 松手再弹回来就是"回弹/卡顿"。缩小幅度后回弹几乎看不见，甩动主要来自速度。
     dragLag.tx = THREE.MathUtils.clamp((-action.dx / unit) * 1.8, -0.55, 0.55);
     dragLag.ty = THREE.MathUtils.clamp((action.dy / unit) * 1.8, -0.45, 0.45);
-    if (action.gx != null) {
-      // 一次拖拽只在第一条增量里带抓取点，这里定下抓的是哪根骨
-      const hit = pickBone(action.gx, action.gy);
-      const ok = hit && GRABBABLE.test(hit.bone.name) && !NEVER_GRAB.test(hit.bone.name);
-      grabBone = ok ? hit.bone : null;
-      grabOff.set(0, 0, 0);
-      grabTgt.set(0, 0, 0);
-      window.__grabName = grabBone ? grabBone.name : null;
-      const gapi = petApi();
-      if (gapi && gapi.grab_info) gapi.grab_info(grabBone ? grabBone.name : '-');
-    }
-    if (grabBone) {
-      const gain = grabGain(grabBone.name);
-      const cap = grabMax(grabBone.name);
-      grabTgt.set(
-        // 比整体滞后(1.8)更大：被抓的那一缕要明显"跟不上身体"才看得出是被拽着
-        THREE.MathUtils.clamp((-action.dx / unit) * gain, -cap, cap),
-        THREE.MathUtils.clamp((action.dy / unit) * gain, -cap, cap),
-        0,
-      );
-      leanTgt = THREE.MathUtils.clamp((action.dx / unit) * 0.06, -0.18, 0.18);
-    } else {
-      leanTgt = THREE.MathUtils.clamp((action.dx / unit) * 0.14, -0.35, 0.35);
-    }
+    // 普通左键长按拖动只做整体惯性；局部抓取由 Alt＋左键负责。
+    leanTgt = THREE.MathUtils.clamp((action.dx / unit) * 0.14, -0.35, 0.35);
   } else if (action.kind === 'menu') {
     window.__menu(action.items);
   } else if (action.kind === 'menu_close') {
@@ -1662,6 +1957,14 @@ async function pollActions() {
   }
 }
 
+let pollingActions = false;
+async function pollActions() {
+  if (pollingActions) return;
+  pollingActions = true;
+  try { await pullActions(); }
+  catch (error) { console.warn('桌宠交互暂时中断：' + error); }
+  finally { pollingActions = false; }
+}
 const actionTimer = setInterval(pollActions, 40); // 拖拽惯性要靠它跟手，别太慢
 
 // 视角属于这份 PMX；最多每秒保存一次，等旋转惯性稳定后仍会补存最终角度。
@@ -1687,6 +1990,9 @@ addEventListener('resize', applyBox);
 
 window.__resetView = () => { viewYaw = 0; viewZoomTgt = 1; spinVel = 0; applyBox(); };
 window.__dispose = () => {
+  const ended = finishContact(true);
+  if (ended) petApi()?.interaction_info?.(ended.id, ended.region, ended.phase);
+  contactStrength = 0; heldHand = null; heldArm = null;
   disposed = true; motionRequest++;
   clearInterval(actionTimer); clearInterval(frameTimerId); clearTimeout(idleTimer);
   if (helper && model) { try { helper.remove(model); } catch {} }
@@ -1738,16 +2044,29 @@ if (webMode) {
 }
 if (!pmx) {
   tip.textContent = '缺少 pmx 参数';
+  window.__nyalumeStartup?.failure(tip.textContent);
 } else {
+  window.__nyalumeStartup?.stage('model');
   const manager = new THREE.LoadingManager();
+  manager.onStart = () => { startupAssetsLoaded = false; };
+  manager.onLoad = () => {
+    startupAssetsLoaded = true;
+    if (startupInitialized) window.__nyalumeStartup?.stage('display');
+  };
+  manager.onError = url => window.__nyalumeStartup?.failure('资源加载失败：' + url);
   if (webMode) manager.setURLModifier(browserHost.resolve);
   const loader = new MMDLoader(manager);
   loader.load(
     pmx,
-    (mesh) => start(mesh, loader).catch(err => { tip.textContent = '模型初始化失败：' + err; petApi()?.failure?.(tip.textContent); }),
+    (mesh) => start(mesh, loader).catch(err => {
+      tip.textContent = '模型初始化失败：' + err;
+      window.__nyalumeStartup?.failure(tip.textContent);
+      petApi()?.failure?.(tip.textContent);
+    }),
     undefined,
     (err) => {
       tip.textContent = '模型加载失败：' + err;
+      window.__nyalumeStartup?.failure(tip.textContent);
       petApi()?.failure?.(tip.textContent);
     },
   );

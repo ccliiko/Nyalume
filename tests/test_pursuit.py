@@ -29,6 +29,73 @@ def test_goal_completion_saves_history_and_trace(goal):
     assert events[-1]['type'] == 'done'
     assert [m['role'] for m in memory.session_messages(sid)] == ['user', 'assistant']
     assert '结果已经验证' in memory.session_messages(sid)[-1]['content']
+    assert '#1' not in memory.session_messages(sid)[-1]['content']
+
+
+@pytest.mark.parametrize('first_status', ['completed', 'failed'])
+def test_goal_discovers_one_next_action_from_actual_results(goal, monkeypatch, first_status):
+    sid, pid = goal
+    model_replies = iter([
+        {'analysis': '先检查现状', 'plan': [
+            {'id': 8, 'task': '检查现状', 'depends_on': [99], 'status': 'completed'},
+            {'id': 9, 'task': '预先猜测的后续步骤'}]},
+        {'overall_status': 'in_progress', 'progress_pct': 100, 'summary': '需要修复后验证',
+         'revision': {'add': [{'task': '根据检查结果修复', 'depends_on': [99]},
+                              {'task': '尚未确定的未来步骤'}]}},
+        {'overall_status': 'completed', 'deliverable_summary': '修复并验证完成'},
+    ])
+    evaluations = []
+    def decide(messages, **kwargs):
+        evaluations.append(messages[-1]['content'])
+        return next(model_replies)
+    execution_contexts = []
+    outcomes = iter([first_status, 'completed'])
+    def execute(messages, **kwargs):
+        execution_contexts.append(messages[-1]['content'])
+        return iter([{'kind': 'content', 'text': json.dumps({
+            'status': next(outcomes), 'result': '发现配置缺失', 'deliverables': ['检查报告.txt']})}])
+    monkeypatch.setattr(pursuit, '_llm_json', decide)
+    monkeypatch.setattr(pursuit.llm, 'chat_stream', execute)
+    events = [json.loads(json.dumps(e)) for e in pursuit.run_pursuit(pid, sid)]
+
+    initial = next(e for e in events if e['type'] == 'pursuit_plan')
+    assert initial['plan'] == [{'id': 1, 'task': '检查现状', 'depends_on': [], 'status': 'pending'}]
+    assert [e['task'] for e in events if e['type'] == 'pursuit_step_start'] == [
+        '检查现状', '根据检查结果修复']
+    assert '发现配置缺失' in evaluations[1]
+    assert '检查报告.txt' in evaluations[1]
+    assert '发现配置缺失' in execution_contexts[1]
+    assert next(e for e in events if e['type'] == 'pursuit_progress')['progress_pct'] == 99
+    assert pursuit.get_pursuit(pid)['status'] == 'completed'
+    assert len(pursuit.get_pursuit(pid)['steps']) == 2
+
+
+@pytest.mark.parametrize('evaluation', [
+    {'overall_status': 'blocked', 'summary': '缺少外部访问权限'},
+    {'overall_status': 'in_progress', 'summary': '交付物尚未完成'},
+    {'error': 'JSON 解析失败'},
+])
+def test_goal_does_not_stop_as_success_when_first_action_is_done(goal, monkeypatch, evaluation):
+    sid, pid = goal
+    replies = iter([{'plan': [{'task': '检查现状'}]}, evaluation])
+    monkeypatch.setattr(pursuit, '_llm_json', lambda *a, **kw: next(replies))
+    events = list(pursuit.run_pursuit(pid, sid))
+    assert pursuit.get_pursuit(pid)['status'] == 'failed'
+    assert events[-1]['type'] == 'error'
+    assert not any(e['type'] == 'pursuit_complete' for e in events)
+
+
+def test_goal_stops_after_three_consecutive_failed_actions(goal, monkeypatch):
+    sid, pid = goal
+    monkeypatch.setattr(pursuit, '_llm_json', lambda *a, **kw: {
+        'plan': [{'task': '尝试执行'}], 'overall_status': 'needs_revision',
+        'summary': '操作仍然失败', 'revision': {'add': [{'task': '尝试替代方案'}]}})
+    monkeypatch.setattr(pursuit.llm, 'chat_stream', lambda *a, **kw: iter([
+        {'kind': 'content', 'text': '{"status":"failed","result":"无法访问"}'}]))
+    events = list(pursuit.run_pursuit(pid, sid))
+    assert len([e for e in events if e['type'] == 'pursuit_step_start']) == 3
+    assert '连续三次行动失败' in events[-1]['message']
+    assert pursuit.get_pursuit(pid)['status'] == 'failed'
 
 
 @pytest.mark.parametrize('status,expected', [('needs_input', 'paused'), ('failed', 'failed'), ('partial', 'failed')])

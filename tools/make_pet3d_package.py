@@ -90,6 +90,8 @@ PET_FILES = [
     "nyalume/__init__.py",
     "nyalume/frontends/__init__.py",
     "nyalume/frontends/pet/__init__.py",
+    "nyalume/frontends/pet/startup_animation.py",
+    "nyalume/frontends/web/static/nyalume-icon.png",
     "nyalume/frontends/pet/pet3d/__init__.py",
     "nyalume/frontends/pet/pet3d/pet3d_win.py",
     "nyalume/frontends/pet/pet3d/viewer.html",
@@ -106,6 +108,10 @@ def copy_pet_code(stage: str) -> None:
         dst = os.path.join(stage, rel.replace("/", os.sep))
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(os.path.join(ROOT, rel.replace("/", os.sep)), dst)
+    clean_icon = "nyalume/frontends/web/static/nyalume-icon-clean.png"
+    source = os.path.join(ROOT, clean_icon.replace("/", os.sep))
+    if os.path.isfile(source):
+        shutil.copy2(source, os.path.join(stage, clean_icon.replace("/", os.sep)))
 
 
 def find_motion(name: str) -> str | None:

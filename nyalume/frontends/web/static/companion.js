@@ -313,6 +313,7 @@ window.NyalumeUI = (() => {
       ['新建对话', '新的开始', () => newChat()],
       ['陪伴专注', '计时 · focus', goFocus],
       ['🎯 目标模式', 'goal · 自主 Agent · 持续执行', startPursuitMode],
+      ['计划模式', 'plan · 只读分析 · 先计划后执行', () => { showChat(false); window._startPlanMode(); }],
       ['今日 Nyalume', '每日卡片 · 祝福', () => $('daily-nyalume-btn').click()],
       ['奇幻冒险', '另一段故事', () => window.open('/fantasy', '_blank', 'noopener')],
       ['聊天壁纸', '外观 · 图片', () => { showChat(false); document.body.classList.add('toolbar-open'); $('wall-menu').classList.remove('hidden'); }],
@@ -341,7 +342,7 @@ window.NyalumeUI = (() => {
     const field = $('input'), slash = $('slash-menu');
     let selected = 0;
     let composing = false;
-    const slashCommands = [commands[4], commands[2], commands[3], commands.find(([, hint]) => hint === '设置 · 配置')];
+    const slashCommands = [commands[5], commands[4], commands[2], commands[3], commands.find(([, hint]) => hint === '设置 · 配置')];
     const hideSlash = () => { slash.hidden = true; field.setAttribute('aria-expanded', 'false'); field.removeAttribute('aria-activedescendant'); };
     const highlight = () => {
       [...slash.children].forEach((button, index) => button.setAttribute('aria-selected', String(index === selected)));

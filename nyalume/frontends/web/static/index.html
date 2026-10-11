@@ -1473,7 +1473,7 @@
     .reply-story { margin-bottom: 10px; color: #6c7251; }
     .reply-story strong, .reply-story small { display: block; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
   </style>
-  <link rel="stylesheet" href="/static/companion.css?v=20261007-slash-ime">
+  <link rel="stylesheet" href="/static/companion.css?v=20261011-plan-mode">
   <link rel="stylesheet" href="/static/daily-card.css?v=trio-v1">
 </head>
 <body>
@@ -1751,7 +1751,7 @@
         </div>
         <button id="send">发送</button>
       </div>
-      <div id="composer-caption"><span>Enter 发送 · Shift + Enter 换行 · / 快捷指令</span><span id="goal-mode" hidden>目标模式 <button id="goal-exit" type="button">退出</button></span><span id="draft-status" role="status">草稿仅存于当前浏览器</span></div>
+      <div id="composer-caption"><span>Enter 发送 · Shift + Enter 换行 · / 快捷指令</span><button id="plan-toggle" type="button" aria-pressed="false" title="只读分析、澄清需求并制定计划；退出后可执行">计划模式</button><span id="goal-mode" hidden>目标模式 <button id="goal-exit" type="button">退出</button></span><span id="draft-status" role="status">草稿仅存于当前浏览器</span></div>
       <div id="chat-floats">
         <div id="cat-tap-wrap">
           <button id="cat-tap-btn" type="button" title="敲敲猫猫头" aria-label="敲敲猫猫头">
@@ -1795,7 +1795,7 @@
   <div id="ui-notice" role="status" hidden></div>
   <script src="/static/daily_nyalume/catalog.js?v=trio-v1"></script>
   <script src="/static/daily-card.js?v=trio-v1"></script>
-  <script src="/static/companion.js?v=20261007-slash-ime"></script>
+  <script src="/static/companion.js?v=20261011-plan-mode"></script>
   <script>
     const log = document.getElementById("log");
     let followLatest = true;
@@ -1827,7 +1827,7 @@
     const appEl = document.getElementById("app");
     const state = {
       currentId: null, currentProject: "", busy: false, stopped: false,
-      pendingMessage: "", queue: [], currentTask: null,
+      pendingMessage: "", queue: [], currentTask: null, planMode: false,
       speaker: "nyalume", wallMode: "", chatMode: "workspace"
     };
     const wallBtn = document.getElementById("wall-btn");
@@ -3113,7 +3113,7 @@
       markLatestUser();
       state.editingUser = null;
       state.stopped = false;
-      state.queue.unshift({id: 't' + (++taskSeq), text, pursuit: !!state.pursuitMode});
+      state.queue.unshift({id: 't' + (++taskSeq), text, pursuit: !!state.pursuitMode, plan: !!state.planMode});
       renderTaskPanel();
       await drainQueue();
     }
@@ -3536,7 +3536,7 @@
       msg += text
         ? "\n图片内容：" + text + "\n请根据这张图回答主人。"
         : "\n（Nyalume 暂时看不懂这张图，请提醒用户换一个标有“可看图”的模型）";
-      state.queue.push({ id: "t" + (++taskSeq), text: msg });
+      state.queue.push({ id: "t" + (++taskSeq), text: msg, pursuit: !!state.pursuitMode, plan: !!state.planMode });
       renderTaskPanel();
       await drainQueue();
     }
@@ -4106,6 +4106,7 @@
       function renderPerm(mode) {
         const cur = PERMS.find((p) => p.value === mode) || PERMS[0];
         state.chatMode = cur.value;
+        if (cur.value === 'daily') setPlanMode(false);
         permBtn.textContent = cur.label;
         permBtn.title = cur.value === "daily"
           ? "日常模式：陪伴聊天与虚拟小窝，好感度生效；文件、命令和联网工具关闭"
@@ -4158,6 +4159,7 @@
     async function switchTo(sessionId) {
       if (state.currentId === sessionId) return;
       setPursuitMode(false);
+      setPlanMode(false);
       state.editingUser = null;
       if (state.busy || sendController) {
         cancelActiveRun();
@@ -4191,6 +4193,7 @@
       await api(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
       NyalumeUI.forgetDraft(session.id);
       if (wasCurrent) {
+        setPlanMode(false);
         state.currentId = null; // renderSessions 会归一化到列表第一个（没有就自动新建）
         await renderSessions();
         await showMessages(state.currentId);
@@ -4204,6 +4207,7 @@
         ? await api("/api/companionship/daily-session")
         : await api("/api/sessions", { method: "POST" });
       setPursuitMode(false);
+      setPlanMode(false);
       await switchTo(created.id);
       NyalumeUI.showChat();
       input.focus();
@@ -4706,7 +4710,7 @@
         function clickSend() {
           if (state.busy) {
             if (input.value.trim()) {
-              state.queue.push({ id: "t" + (++taskSeq), text: input.value.trim(), pursuit: !!state.pursuitMode });
+              state.queue.push({ id: "t" + (++taskSeq), text: input.value.trim(), pursuit: !!state.pursuitMode, plan: !!state.planMode });
               input.value = "";
               resizeInput();
               renderTaskPanel();
@@ -4854,10 +4858,32 @@
 
     // ── Sync send button icon with input state ──
     function setPursuitMode(enabled) {
+      if (enabled) setPlanMode(false);
       state.pursuitMode = enabled;
       document.getElementById('goal-mode').hidden = !enabled;
-      input.placeholder = enabled ? '输入一个具体目标，Nyalume 会规划、执行并检查结果（最多 500 字）…' : '今天的心事，或想一起完成的小任务，都可以告诉我喵…';
+      input.placeholder = enabled ? '输入一个具体目标，Nyalume 会边做边检查，逐步推进（最多 500 字）…' : '今天的心事，或想一起完成的小任务，都可以告诉我喵…';
     }
+    function setPlanMode(enabled) {
+      if (enabled) setPursuitMode(false);
+      state.planMode = enabled;
+      document.body.classList.toggle('plan-mode', enabled);
+      const button = document.getElementById('plan-toggle');
+      button.setAttribute('aria-pressed', String(enabled));
+      button.textContent = enabled ? '计划模式 · 退出' : '计划模式';
+      if (enabled || !state.pursuitMode) input.placeholder = enabled
+        ? '描述想完成的事，先一起澄清需求、制定计划；退出计划模式后再执行…'
+        : '今天的心事，或想一起完成的小任务，都可以告诉我喵…';
+    }
+    window._startPlanMode = () => {
+      if (state.busy || state.editingUser) { showTaskToast('请先停止当前回复或完成编辑'); return; }
+      if (state.chatMode === 'daily') { showTaskToast('请先通过权限菜单切回工作模式，再进入计划模式'); return; }
+      setPlanMode(true); input.focus();
+    };
+    document.getElementById('plan-toggle').onclick = () => {
+      if (!state.planMode) { window._startPlanMode(); return; }
+      if (state.busy || state.editingUser) { showTaskToast('请先停止当前回复或完成编辑'); return; }
+      setPlanMode(false); input.focus();
+    };
     window._startPursuitMode = async () => {
       if (state.busy || state.editingUser) { showTaskToast('请先停止当前回复或完成编辑'); return; }
       if (state.chatMode === 'daily') {
@@ -4881,6 +4907,13 @@
 
     async function send(selectedReply) {
       if (state.editingUser) { showTaskToast('请先确认或取消消息编辑'); return; }
+      if (typeof selectedReply !== 'string' && /^[\/／]plan(?:\s|$)/i.test(input.value)) {
+        const message = input.value.replace(/^[\/／]plan\s*/i, '');
+        window._startPlanMode();
+        if (!state.planMode) return;
+        input.value = message; resizeInput(); NyalumeUI.saveDraft();
+        if (!message.trim()) return;
+      }
       if (typeof selectedReply !== 'string' && /^[\/／]goal(?:\s|$)/i.test(input.value)) {
         const goal = input.value.replace(/^[\/／]goal\s*/i, '');
         await window._startPursuitMode();
@@ -4903,7 +4936,7 @@
       if (state.pursuitMode && message.length > 500) { showTaskToast('目标最多 500 字，请精简后发送'); return; }
       if (!fromChoice) { input.value = ""; resizeInput(); syncSendIcon(); }
       NyalumeUI.saveDraft();
-      state.queue.push({ id: "t" + (++taskSeq), text: message, pursuit: !!state.pursuitMode });
+      state.queue.push({ id: "t" + (++taskSeq), text: message, pursuit: !!state.pursuitMode, plan: !!state.planMode });
       renderTaskPanel();
       await drainQueue();
     }
@@ -4921,7 +4954,7 @@
           const task = state.queue.shift();
           state.currentTask = task;
           renderTaskPanel();
-          await streamMessage(task.text, task.pursuit);
+          await streamMessage(task.text, task.pursuit, task.plan);
           if (state.currentTask?.id === task.id) state.currentTask = null;
           renderTaskPanel();
         }
@@ -4934,7 +4967,7 @@
       });
       return queueRunner;
     }
-    async function streamMessage(message, pursuitMode = !!state.pursuitMode) {
+    async function streamMessage(message, pursuitMode = false, planMode = false) {
       if (state.chatMode === 'daily' && state.currentId !== 'nyalume-daily') {
         await switchTo((await api('/api/companionship/daily-session')).id);
       }
@@ -5002,6 +5035,16 @@
       };
       const toolCards = [];
       const toolGroups = [];
+      const pursuitCommentary = text => {
+        if (!text) return;
+        proc.classList.remove('hidden');
+        const comment = document.createElement('div');
+        comment.className = 'process-commentary';
+        richInto(comment, text);
+        toolFeed.appendChild(comment);
+        if (toolGroups.length) toolGroups.at(-1).closed = true;
+        scrollActiveIntoView();
+      };
       const completedActions = [], viewedImages = new Set();
       let contextNotice = null;
       const parseSearchResults = (raw) => {
@@ -5181,6 +5224,7 @@
           body: JSON.stringify({
             session_id: state.currentId,
             message: message,
+            mode: planMode ? 'plan' : 'chat',
             request_id: requestId
           }),
           signal: controller.signal
@@ -5207,15 +5251,17 @@
               if (ev.type === 'pursuit_tool') ev.type = 'tool';
               if (ev.type === 'pursuit_tool_result') ev.type = 'tool_result';
               if (ev.type.startsWith('pursuit_')) {
-                if (ev.formatted) {
-                  finalText = [ev.analysis || ev.summary, ev.formatted].filter(Boolean).join('\n\n');
+                if (ev.type === 'pursuit_plan') pursuitCommentary(ev.analysis);
+                if (ev.type === 'pursuit_progress') pursuitCommentary(ev.summary);
+                if (ev.type === 'pursuit_complete') {
+                  finalText = ev.summary || '目标已完成';
                   richInto(body, finalText);
                 }
                 if (ev.type === 'pursuit_step_start') liveAct('正在执行：' + ev.task);
                 if (ev.type === 'pursuit_step_done') liveAct(ev.result, 'ok');
                 if (ev.type === 'pursuit_step_failed') liveAct(ev.result, 'fail');
                 if (ev.type === 'pursuit_needs_input') {
-                  finalText += '\n\n需要你补充：' + ev.message;
+                  finalText = '需要你补充：' + ev.message;
                   richInto(body, finalText);
                 }
                 if (ev.type === 'pursuit_stopped') stopped = true;
@@ -5397,7 +5443,7 @@
             procText.textContent = timings + (reasoning
               ? (timings ? "\n\n" : "") + "模型过程\n" + reasoning : "");
           }
-          const hasProc = traceSteps.length || sawTool || sawReason || procText.textContent.trim();
+          const hasProc = traceSteps.length || sawTool || sawReason || procText.textContent.trim() || toolFeed.childElementCount;
           if (!hasProc) proc.remove();
           addRunSummary(wrap, trace, hasProc ? proc : null, Number(secs), errorText,
             completedActions.length ? actionSummary(completedActions, viewedImages.size) : '');

@@ -45,7 +45,7 @@ class PetApp:
         self._tray_icon = None
         self._closing = False
         self._cmd_q: queue.Queue = queue.Queue()
-        self._spawn_pet()
+        self._spawn_pet(startup=True)
         threading.Thread(target=self._watch_web_activity, daemon=True).start()
         self.root.after(200, self._drain_commands)
 
@@ -77,7 +77,7 @@ class PetApp:
 
     # ---------- 宠物窗口 ----------
 
-    def _spawn_pet(self) -> None:
+    def _spawn_pet(self, startup=False) -> None:
         if self.window:
             self.window.destroy()
         pet = dict(get_pet(self.pet_id))
@@ -88,6 +88,7 @@ class PetApp:
             on_double_click=self._pet_double_clicked,
             on_interact=self._pet_interact,
             on_drop=self._on_folder_drop,
+            startup=startup,
         )
         self.window.bind_context(self._popup_menu)
     def _pet_double_clicked(self) -> None:

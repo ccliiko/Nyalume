@@ -14,6 +14,7 @@ from tkinter import font as tkfont
 import numpy as np
 
 from . import pets_registry
+from .startup_animation import animations_enabled
 
 try:
     from PIL import Image as PILImage
@@ -90,6 +91,7 @@ class PetWindow:
         on_double_click=None,
         on_interact=None,
         on_drop=None,
+        startup=False,
     ):
         self.pet = pet
         self.scale = max(0.5, min(1.0, float(pet.get("scale", 1.0))))
@@ -141,6 +143,9 @@ class PetWindow:
         self._reminder_base = None
         self._reminder_last_move = 0.0
         self._ack_click = False
+        self._startup_job = None
+        self._startup_home = None
+        self._startup_at = None
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -158,7 +163,7 @@ class PetWindow:
             bd=0,
         )
         self.canvas.pack()
-        self._place_bottom_right()
+        home = self._place_bottom_right()
 
         self.canvas.bind("<ButtonPress-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_drag)
@@ -168,6 +173,45 @@ class PetWindow:
         self._animate()
         self.win.after(150, self._prewarm_peeks)
         self._enable_dnd()
+        if startup and animations_enabled():
+            self._startup_home = home
+            try:
+                self.win.attributes("-alpha", .25)
+                self._startup_job = self.win.after_idle(self._startup_step)
+            except tk.TclError:
+                self._cancel_startup()
+
+    def _startup_step(self) -> None:
+        self._startup_job = None
+        now = time.monotonic()
+        if self._startup_at is None:
+            self._startup_at = now
+        progress = min(1, (now - self._startup_at) / .4)
+        if progress >= 1:
+            self._cancel_startup()
+            return
+        ease = 1 - (1-progress)**3
+        x, y = self._startup_home
+        try:
+            self.win.attributes("-alpha", .25 + .75*ease)
+            self.win.geometry(f"+{x}+{y + round(8*(1-ease))}")
+            self._startup_job = self.win.after(16, self._startup_step)
+        except tk.TclError:
+            self._cancel_startup()
+
+    def _cancel_startup(self) -> None:
+        if getattr(self, "_startup_home", None) is None:
+            return
+        try:
+            if self._startup_job is not None:
+                self.win.after_cancel(self._startup_job)
+            self.win.attributes("-alpha", 1)
+            x, y = self._startup_home
+            self.win.geometry(f"+{x}+{y}")
+        except tk.TclError:
+            pass
+        self._startup_job = None
+        self._startup_home = None
 
     def _enable_dnd(self) -> None:
         """接收 Windows 资源管理器拖进来的文件夹（桌宠“吃文件夹”入口）。"""
@@ -180,6 +224,7 @@ class PetWindow:
             pass  # 库缺失/环境不支持时只是没有拖放，不影响其他功能
 
     def _dnd_on_drop(self, event) -> None:
+        self._cancel_startup()
         try:
             paths = [str(p) for p in self.win.tk.splitlist(event.data or "")]
         except Exception:
@@ -359,9 +404,13 @@ class PetWindow:
 
     def bind_context(self, callback) -> None:
         """绑定右键菜单弹出。"""
-        self.canvas.bind("<Button-3>", callback)
+        def open_menu(event):
+            self._cancel_startup()
+            callback(event)
+        self.canvas.bind("<Button-3>", open_menu)
 
     def destroy(self) -> None:
+        self._cancel_startup()
         if self._after:
             self.win.after_cancel(self._after)
         if self._bubble_job:
@@ -386,14 +435,16 @@ class PetWindow:
 
     # ---------- 窗口行为 ----------
 
-    def _place_bottom_right(self) -> None:
+    def _place_bottom_right(self) -> tuple[int, int]:
         sw = self.win.winfo_screenwidth()
         sh = self.win.winfo_screenheight()
         x = max(0, sw - self.w - 120)
         y = max(0, sh - self.h - 160)
         self.win.geometry(f"{self.w}x{self.h}+{x}+{y}")
+        return x, y
 
     def _on_press(self, event) -> None:
+        self._cancel_startup()
         self.poke()
         self._press_at = time.time()
         if time.time() < self._reminder_until:

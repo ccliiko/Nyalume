@@ -29,7 +29,9 @@ def test_interaction_menu_and_command(monkeypatch):
     monkeypatch.setattr(pet3d_win, '_log', lambda *_: None)
     api = pet3d_win._NativeApi(enabled=False)
     api._menu_page = 'interactions'
-    assert {row['id'] for row in api.menu_items()} == {'page:root', 'interact:pat', 'interact:wave', 'interact:nod', 'interact:cheer'}
+    assert {row['id'] for row in api.menu_items()} == {'page:root', 'page:help', 'interact:pat', 'interact:wave', 'interact:nod', 'interact:cheer'}
+    api._menu_page = 'help'
+    assert any('Alt' in row['label'] for row in api.menu_items())
     assert api.pet_command({'action': 'interact', 'name': 'wave'})['ok']
     assert api._pending == {'kind': 'interact', 'name': 'wave'}
     assert not api.pet_command({'action': 'interact', 'name': 'unknown'})['ok']

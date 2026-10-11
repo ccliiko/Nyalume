@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$Version = "0.4.2",
+    [string]$Version = "0.45",
     # 本机构建默认保留原有 2D 角色；无素材构建显式传 -PersonalAssets:$false。
     [switch]$PersonalAssets = $true,
     # 带模型/动作的个人版：-ModelSource 下含 .pmx 的模型目录全带，动作只带 -MotionPick 白名单
@@ -75,6 +75,7 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot "README.txt") -Destination $dist
 foreach ($notice in @("LICENSE", "EULA.md", "PRIVACY.md", "THIRD_PARTY_NOTICES.md")) {
     Copy-Item -LiteralPath (Join-Path $projectRoot $notice) -Destination $distDir
 }
+Copy-Item -LiteralPath (Join-Path $projectRoot "CHANGELOG.md") -Destination $distDir
 # 3D 桌宠文档：说明 + 教程合成一份（docs\3D桌宠说明.md），不再按版本后缀改名
 Copy-Item -LiteralPath (Join-Path $projectRoot "docs\3D桌宠说明.md") -Destination $distDir
 
