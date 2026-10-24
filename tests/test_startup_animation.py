@@ -118,6 +118,7 @@ def test_2d_entrance_finishes_without_waiting_and_cancels_on_press(monkeypatch):
     pet = PetWindow.__new__(PetWindow)
     pet.win = FakeWindow()
     pet._startup_job = None
+    pet._release_job = None
     pet._startup_home = (100, 200)
     pet._startup_at = None
     monkeypatch.setattr(startup.time, "monotonic", lambda: 10)
@@ -266,7 +267,11 @@ def test_animation_cleanup_race_is_optional():
     assert animation.proc is None
 
 
-def test_completed_engraving_lingers_then_fades_without_delaying_the_pet(monkeypatch):
+@pytest.mark.parametrize("quick, checkpoints", [
+    (False, (10.35, 10.7, 11.1)),
+    (True, (10., 10.08, 10.2)),
+])
+def test_completed_engraving_uses_the_pet_or_chat_exit_timing(monkeypatch, quick, checkpoints):
     window = startup.StartupWindow.__new__(startup.StartupWindow)
     window.root = FakeWindow()
     window.canvas = FakeCanvas()
@@ -275,6 +280,7 @@ def test_completed_engraving_lingers_then_fades_without_delaying_the_pet(monkeyp
     window.finished = None
     window.closed = False
     window.motion = True
+    window.quick = quick
     window.message = "loading"
     window.status = 1
     window.opacity = 1
@@ -286,13 +292,13 @@ def test_completed_engraving_lingers_then_fades_without_delaying_the_pet(monkeyp
     window.events.put({"event": "ready"})
     window.tick()
     assert window.engraving_progress == 1 and window.root.alpha == 1
-    monkeypatch.setattr(startup.time, "monotonic", lambda: 10.35)
+    monkeypatch.setattr(startup.time, "monotonic", lambda: checkpoints[0])
     window.tick()
     assert not window.closed and window.root.alpha == 1
-    monkeypatch.setattr(startup.time, "monotonic", lambda: 10.7)
+    monkeypatch.setattr(startup.time, "monotonic", lambda: checkpoints[1])
     window.tick()
     assert not window.closed and 0 < window.root.alpha < 1
-    monkeypatch.setattr(startup.time, "monotonic", lambda: 11.1)
+    monkeypatch.setattr(startup.time, "monotonic", lambda: checkpoints[2])
     window.tick()
     assert window.closed
 
@@ -315,3 +321,106 @@ def test_duplicate_3d_launch_never_starts_animation(monkeypatch):
     monkeypatch.setattr(pet3d_win, "StartupAnimation", lambda *_args, **_kw: pytest.fail("duplicate splash"))
     assert pet3d_win.main() == 0
     assert len(messages) == 1
+
+
+def test_engraving_worker_only_queues_pil_frames(monkeypatch):
+    window = startup.StartupWindow.__new__(startup.StartupWindow)
+    window.events = queue.Queue()
+    frames = [object(), object()]
+    monkeypatch.setattr(startup, "_engraving_frames", lambda source, size: frames)
+    window._prepare_engraving(244)
+    assert window.events.get_nowait() == {"event": "frames", "frames": frames}
+    monkeypatch.setattr(startup, "_icon_path", lambda: ROOT / "missing-startup-image.png")
+    window._prepare_engraving(244)
+    assert window.events.empty()  # Missing artwork still leaves the surface usable.
+
+
+@pytest.fixture(scope="module")
+def startup_tk_root():
+    import tkinter as tk
+    root = tk.Tk()
+    root.withdraw()
+    yield root
+    root.destroy()
+
+
+@pytest.mark.parametrize("kind", ["pet", "chat"])
+def test_startup_surface_maps_before_artwork_is_prepared(monkeypatch, kind, startup_tk_root):
+    import tkinter as tk
+    pending = []
+
+    class DeferredThread:
+        def __init__(self, target, args, **kwargs):
+            pending.append((target, args))
+        def start(self): pass
+
+    monkeypatch.setattr(startup.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(startup, "_engraving_frames", lambda *args: pytest.fail("blocked the UI thread"))
+    root = tk.Toplevel(startup_tk_root)
+    root.withdraw()
+    # Exercise the real Tk surface without placing a test window on the desktop.
+    root.deiconify = lambda: None
+    try:
+        window = startup.StartupWindow(root, kind=kind)
+        root.update_idletasks()
+        assert len(window.engraving_images) == 1
+        assert pending[0][0] == window._prepare_engraving
+        assert window.message in window.stage_lines["renderer"]
+        assert (window.stage_lines is startup.CHAT_STAGE_LINES) is (kind == "chat")
+        assert window.quick is (kind == "chat")
+        for lines in window.stage_lines.values():
+            for line in lines:
+                window.canvas.itemconfigure(window.status, text=line)
+                box = window.canvas.bbox(window.status)
+                assert box[2] <= window.width - 25 * window.scale
+                assert box[3] < 300 * window.scale
+    finally:
+        root.destroy()
+
+
+def test_chat_coloring_traces_real_contours_then_paints_the_portrait():
+    from PIL import Image
+    with Image.open(startup._icon_path()) as source:
+        expected = source.convert("RGBA").resize((244, 244), Image.Resampling.LANCZOS)
+        frames = startup._coloring_frames(source, 244)
+    assert len(frames) == 23
+    assert frames[-1].tobytes() == expected.tobytes()
+    assert frames[0].tobytes() != frames[-1].tobytes()
+    expected_alpha = np.asarray(expected.getchannel("A"))
+    assert all(np.all(np.asarray(frame.getchannel("A")) <= expected_alpha) for frame in frames)
+    assert all(frame.getchannel("A").tobytes() == expected.getchannel("A").tobytes() for frame in frames[3:])
+    # Fragments are sparse; a recognizable full draft and fine features enter
+    # before painting, well inside the first fifth of the short sequence.
+    assert frames[0].getchannel("A").getbbox()
+    assert np.count_nonzero(np.asarray(frames[0].getchannel("A"))) < np.count_nonzero(expected_alpha)*.1
+    assert frames[2].getchannel("A").getbbox()[3] > 244*.8
+    sketch, middle, colored = [np.asarray(frame) for frame in (frames[3], frames[7], frames[-1])]
+    visible = colored[:, :, 3] == 255
+    # Some details have their original color while other regions are still in
+    # the sketch; this proves local filling rather than a whole-image fade.
+    changed = np.any(sketch[:, :, :3] != colored[:, :, :3], axis=2) & visible
+    assert np.any(np.all(middle == colored, axis=2) & changed)
+    assert np.any(np.all(middle == sketch, axis=2) & changed)
+
+
+def test_chat_color_playback_accelerates_on_ready_and_reduce_motion_shows_color(monkeypatch):
+    window = startup.StartupWindow.__new__(startup.StartupWindow)
+    window.canvas = FakeCanvas()
+    window.quick, window.motion = True, True
+    window.engraving_images = list(range(13))
+    window.engraving_index, window.engraving = -1, 1
+    window.engraving_progress, window.color_started, window.finished = .94, 10., None
+    monkeypatch.setattr(startup.time, "monotonic", lambda: 10.)
+    window._draw_engraving()
+    assert window.canvas.text["image"] == 0
+    monkeypatch.setattr(startup.time, "monotonic", lambda: 10.1)
+    window._draw_engraving()
+    assert window.canvas.text["image"] == 3
+    window.finished = 10.1
+    monkeypatch.setattr(startup.time, "monotonic", lambda: 10.23)
+    window._draw_engraving()
+    assert window.canvas.text["image"] == 12
+    window.finished, window.motion, window.engraving_index = None, False, -1
+    monkeypatch.setattr(startup.time, "monotonic", lambda: 10.)
+    window._draw_engraving()
+    assert window.canvas.text["image"] == 12

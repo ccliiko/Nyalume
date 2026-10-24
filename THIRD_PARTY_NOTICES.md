@@ -1,6 +1,6 @@
 # Nyalume 第三方组件、服务与素材声明
 
-更新日期：2026 年 9 月 21 日
+更新日期：2026 年 10 月 14 日
 
 Nyalume 自有代码受根目录 [LICENSE](LICENSE) 约束。下列第三方组件保留各自权利，使用和再分发以其许可证原文为准。本清单覆盖 `requirements.txt`、`cloud_service/requirements.txt` 及 Windows 打包工具中直接声明的依赖；发布者应在每次构建后按实际锁定版本复核传递依赖。
 
@@ -26,6 +26,7 @@ Nyalume 自有代码受根目录 [LICENSE](LICENSE) 约束。下列第三方组�
 | psycopg / psycopg-binary | 可选 PostgreSQL 云同步 | LGPL-3.0-only | <https://github.com/psycopg/psycopg> |
 | PyInstaller | Windows 打包工具 | GPL-2.0-or-later，含允许分发非自由程序的 bootloader 例外 | <https://github.com/pyinstaller/pyinstaller> |
 | Three.js 0.171.0 | 3D 模型、动画与透明画面渲染 | MIT；许可证副本随 3D 运行文件提供 | <https://github.com/mrdoob/three.js> |
+| @pixiv/three-vrm 3.4.4 | VRM 角色加载、MToon 材质和弹簧骨骼 | MIT；许可证副本随 3D 运行文件提供 | <https://github.com/pixiv/three-vrm> |
 | ammo.js / Bullet Physics | 3D 布料与骨骼物理 | ammo.js 文件标注 zlib；适用的上游许可应随发行文件保留 | <https://github.com/kripken/ammo.js> |
 
 常见传递依赖包括 Starlette、Pydantic、AnyIO、HTTPX、HTTP Core、h11、Jiter、Certifi、Click、Typing Extensions、Websockets 等；它们不会因此变为 Nyalume 自有代码。准确版本以具体发行包的构建环境为准。
@@ -46,9 +47,23 @@ Nyalume 的程序代码、第三方运行库、用户自行导入的 PMX 模型�
 
 ### 本版发行边界
 
-- 官方源码和可公开分发的程序构建不附带第三方 PMX 模型、商业用途受限的 VMD 动作或第三方音乐。3D 桌宠自带的 `idle.vmd` 是项目自制的自然站姿动作。
+- 默认程序构建明文附带野餐式 MikuQ，按随附 README 进行署名二次配布，详见下节。官方源码不提交模型数据；其他第三方 PMX 模型、商业用途受限的 VMD 动作和第三方音乐不会因此自动进入公开包。3D 桌宠自带的 `idle.vmd` 是项目自制的自然站姿动作。
 - Windows 便携版自 V0.4.1 起包含原有的 2D 角色帧。素材生成链和商业授权状态仍以源码仓库中的 `ASSET_PROVENANCE.md` 为准。`user_pets/` 下其他自行导入的素材不会自动进入官方分发范围。
 - 用户自行取得并导入模型或动作时，应保留原始说明文件，分别核对使用、改造、录屏、再分发、商业展示和署名条件。不同作者的条款可能互相不同。
+
+### Eku 内置 Unity 桌宠
+
+- Eku © sep-neko-ya / septem47；Arisaka Mito；Chocoan。来源：<https://septem47.booth.pm/items/7328764>。
+- 以个人开发者的软件嵌入用途随包提供加密 Unity 资源，依据已核对的日文 VN3 v1.2.0 第 R 项；原始许可保留在 `unity/Eku-LICENSE-ja.pdf`。模型数据的授权不等于 Nyalume 自有代码许可证。
+- Unity 播放器使用 UniVRM（MIT）、lilToon（MIT）；随包许可证位于 `unity/licenses/`，Unity 运行库与角色模型分别适用其原始条款。
+
+### 野餐式 MikuQ 借物与二次配布
+
+- 模型：野餐式初音未来 MikuQ，文件 `models/野餐式MikuQ/野餐式MikuQ-1.1.pmx`。
+- 借物署名：**miratsu/新生帝国野餐队队长**。原画设计：miratsu（miratsu169）。
+- 本模型随附 README 允许改模、换衣服、换人物及增加表情后二配，要求尊重原画设计、不得进行猎奇改造，并在二配时注明两位作者。
+- 默认构建保留原始 PMX、完整贴图目录和 `Readme.txt`，不加密；包根目录同时提供 `借物表.md`。构建参数 `-BundleMikuQ:$false` 可排除该模型。
+- 上述记录说明本模型的署名二次配布要求；README 未单独说明商业使用范围，不能将本条记录当作额外的商业授权。
 
 ### 已知限制示例
 
@@ -68,7 +83,7 @@ Nyalume 的程序代码、第三方运行库、用户自行导入的 PMX 模型�
 
 `-personal-models` 那类本机构建会把本机 `模型\` 目录下的 PMX 模型与 VMD 动作一起打进包里。这些素材**由制作者本人从官方渠道自行下载**，仅用于本机测试和个人使用，**与 Nyalume 程序及其开发者无关**：程序只是本地播放器，加载它们不代表取得任何授权、合作或背书，也不主张对模型、动作、角色形象或音乐的任何权利。
 
-随包附带不等于可以再分发。把这类构建转给他人、上传网盘或任何公开平台，都属于二次配布；部分素材明确禁止二次配布或商用（见上表）。要**再配布这份带素材的构建**，请改用不带素材的构建，由使用者自行导入其合法取得的模型与动作。（这与拍视频是两件事：发布自己录的演示视频不属于二次配布，见下一节。）
+随包附带不等于可以再分发。把这类构建转给他人、上传网盘或任何公开平台，都属于二次配布；部分素材明确禁止二次配布或商用（见上表）。要**再配布这份带素材的构建**，请排除这些私人素材，由使用者自行导入其合法取得的模型与动作；按上述 README 署名附带的野餐式 MikuQ 单独处理。（这与拍视频是两件事：发布自己录的演示视频不属于二次配布，见下一节。）
 
 ### 截图、演示视频和宣发
 

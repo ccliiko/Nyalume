@@ -101,6 +101,9 @@ def test_server_stays_inside_model_dir(model_dir):
 
 
 def test_resolve_motion(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert pet3d_win._resolve_motion(str(empty)) == (pet3d_win.DEFAULT_VMD, str(empty))
     (tmp_path / "b.vmd").write_bytes(_fake_motion())
     (tmp_path / "a.vmd").write_bytes(_fake_motion())
     assert pet3d_win._resolve_motion(str(tmp_path)) == (str(tmp_path / "a.vmd"), str(tmp_path))
@@ -557,6 +560,7 @@ def test_restart_with_rewrites_model_flag(monkeypatch):
     assert argv[argv.index("--vmd") + 1] == "动作目录"  # 换模型不能顺手把动作目录丢了
 
     seen.clear()
+    api = pet3d_win._NativeApi(enabled=False)  # 第二种参数形态使用新实例；交接中的实例不应再次重启。
     monkeypatch.setattr(sys, "argv", ["pet3d_win", "--vmd", "动作目录"])
     assert api.restart_with(model="二号") is True  # 原来没有 --model：补上，不能崩
     argv = seen["argv"]
@@ -567,6 +571,7 @@ def test_menu_config_has_import_entries():
     """配置页只留"导入单个文件"两条；模型/动作目录位置固定，不再有选文件夹的入口。"""
     api = pet3d_win._NativeApi.__new__(pet3d_win._NativeApi)
     api._menu_page = "config"
+    api._model_file = "main.pmx"
     api._ik = True
     api._quiet = False
     api._auto_fps = True

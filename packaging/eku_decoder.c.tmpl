@@ -1,0 +1,46 @@
+#include <windows.h>
+#include <bcrypt.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* Generated key material is compiled privately and never shipped as source. */
+static const unsigned char key_bytes[32] = {@KEY_BYTES@};
+static const unsigned char magic[8] = {'N','Y','E','K','U','0','0','1'};
+
+__declspec(dllexport) int __cdecl eku_decode(const unsigned char *data, int length,
+                                            unsigned char *output, int capacity) {
+    if (!data || !output || length<=36 || length>512*1024*1024 || capacity!=length-36
+        || memcmp(data,magic,8)!=0) {
+        if (output && capacity>0 && capacity<=512*1024*1024) SecureZeroMemory(output,capacity);
+        return -1;
+    }
+    BCRYPT_ALG_HANDLE algorithm=NULL;
+    BCRYPT_KEY_HANDLE key=NULL;
+    unsigned char *object=NULL, secret[32];
+    ULONG object_length=0, actual=0, written=0;
+    int result=-1;
+    memcpy(secret,key_bytes,32);
+    if (BCryptOpenAlgorithmProvider(&algorithm,BCRYPT_AES_ALGORITHM,NULL,0)<0) goto done;
+    if (BCryptSetProperty(algorithm,BCRYPT_CHAINING_MODE,(PUCHAR)BCRYPT_CHAIN_MODE_GCM,
+                          sizeof(BCRYPT_CHAIN_MODE_GCM),0)<0) goto done;
+    if (BCryptGetProperty(algorithm,BCRYPT_OBJECT_LENGTH,(PUCHAR)&object_length,
+                          sizeof(object_length),&actual,0)<0) goto done;
+    object=(unsigned char*)malloc(object_length);
+    if (!object) goto done;
+    if (BCryptGenerateSymmetricKey(algorithm,&key,object,object_length,secret,32,0)<0) goto done;
+    BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO info;
+    BCRYPT_INIT_AUTH_MODE_INFO(info);
+    info.pbNonce=(PUCHAR)(data+8); info.cbNonce=12;
+    info.pbTag=(PUCHAR)(data+20); info.cbTag=16;
+    info.pbAuthData=(PUCHAR)magic; info.cbAuthData=8;
+    if (BCryptDecrypt(key,(PUCHAR)(data+36),length-36,&info,NULL,0,
+                      output,capacity,&written,0)>=0 && written==(ULONG)capacity)
+        result=(int)written;
+done:
+    if (result<0) SecureZeroMemory(output,capacity);
+    if (key) BCryptDestroyKey(key);
+    if (algorithm) BCryptCloseAlgorithmProvider(algorithm,0);
+    if (object) { SecureZeroMemory(object,object_length); free(object); }
+    SecureZeroMemory(secret,sizeof(secret));
+    return result;
+}

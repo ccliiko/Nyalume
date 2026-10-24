@@ -5,6 +5,7 @@
 """
 
 import math
+import ctypes
 import os
 import random
 import time
@@ -26,8 +27,10 @@ except ImportError:  # 无 Pillow 时只是不支持边缘趴头裁剪
 _TRANSPARENT = "#010203"  # Windows 透明色键：窗口里这个颜色会被抠掉
 _ANIM_MS = 420
 _CLICK_TOLERANCE = 5
+_DOUBLE_CLICK_MS = max(500, ctypes.windll.user32.GetDoubleClickTime()) if os.name == "nt" else 500
 _DRAG_TOLERANCE = 8    # 位移超过才算拖动（防双击微抖误入拎起态）
 _BUBBLE_MS = 2400
+_DOCK_BUBBLE_MS = 2500
 _DOCK_EDGE = 60          # 距边缘多少像素触发趴边
 _IDLE_SECONDS = 30       # 超过多久没人理进入待机
 _HEAD_BOX = (0.16, 0.05, 0.84, 0.62)  # 立绘裁出“头”的区域（相对坐标）
@@ -113,11 +116,15 @@ class PetWindow:
         self._hint_job = None
         self._speech_win = None
         self._speech_font = None
+        self._speech_canvas = None
+        self._speech_items = None
         self._speech_job = None
+        self._release_job = None
+        self._last_reaction_at = float("-inf")
         self._speech_size = (0, 0)
         self._single_job = None
         self._pending_click = None
-        self._double_at = 0.0
+        self._double_click_active = False
         self._last_release_at = 0.0
         self._grab_active = False
         self.docked = False
@@ -255,6 +262,14 @@ class PetWindow:
         self.last_activity = time.time()
         self.idle_mode = False
 
+    def return_to_idle(self) -> None:
+        """会话打开成功：结束吃文件夹动画，立即恢复正常待机。"""
+        self._eat_until = 0.0
+        self.working = False
+        self.last_activity = time.time() - _IDLE_SECONDS
+        self._tick = 0
+        self._draw()
+
     def tap_head(self, meowed: bool = False) -> None:
         """聊天窗敲头联动：轻弹一下；触发喵时同步冒泡。"""
         self.poke()
@@ -280,6 +295,7 @@ class PetWindow:
 
     def hide(self) -> None:
         """缩到后台（托盘仍可呼出）。"""
+        self._cancel_release_reaction()
         self._cancel_reminder()
         self._clear_speech()
         self.win.withdraw()
@@ -294,6 +310,25 @@ class PetWindow:
     def cheer(self, text: str) -> None:
         """任务完成：头顶独立气泡冒出台词，几秒后消失（不遮立绘）。"""
         self._show_speech(str(text), _BUBBLE_MS)
+
+    def react(self, text: str, mood: str) -> bool:
+        """仅用气泡回应，不切换立绘或重置待机帧；保留 mood 参数兼容调用方。"""
+        now = time.monotonic()
+        if self.win.state() == "withdrawn" or now - self._last_reaction_at < 2:
+            return False
+        self._show_speech(text, _BUBBLE_MS)
+        self._last_reaction_at = now
+        return True
+
+    def _cancel_release_reaction(self) -> None:
+        if self._release_job:
+            self.win.after_cancel(self._release_job)
+            self._release_job = None
+
+    def _emit_release_reaction(self, region: str) -> None:
+        self._release_job = None
+        if self.on_interact:
+            self.on_interact(region)
 
     def hint(self, text: str, ms: int = 6000) -> None:
         """头顶小图标/文字提示（不影响互动气泡）。"""
@@ -318,7 +353,9 @@ class PetWindow:
         self._reminder_base = None
 
     def _show_speech(self, text: str, ms: int) -> None:
-        """在宠物正上方的独立透明窗里画气泡，避免被角色帧遮挡。"""
+        """独立气泡跟随角色；贴边时留出充足阅读时间。"""
+        if self.docked:
+            ms = max(ms, _DOCK_BUBBLE_MS)
         if self._speech_job:
             self.win.after_cancel(self._speech_job)
         if self._speech_win is not None:
@@ -364,13 +401,15 @@ class PetWindow:
         c.tag_lower(body, text_id)
         c.tag_lower(tail, text_id)
         self._speech_win = speech
+        self._speech_canvas = c
+        self._speech_items = (body, tail, text_id)
         self._speech_size = (sw, sh)
         speech.geometry(f"{sw}x{sh}+0+0")
         self._place_speech()
         self._speech_job = self.win.after(ms, self._clear_speech)
 
     def _place_speech(self) -> None:
-        """把气泡窗贴到宠物正上方；宠物拖动/移动后重定位跟随。"""
+        """按当前露出尺寸定位；气泡在上方或下方时，箭头都指向角色。"""
         if self._speech_win is None:
             return
         try:
@@ -384,15 +423,28 @@ class PetWindow:
             sw, sh = self._speech_size
         if sw <= 1:
             return
-        px = self.win.winfo_rootx() + self.w // 2 - sw // 2
+        pw, ph = (self._dock_cw, self._dock_ch) if self.docked else (self.w, self.h)
+        anchor_x = self.win.winfo_rootx() + pw / 2
+        px = round(anchor_x - sw / 2)
         py = self.win.winfo_rooty() - sh - 6
         sw_screen = self.win.winfo_screenwidth()
         px = max(2, min(px, sw_screen - sw - 2))
-        if py < 2:
-            py = self.win.winfo_rooty() + self.h + 6  # 顶部放不下就放下方
+        below = py < 2
+        if below:
+            py = self.win.winfo_rooty() + ph + 6
+        py = max(2, min(py, self.win.winfo_screenheight() - sh - 2))
+        tail_x = max(8, min(anchor_x - px, sw - 9))
+        body, tail, text = self._speech_items
+        top, bottom = (8, sh - 2) if below else (1, sh - 8)
+        base_y, tip_y = (9, 2) if below else (sh - 9, sh - 2)
+        self._speech_canvas.coords(body, 1, top, sw - 2, bottom)
+        self._speech_canvas.coords(tail, tail_x - 6, base_y, tail_x + 6, base_y, tail_x, tip_y)
+        self._speech_canvas.coords(text, sw / 2, (top + bottom) / 2)
         self._speech_win.geometry(f"+{px}+{py}")
 
     def _clear_speech(self) -> None:
+        if self._speech_job:
+            self.win.after_cancel(self._speech_job)
         self._speech_job = None
         if self._speech_win is not None:
             try:
@@ -401,6 +453,8 @@ class PetWindow:
                 pass
             self._speech_win = None
             self._speech_font = None
+            self._speech_canvas = None
+            self._speech_items = None
 
     def bind_context(self, callback) -> None:
         """绑定右键菜单弹出。"""
@@ -411,6 +465,7 @@ class PetWindow:
 
     def destroy(self) -> None:
         self._cancel_startup()
+        self._cancel_release_reaction()
         if self._after:
             self.win.after_cancel(self._after)
         if self._bubble_job:
@@ -445,16 +500,18 @@ class PetWindow:
 
     def _on_press(self, event) -> None:
         self._cancel_startup()
+        self._cancel_release_reaction()
+        self._double_click_active = False
         self.poke()
         self._press_at = time.time()
         if time.time() < self._reminder_until:
             # 点击 = 收到提醒：停止提醒模式，本次点击不再触发摸摸
             self._ack_click = True
             self._cancel_reminder()
-        # 松手后 0.6s 内又按下：多半是双击的第二下，取消待触发的单击摸摸
+        # 使用系统双击间隔，第二下到来前不提前触发摸摸。
         if (
             self._single_job is not None
-            and time.time() - self._last_release_at < 0.6
+            and time.time() - self._last_release_at <= _DOUBLE_CLICK_MS / 1000
         ):
             self.win.after_cancel(self._single_job)
             self._single_job = None
@@ -463,6 +520,8 @@ class PetWindow:
         self._moved = False
 
     def _on_drag(self, event) -> None:
+        if self._double_click_active:
+            return
         self.poke()
         x0, y0, wx, wy = self._drag_start
         dx = event.x_root - x0
@@ -482,6 +541,8 @@ class PetWindow:
                 self._moved = True
                 if self.docked:
                     self._undock(restore=False)
+                if self.on_interact:
+                    self.on_interact("lift")
             self.win.geometry(f"+{wx + event.x_root - x0}+{wy + event.y_root - y0}")
         self._queue_draw()
 
@@ -498,6 +559,9 @@ class PetWindow:
 
     def _on_release(self, event) -> None:
         self.poke()
+        if self._double_click_active:
+            self._last_release_at = time.time()
+            return
         if self._ack_click and not self._dragging:
             self._ack_click = False
             return
@@ -513,26 +577,34 @@ class PetWindow:
         if dragging:
             self._draw()
             self._maybe_dock()
+            if self.on_interact:
+                region = "peek" if self.docked else "settle"
+                delay = math.ceil(max(0, self._last_reaction_at + 2 - time.monotonic()) * 1000)
+                if delay:
+                    self._release_job = self.win.after(delay, lambda: self._emit_release_reaction(region))
+                else:
+                    self._emit_release_reaction(region)
         elif (
             abs(event.x_root - x0) < _CLICK_TOLERANCE
             and abs(event.y_root - y0) < _CLICK_TOLERANCE
-            and time.time() - self._double_at > 0.35
         ):
             if self._single_job:
                 self.win.after_cancel(self._single_job)
             self._pending_click = (event.x, event.y)
             self._single_job = self.win.after(
-                330, self._fire_single_click
+                _DOUBLE_CLICK_MS, self._fire_single_click
             )
         self._last_release_at = time.time()
 
     def _on_double(self, event) -> None:
         """双击 = 打开对话；取消未触发的单击互动。"""
         self.poke()
-        self._double_at = time.time()
+        self._cancel_release_reaction()
+        self._double_click_active = True
         if self._single_job:
             self.win.after_cancel(self._single_job)
             self._single_job = None
+        self._pending_click = None
         if self.on_double_click:
             self.on_double_click()
 
@@ -701,8 +773,7 @@ class PetWindow:
         if self.working and "working" in frames:
             return "working"
         if (
-            self.idle_mode
-            and not self.docked
+            (self.mood == "neutral" or (self.idle_mode and not self.docked))
             and not self.working
             and "idle" in frames
         ):

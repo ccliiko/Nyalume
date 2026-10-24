@@ -3,7 +3,6 @@ from pathlib import Path
 from urllib.parse import quote
 
 import pytest
-from playwright.sync_api import sync_playwright
 
 from nyalume.frontends.pet.pet3d import model_profile, pet3d_win as pet
 
@@ -11,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize('dpi', [1, 1.5, 2])
-def test_contact_feedback_on_real_model(tmp_path, monkeypatch, dpi):
+def test_contact_feedback_on_real_model(browser, tmp_path, monkeypatch, dpi):
     model_path = ROOT / 'models/锁瞑'
     if not model_path.exists():
         pytest.skip('本地模型未安装')
@@ -215,226 +214,226 @@ def test_contact_feedback_on_real_model(tmp_path, monkeypatch, dpi):
     };
     """
     source = source.replace('</script>\n</body>', probe + '</script>\n</body>')
-    with sync_playwright() as p:
-        browser = p.chromium.launch(channel='msedge', headless=True)
-        page = browser.new_page(device_scale_factor=dpi)
-        errors = []
-        page.on('pageerror', lambda error: errors.append(str(error)))
-        page.add_init_script('window.requestAnimationFrame = () => 0')
-        page.route('**/*', lambda route: route.fulfill(body=source, content_type='text/html')
-                   if route.request.resource_type == 'document' else route.continue_())
-        try:
-            page.goto(f'http://127.0.0.1:{port}/viewer.html?pmx=/model/{quote(pmx)}&box=440x660&physics=1')
-            page.wait_for_function("document.querySelector('#tip').textContent === ''", polling=100, timeout=60000)
-            page.evaluate('rig.step()')
-            for yaw, zoom in [(0, 1), (0.3, 0.9), (-0.3, 1.08)]:
-                page.evaluate('v => rig.pose(...v)', [yaw, zoom])
-                assert page.evaluate("rig.point('head')")
-                assert page.evaluate("rig.point('hand')")
-            page.evaluate('rig.pose(0, 1)')
-            distribution = page.evaluate('rig.distributionCheck()')
-            assert distribution['anchor'] == pytest.approx(.025, abs=1e-6)
-            assert .015 < distribution['neighbor'] < .025
-            assert distribution['waist'] < 1e-6 and distribution['far'] < 1e-6
-            assert distribution['finite']
-            for symbol in ['♡', '！', '？', '♪', 'zzz']:
-                visual = page.evaluate('s => rig.symbol(s)', symbol)
-                assert visual['count'] == 1
-                assert 0 < visual['alpha'] <= 192 and visual['white'] == 0
-                assert abs(visual['angle']) <= 3.141593 / 3
-            page.evaluate('rig.advance(.9,{x:-1,y:-1},false)')
-            assert .35 < page.evaluate('rig.particleOpacity') < .6
-            page.locator('canvas').screenshot(path=str(tmp_path / 'symbol-fade.png'))
-            page.evaluate('rig.advance(1,{x:-1,y:-1},false)')
-            assert page.evaluate('rig.particles') == 0
-            head = page.evaluate("rig.point('head')")
-            assert page.evaluate('p => rig.nativeTap(p)', head) == 'head'
-            assert page.evaluate('rig.bounceAmplitude()') > .005
-            assert page.evaluate('rig.contact') is None
-            page.evaluate('p => rig.advance(1.6,p,false)', head)
-            a, b = page.evaluate('rig.headPoints()')
-            head_positions = page.evaluate('rig.headPositions()')
-            page.evaluate("p => rig.send('begin', p)", a)
-            assert page.evaluate('rig.contact.grab || null') is None
-            assert page.evaluate('rig.touch.kind') == 'notice'
-            assert page.evaluate('rig.bounce') == 0
-            page.evaluate('rig.step()')
-            assert 0 < max(page.evaluate('rig.weights')) < 0.2
-            page.evaluate('p => rig.advance(.8,p)', a)
-            assert not page.evaluate('rig.contact.engaged')  # 静止按住不算抚摸。
-            page.evaluate("p => rig.send('update',p,.04)", b)
-            assert page.evaluate('rig.touch.kind') == 'relax'
-            page.evaluate('p => rig.advance(.25,p)', b)
-            assert page.evaluate('rig.strength') > 0.9
-            assert max(page.evaluate('rig.weights')) > 0.9
-            assert page.evaluate('rig.grab.name || null') is None
-            for before, after in zip(head_positions, page.evaluate('rig.headPositions()')):
-                assert after == pytest.approx(before, abs=.001)  # 抚摸允许旋转，不平移头颈骨骼。
-            name_before = page.evaluate('rig.touch.kind')
-            page.evaluate('rig.idle()')
-            assert page.evaluate('rig.touch.kind') == name_before
-            assert page.evaluate('rig.particles') <= 1
-            page.evaluate("p => rig.send('end',p,.04)", b)
-            assert page.evaluate('rig.touch.rapid') == 0
-            page.evaluate('p => rig.advance(.45,p,false)', b)
-            assert page.evaluate('rig.strength') == 0
-            assert max(page.evaluate('rig.weights')) == 0
-            assert page.evaluate('rig.touch.kind') == 'linger'
-            page.evaluate('p => rig.advance(3,p,false)', b)
-            assert page.evaluate('rig.touch.kind') == 'idle'
+    page = browser.new_page(device_scale_factor=dpi)
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.add_init_script('window.requestAnimationFrame = () => 0')
+    page.route('**/*', lambda route: route.fulfill(body=source, content_type='text/html')
+               if route.request.resource_type == 'document' else route.continue_())
+    try:
+        page.goto(f'http://127.0.0.1:{port}/viewer.html?pmx=/model/{quote(pmx)}&box=440x660&physics=1')
+        page.wait_for_function("document.querySelector('#tip').textContent === ''", polling=100, timeout=60000)
+        page.evaluate('rig.step()')
+        for yaw, zoom in [(0, 1), (0.3, 0.9), (-0.3, 1.08)]:
+            page.evaluate('v => rig.pose(...v)', [yaw, zoom])
+            assert page.evaluate("rig.point('head')")
+            assert page.evaluate("rig.point('hand')")
+        page.evaluate('rig.pose(0, 1)')
+        distribution = page.evaluate('rig.distributionCheck()')
+        assert distribution['anchor'] == pytest.approx(.025, abs=1e-6)
+        assert .015 < distribution['neighbor'] < .025
+        assert distribution['waist'] < 1e-6 and distribution['far'] < 1e-6
+        assert distribution['finite']
+        for symbol in ['♡', '！', '？', '♪', 'zzz']:
+            visual = page.evaluate('s => rig.symbol(s)', symbol)
+            assert visual['count'] == 1
+            assert 0 < visual['alpha'] <= 192 and visual['white'] == 0
+            assert abs(visual['angle']) <= 3.141593 / 3
+        page.evaluate('rig.advance(.9,{x:-1,y:-1},false)')
+        assert .35 < page.evaluate('rig.particleOpacity') < .6
+        page.locator('canvas').screenshot(path=str(tmp_path / 'symbol-fade.png'))
+        page.evaluate('rig.advance(1,{x:-1,y:-1},false)')
+        assert page.evaluate('rig.particles') == 0
+        head = page.evaluate("rig.point('head')")
+        assert page.evaluate('p => rig.nativeTap(p)', head) == 'head'
+        assert page.evaluate('rig.bounce') == 0
+        assert page.evaluate('rig.contact') is None
+        page.evaluate('p => rig.advance(1.6,p,false)', head)
+        a, b = page.evaluate('rig.headPoints()')
+        head_positions = page.evaluate('rig.headPositions()')
+        page.evaluate("p => rig.send('begin', p)", a)
+        assert page.evaluate('rig.contact.grab || null') is None
+        assert page.evaluate('rig.touch.kind') == 'notice'
+        assert page.evaluate('rig.bounce') == 0
+        page.evaluate('rig.step()')
+        assert 0 < max(page.evaluate('rig.weights')) < 0.2
+        page.evaluate('p => rig.advance(.8,p)', a)
+        assert not page.evaluate('rig.contact.engaged')  # 静止按住不算抚摸。
+        page.evaluate("p => rig.send('update',p,.04)", b)
+        assert page.evaluate('rig.touch.kind') == 'relax'
+        page.evaluate('p => rig.advance(.25,p)', b)
+        assert page.evaluate('rig.strength') > 0.9
+        assert max(page.evaluate('rig.weights')) > 0.9
+        assert page.evaluate('rig.grab.name || null') is None
+        for before, after in zip(head_positions, page.evaluate('rig.headPositions()')):
+            assert after == pytest.approx(before, abs=.001)  # 抚摸允许旋转，不平移头颈骨骼。
+        name_before = page.evaluate('rig.touch.kind')
+        page.evaluate('rig.idle()')
+        assert page.evaluate('rig.touch.kind') == name_before
+        assert page.evaluate('rig.particles') <= 1
+        page.evaluate("p => rig.send('end',p,.04)", b)
+        assert page.evaluate('rig.touch.rapid') == 0
+        page.evaluate('p => rig.advance(.45,p,false)', b)
+        assert page.evaluate('rig.strength') == 0
+        assert max(page.evaluate('rig.weights')) == 0
+        assert page.evaluate('rig.touch.kind') == 'linger'
+        page.evaluate('p => rig.advance(3,p,false)', b)
+        assert page.evaluate('rig.touch.kind') == 'idle'
 
-            assert page.evaluate('rig.faceGrab()') == {'region': 'face', 'grab': None}
-            face = page.evaluate("rig.point('face')")
-            assert face
-            head_positions = page.evaluate('rig.headPositions()')
-            page.evaluate("p => rig.send('begin',p,1)", face)
-            assert page.evaluate('rig.contact.region') == 'face'
-            assert page.evaluate('rig.contact.grab || null') is None
-            assert not page.evaluate('rig.contact.canHold')
-            page.evaluate('p => rig.advance(.6,p)', face)
-            dragged_face = {**face, 'y': face['y'] - .2}
-            page.evaluate("p => rig.send('update',p,.04)", dragged_face)
-            page.evaluate('p => rig.advance(.3,p)', dragged_face)
-            assert page.evaluate('rig.contact') is None
-            assert page.evaluate('rig.grab.name || null') is None
-            for before, after in zip(head_positions, page.evaluate('rig.headPositions()')):
-                assert after == pytest.approx(before, abs=.001)  # 长按拖脸不拉长脖子。
-            page.evaluate("p => rig.send('end',p,.04)", dragged_face)
+        assert page.evaluate('rig.faceGrab()') == {'region': 'face', 'grab': None}
+        face = page.evaluate("rig.point('face')")
+        assert face
+        head_positions = page.evaluate('rig.headPositions()')
+        page.evaluate("p => rig.send('begin',p,1)", face)
+        assert page.evaluate('rig.contact.region') == 'face'
+        assert page.evaluate('rig.contact.grab || null') is None
+        assert not page.evaluate('rig.contact.canHold')
+        page.evaluate('p => rig.advance(.6,p)', face)
+        dragged_face = {**face, 'y': face['y'] - .2}
+        page.evaluate("p => rig.send('update',p,.04)", dragged_face)
+        page.evaluate('p => rig.advance(.3,p)', dragged_face)
+        assert page.evaluate('rig.contact') is None
+        assert page.evaluate('rig.grab.name || null') is None
+        for before, after in zip(head_positions, page.evaluate('rig.headPositions()')):
+            assert after == pytest.approx(before, abs=.001)  # 长按拖脸不拉长脖子。
+        page.evaluate("p => rig.send('end',p,.04)", dragged_face)
 
-            assert page.evaluate('rig.bodyGrabs()') == [None] * 6
-            sides = []
-            for side in ['左', '右']:
-                hand = page.evaluate("side => rig.point('hand',0,side)", side)
-                assert hand
-                before = page.evaluate('side => rig.armSnapshot(side)', side)
-                page.evaluate("p => rig.send('begin',p,1)", hand)
-                page.evaluate('p => rig.advance(.5,p)', hand)
-                assert page.evaluate('rig.touch.kind') == 'hold'
-                assert page.evaluate('rig.contact.hand').startswith(side)
-                assert page.evaluate('rig.grab.name || null') is None
-                sides.append(page.evaluate('rig.handPose.side'))
-                changes = page.evaluate('rig.handPoseDelta()')
-                assert len(changes) >= 3
-                assert sum(c['angle'] > .01 for c in changes) >= 3
-                assert all(c['movement'] < 1e-6 for c in changes)
-                pulled = {**hand, 'x': hand['x'] + .3, 'y': hand['y'] - .3}
-                page.evaluate("p => rig.send('update',p,.04)", pulled)
-                page.evaluate('p => rig.advance(1,p)', pulled)
-                assert page.evaluate('rig.contact.engaged')
-                assert page.evaluate('rig.grab.offset') == pytest.approx([0, 0, 0], abs=1e-6)
-                after = page.evaluate('side => rig.armSnapshot(side)', side)
-                for start, end in zip(before, after):
-                    assert start['name'] == end['name']
-                    assert end['position'] == pytest.approx(start['position'], abs=.001)
-                    assert end['length'] == pytest.approx(start['length'], abs=.001)
-                page.locator('canvas').screenshot(path=str(tmp_path / f'handshake-{side}.png'))
-                page.evaluate("p => rig.send('end',p,.04)", pulled)
-                page.evaluate('p => rig.advance(.5,p,false)', hand)
-                assert page.evaluate('rig.strength') == 0
-                assert not page.evaluate('rig.handPose.active')
-                assert page.evaluate('rig.poseDelta()') < 1e-6
-            assert sides[0] == -sides[1]
-            assert page.evaluate('rig.handMissing()') is None
-
-            arm = page.evaluate("rig.point('arm')")
-            assert arm
-            page.evaluate("p => rig.send('begin',p,1)", arm)
-            assert not page.evaluate('rig.contact.canHold')
-            assert page.evaluate('rig.contact.grab || null') is None
-            page.evaluate('p => rig.advance(.7,p)', arm)
-            assert not page.evaluate('rig.contact?.engaged || false')
-            page.evaluate("p => rig.send('cancel',p,.04)", arm)
-
-            sleeve = page.evaluate("rig.point('sleeve')")
-            assert sleeve
-            page.evaluate('p => rig.nativeTap(p)', sleeve)
-            assert page.evaluate('rig.bounceAmplitude()') > .005
-            page.evaluate('p => rig.advance(1.6,p,false)', sleeve)
-            page.evaluate("p => rig.send('begin',p,1)", sleeve)
-            assert page.evaluate('rig.bounce') == 0  # Alt 按下不轻弹。
-            page.evaluate("p => rig.send('end',p,.05)", sleeve)
-            assert page.evaluate('rig.bounce') == 0  # Alt 单点松手也不轻弹。
-            assert page.evaluate('rig.bounceAmplitude()') < 1e-6
-            page.evaluate("p => rig.send('begin',p,1)", sleeve)
-            assert not page.evaluate('rig.contact.canHold')
-            page.evaluate('p => rig.advance(.6,p)', sleeve)
-            assert page.evaluate('rig.touch.kind') == 'pull'
-            pulled = {**sleeve, 'x': sleeve['x'] + 0.08}
-            page.evaluate("p => rig.send('update',p,.04)", pulled)
-            page.evaluate('p => rig.advance(.2,p)', pulled)
-            assert page.evaluate('rig.grab.offset[0]') > 0.01
-            assert page.evaluate('rig.contact.engaged')  # 拉离原轮廓仍锁定抓取。
-            assert page.evaluate('rig.model.position.x') == 0
-            page.locator('canvas').screenshot(path=str(tmp_path / 'cloth-pull.png'))
-            page.evaluate("p => rig.send('end',p,.04)", sleeve)
-            page.evaluate('p => rig.advance(.6,p,false)', sleeve)
-            assert page.evaluate('rig.grab.name || null') is None
-            assert max(abs(v) for v in page.evaluate('rig.grab.offset')) < .001
-
-            skirt = page.evaluate("rig.point('skirt')")
-            assert skirt
-            page.evaluate("p => rig.send('begin',p,1)", skirt)
-            page.evaluate('p => rig.advance(.5,p)', skirt)
-            skirt_pulled = {**skirt, 'x': skirt['x'] + .12, 'y': skirt['y'] - .04}
-            page.evaluate('p => rig.advance(.5,p)', skirt_pulled)
-            motion = page.evaluate('rig.patchMotion()')
-            assert motion['count'] >= 5  # 周围多根裙骨共同移动。
-            assert 0 < motion['max'] < .04 and motion['finite']
-            page.locator('canvas').screenshot(path=str(tmp_path / 'skirt-patch.png'))
-            page.evaluate("p => rig.send('end',p,.04)", skirt_pulled)
-            page.evaluate('p => rig.advance(2,p,false)', skirt)
-            assert page.evaluate('rig.grab.name || null') is None
-            assert max(abs(v) for v in page.evaluate('rig.grab.offset')) < .001
-
-            a, b = page.evaluate('rig.headPoints()')
-            page.evaluate("p => rig.send('begin',p,1)", a)
-            page.evaluate('p => rig.advance(.7,p)', b)
-            page.evaluate("rig.send('update',{x:-1,y:-1},.04)")
-            page.evaluate('rig.advance(.25,{x:-1,y:-1})')
-            assert page.evaluate('rig.contact') is None  # 离开部位结束接触。
-            page.evaluate("p => rig.send('end',p,.04)", a)
-
-            a = page.evaluate("rig.point('head')")
-            page.evaluate('p => rig.quickTap(p,1)', a)
-            assert page.evaluate('rig.bounce') == 0
-            assert page.evaluate('rig.bounceAmplitude()') < 1e-6
-            assert page.evaluate('rig.poseDelta()') > .001  # 保留轻点时的轻微点头反馈。
-            page.evaluate('p => rig.quickTap(p,.15)', a)
-            page.evaluate('p => rig.quickTap(p,.15)', a)
-            assert page.evaluate('rig.touch.kind') == 'dodge'
-            page.evaluate('p => rig.advance(4.1,p,false)', a)
-            page.evaluate("p => rig.send('begin',p,1)", a)
-            page.evaluate('p => rig.advance(.6,p,false)', a)
-            assert page.evaluate('rig.contact') is None  # 桥接停止也会收尾。
-            page.evaluate('rig.advance(1,{x:-1,y:-1},false)')
-            combos = page.evaluate('rig.reactions()')
-            assert all(first != second for first, second in zip(combos, combos[1:]))
-            page.evaluate('rig.advance(1,{x:-1,y:-1},false)')
-            a = page.evaluate("rig.point('head')")
-            page.evaluate('rig.morphsMissing(true)')
-            page.evaluate("p => rig.send('begin',p,1)", a)
-            page.evaluate('p => rig.advance(.7,p)', a)
-            page.evaluate("p => rig.send('end',p,.04)", a)
-            assert max(page.evaluate('rig.weights')) == 0
-            page.evaluate('rig.morphsMissing(false)')
-            page.evaluate('rig.advance(.5,{x:-1,y:-1},false)')
-            hand = page.evaluate("rig.point('hand')")
+        assert page.evaluate('rig.bodyGrabs()') == [None] * 6
+        sides = []
+        for side in ['左', '右']:
+            hand = page.evaluate("side => rig.point('hand',0,side)", side)
+            assert hand
+            before = page.evaluate('side => rig.armSnapshot(side)', side)
             page.evaluate("p => rig.send('begin',p,1)", hand)
             page.evaluate('p => rig.advance(.5,p)', hand)
+            assert page.evaluate('rig.touch.kind') == 'hold'
+            assert page.evaluate('rig.contact.hand').startswith(side)
+            assert page.evaluate('rig.grab.name || null') is None
+            sides.append(page.evaluate('rig.handPose.side'))
+            changes = page.evaluate('rig.handPoseDelta()')
+            assert len(changes) >= 3
+            assert sum(c['angle'] > .01 for c in changes) >= 3
+            assert all(c['movement'] < 1e-6 for c in changes)
+            pulled = {**hand, 'x': hand['x'] + .3, 'y': hand['y'] - .3}
+            page.evaluate("p => rig.send('update',p,.04)", pulled)
+            page.evaluate('p => rig.advance(1,p)', pulled)
             assert page.evaluate('rig.contact.engaged')
-            dance = next((ROOT / 'motions').rglob('IRIS OUT.vmd'))
-            url = '/vmd/' + quote(dance.relative_to(ROOT / 'motions').as_posix())
-            assert page.evaluate('url => window.__setMotion(url)', url)
-            assert page.evaluate('rig.poseDelta()') < 1e-6  # 舞蹈不叠加头/手互动姿态。
-            page.evaluate('rig.step()')
-            assert page.evaluate('rig.model.morphTargetInfluences.some(v=>v>.5)')
-            assert page.evaluate('rig.helper.enabled.physics')
-            page.evaluate("p => rig.send('cancel',p,.04)", hand)
-            reports = page.evaluate('reports')
-            beginnings = [r[0] for r in reports if r[2] == 'begin']
-            endings = [r[0] for r in reports if r[2] == 'end']
-            assert sorted(beginnings) == sorted(endings)
-            assert len(endings) == len(set(endings))
-            assert not errors
-        finally:
-            browser.close()
+            assert page.evaluate('rig.grab.offset') == pytest.approx([0, 0, 0], abs=1e-6)
+            after = page.evaluate('side => rig.armSnapshot(side)', side)
+            for start, end in zip(before, after):
+                assert start['name'] == end['name']
+                assert end['position'] == pytest.approx(start['position'], abs=.001)
+                assert end['length'] == pytest.approx(start['length'], abs=.001)
+            page.locator('canvas').screenshot(path=str(tmp_path / f'handshake-{side}.png'))
+            page.evaluate("p => rig.send('end',p,.04)", pulled)
+            page.evaluate('p => rig.advance(.5,p,false)', hand)
+            assert page.evaluate('rig.strength') == 0
+            assert not page.evaluate('rig.handPose.active')
+            assert page.evaluate('rig.poseDelta()') < 1e-6
+        assert sides[0] == -sides[1]
+        assert page.evaluate('rig.handMissing()') is None
+
+        arm = page.evaluate("rig.point('arm')")
+        assert arm
+        page.evaluate("p => rig.send('begin',p,1)", arm)
+        assert not page.evaluate('rig.contact.canHold')
+        assert page.evaluate('rig.contact.grab || null') is None
+        page.evaluate('p => rig.advance(.7,p)', arm)
+        assert not page.evaluate('rig.contact?.engaged || false')
+        page.evaluate("p => rig.send('cancel',p,.04)", arm)
+
+        sleeve = page.evaluate("rig.point('sleeve')")
+        assert sleeve
+        page.evaluate('p => rig.nativeTap(p)', sleeve)
+        assert page.evaluate('rig.bounce') == 0
+        page.evaluate('p => rig.advance(1.6,p,false)', sleeve)
+        page.evaluate("p => rig.send('begin',p,1)", sleeve)
+        assert page.evaluate('rig.bounce') == 0  # 接触按下不轻弹。
+        page.evaluate("p => rig.send('end',p,.05)", sleeve)
+        assert page.evaluate('rig.bounce') == 0  # 接触单点松手也不轻弹。
+        assert page.evaluate('rig.bounceAmplitude()') < 1e-6
+        page.evaluate("p => rig.send('begin',p,1)", sleeve)
+        assert not page.evaluate('rig.contact.canHold')
+        page.evaluate('p => rig.advance(.6,p)', sleeve)
+        assert page.evaluate('rig.touch.kind') == 'pull'
+        pulled = {**sleeve, 'x': sleeve['x'] + 0.08}
+        page.evaluate("p => rig.send('update',p,.04)", pulled)
+        page.evaluate('p => rig.advance(.2,p)', pulled)
+        assert page.evaluate('rig.grab.offset[0]') > 0.01
+        assert page.evaluate('rig.contact.engaged')  # 拉离原轮廓仍锁定抓取。
+        assert page.evaluate('rig.model.position.x') == 0
+        page.locator('canvas').screenshot(path=str(tmp_path / 'cloth-pull.png'))
+        page.evaluate("p => rig.send('end',p,.04)", sleeve)
+        page.evaluate('p => rig.advance(.6,p,false)', sleeve)
+        # Let the damped cloth spring settle before checking controller disposal.
+        page.evaluate('p => rig.advance(1.2,p,false)', sleeve)
+        assert page.evaluate('rig.grab.name || null') is None
+        assert max(abs(v) for v in page.evaluate('rig.grab.offset')) < .001
+
+        skirt = page.evaluate("rig.point('skirt')")
+        assert skirt
+        page.evaluate("p => rig.send('begin',p,1)", skirt)
+        page.evaluate('p => rig.advance(.5,p)', skirt)
+        skirt_pulled = {**skirt, 'x': skirt['x'] + .12, 'y': skirt['y'] - .04}
+        page.evaluate('p => rig.advance(.5,p)', skirt_pulled)
+        motion = page.evaluate('rig.patchMotion()')
+        assert motion['count'] >= 5  # 周围多根裙骨共同移动。
+        assert 0 < motion['max'] < .04 and motion['finite']
+        page.locator('canvas').screenshot(path=str(tmp_path / 'skirt-patch.png'))
+        page.evaluate("p => rig.send('end',p,.04)", skirt_pulled)
+        page.evaluate('p => rig.advance(2,p,false)', skirt)
+        assert page.evaluate('rig.grab.name || null') is None
+        assert max(abs(v) for v in page.evaluate('rig.grab.offset')) < .001
+
+        a, b = page.evaluate('rig.headPoints()')
+        page.evaluate("p => rig.send('begin',p,1)", a)
+        page.evaluate('p => rig.advance(.7,p)', b)
+        page.evaluate("rig.send('update',{x:-1,y:-1},.04)")
+        page.evaluate('rig.advance(.25,{x:-1,y:-1})')
+        assert page.evaluate('rig.contact') is None  # 离开部位结束接触。
+        page.evaluate("p => rig.send('end',p,.04)", a)
+
+        a = page.evaluate("rig.point('head')")
+        page.evaluate('p => rig.quickTap(p,1)', a)
+        assert page.evaluate('rig.bounce') == 0
+        assert page.evaluate('rig.bounceAmplitude()') < 1e-6
+        assert page.evaluate('rig.poseDelta()') > .001  # 保留轻点时的轻微点头反馈。
+        page.evaluate('p => rig.quickTap(p,.15)', a)
+        page.evaluate('p => rig.quickTap(p,.15)', a)
+        assert page.evaluate('rig.touch.kind') == 'dodge'
+        page.evaluate('p => rig.advance(4.1,p,false)', a)
+        page.evaluate("p => rig.send('begin',p,1)", a)
+        page.evaluate('p => rig.advance(.6,p,false)', a)
+        assert page.evaluate('rig.contact') is None  # 桥接停止也会收尾。
+        page.evaluate('rig.advance(1,{x:-1,y:-1},false)')
+        combos = page.evaluate('rig.reactions()')
+        assert all(first != second for first, second in zip(combos, combos[1:]))
+        page.evaluate('rig.advance(1,{x:-1,y:-1},false)')
+        a = page.evaluate("rig.point('head')")
+        page.evaluate('rig.morphsMissing(true)')
+        page.evaluate("p => rig.send('begin',p,1)", a)
+        page.evaluate('p => rig.advance(.7,p)', a)
+        page.evaluate("p => rig.send('end',p,.04)", a)
+        assert max(page.evaluate('rig.weights')) == 0
+        page.evaluate('rig.morphsMissing(false)')
+        page.evaluate('rig.advance(.5,{x:-1,y:-1},false)')
+        hand = page.evaluate("rig.point('hand')")
+        page.evaluate("p => rig.send('begin',p,1)", hand)
+        page.evaluate('p => rig.advance(.5,p)', hand)
+        assert page.evaluate('rig.contact.engaged')
+        dance = next((ROOT / 'motions').rglob('IRIS OUT.vmd'))
+        url = '/vmd/' + quote(dance.relative_to(ROOT / 'motions').as_posix())
+        assert page.evaluate('url => window.__setMotion(url)', url)
+        assert page.evaluate('rig.poseDelta()') < 1e-6  # 舞蹈不叠加头/手互动姿态。
+        page.evaluate('rig.step()')
+        assert page.evaluate('rig.model.morphTargetInfluences.some(v=>v>.5)')
+        assert page.evaluate('rig.helper.enabled.physics')
+        page.evaluate("p => rig.send('cancel',p,.04)", hand)
+        reports = page.evaluate('reports')
+        beginnings = [r[0] for r in reports if r[2] == 'begin']
+        endings = [r[0] for r in reports if r[2] == 'end']
+        assert sorted(beginnings) == sorted(endings)
+        assert len(endings) == len(set(endings))
+        assert not errors
+    finally:
+        page.close()

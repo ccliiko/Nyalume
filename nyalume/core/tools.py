@@ -350,6 +350,9 @@ def pet_status_snapshot() -> dict:
         "心情": data.get("feeling", ""),
         "当前动作": data.get("playing", ""),
         "可用舞蹈": data.get("motions", []),
+        "陪伴动画": data.get("animations", []),
+        "动画状态": data.get("animation", {}),
+        "可用表情": data.get("faces", []),
         "可用模型": data.get("models", []),
         "风格": data.get("style", ""),
         "视角": data.get("view", {}),
@@ -369,27 +372,33 @@ def pet_status_snapshot() -> dict:
     "不要为了普通聊天反复调用；舞蹈名称先用 pet_status 查看。每次只发一个动作，"
     "控制口确认的是接收指令，不代表画面已完成；连续指令会覆盖待播放动作。",
     {
-        "action": {"type": "string", "enum": ["dance", "idle", "face", "say", "look"],
-                   "description": "跳舞、回待机、表情、头顶气泡或视线"},
-        "value": {"type": "string", "description": "舞蹈完整名称；face 为 happy/shy/surprise/angry/sad/sleepy/calm/love；say 最多60字；look 为 左/右/上/下/前；idle 留空"},
+        "action": {"type": "string", "enum": ["dance", "idle", "face", "say", "look", "animation"],
+                   "description": "跳舞、回待机、表情、头顶气泡、视线或 Eku 陪伴动画"},
+        "value": {"type": "string", "description": "animation 和新增 face 名称先查 pet_status；基础 face 为 happy/shy/surprise/angry/sad/sleepy/calm/love；say 最多60字；look 为 左/右/上/下/前；idle 留空"},
     },
     required=["action"],
 )
 def _pet_perform(action: str, value: str = "") -> str:
     action = str(action or "").strip().lower()
-    if action not in ("dance", "idle", "face", "say", "look"):
-        return "桌宠动作无效；可选 dance / idle / face / say / look"
+    if action not in ("dance", "idle", "face", "say", "look", "animation"):
+        return "桌宠动作无效；可选 dance / idle / face / say / look / animation"
     value = str(value or "").strip()
     if action != "idle" and not value:
         return "请填写舞蹈名、表情名、气泡文字或视线方向"
     if action == "face" and value not in ("happy", "shy", "surprise", "angry", "sad", "sleepy", "calm", "love"):
-        return "桌宠表情无效；可选 happy / shy / surprise / angry / sad / sleepy / calm / love"
+        state = _pet_request("/pet_state")
+        if value not in state.get("faces", []):
+            return "桌宠表情无效；请用 pet_status 查看可用表情"
+    if action == "animation":
+        state = _pet_request("/pet_state")
+        if value not in {item['name'] for item in state.get('animations', [])}:
+            return "桌宠动画无效；请用 pet_status 查看可用陪伴动画"
     directions = {"左": (-0.5, 0), "右": (0.5, 0), "上": (0, -0.4), "下": (0, 0.4), "前": (0, 0)}
     if action == "look" and value not in directions:
         return "桌宠视线方向无效；可选 左 / 右 / 上 / 下 / 前"
     if action == "say":
         value = value[:60]
-    key = {"dance": "name", "face": "emotion", "say": "text"}.get(action)
+    key = {"dance": "name", "animation": "name", "face": "emotion", "say": "text"}.get(action)
     payload = {"action": action}
     if key:
         payload[key] = value

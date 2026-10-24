@@ -9,7 +9,7 @@
   #tip {
     position: fixed; left: 0; right: 0; bottom: 8px;
     font: 12px/1.6 system-ui, "Microsoft YaHei", sans-serif;
-    text-align: center; color: #d94f8a; text-shadow: 0 1px 3px rgba(255,255,255,.6);
+    text-align: center; color: #bc3f70; text-shadow: 0 1px 3px rgba(255,255,255,.6);
     pointer-events: none;
   }
 </style>
@@ -92,6 +92,7 @@ setTimeout(() => {
   }
 }, 4000);
 const pmx = webMode ? browserHost?.pmx : params.get('pmx');
+const isVRM = /\.vrm(?:$|[?#])/i.test(pmx || '');
 const scale = parseFloat(params.get('scale') || modelProfile.scale || '1') || 1;
 const yawOffset = THREE.MathUtils.degToRad(parseFloat(params.get('rz') || modelProfile.rotate || '0') || 0);
 const motionUrl = params.get('motion') || '';
@@ -139,9 +140,9 @@ const LIGHT_PRESETS = [
 let lightPreset = 0;
 // 菜单里直接切"组合"：用户挑出来的顺眼搭配。默认柔和 + 浓郁。
 const STYLE_PRESETS = [
-  { name: '柔和·浓郁', light: '柔和', grade: '浓郁' },
+  { name: isVRM ? '自然·柔和' : '柔和·浓郁', light: '柔和', grade: '浓郁' },
   { name: '柔和·鲜明', light: '柔和', grade: '鲜明' },
-  { name: '游戏味·浓郁', light: '游戏味（强对比+轮廓光）', grade: '浓郁' },
+  { name: isVRM ? '自然·轮廓' : '游戏味·浓郁', light: '游戏味（强对比+轮廓光）', grade: '浓郁' },
   { name: '游戏味·鲜明', light: '游戏味（强对比+轮廓光）', grade: '鲜明' },
   { name: '原版·无滤镜', light: '原版（平光）', grade: '关' },
 ];
@@ -164,6 +165,7 @@ function applyLightPreset(i) {
 }
 
 let model = null;
+let vrmRig = null;
 let helper = null;
 let loaderRef = null;
 let startupAssetsLoaded = false;
@@ -348,6 +350,7 @@ function buildGrabProxy() {
 
 function pickBone(nx, ny) {
   if (!model || !model.skeleton) return null;
+  if (vrmRig) return vrmRig.pick(nx, ny, camera);
   if (!grabProxy) grabProxy = buildGrabProxy();
   const t0 = performance.now();
   const W = renderer.domElement.clientWidth;
@@ -475,16 +478,14 @@ function applyLookPose(delta) {
     const lookBlend = frameBlend(0.12, delta);
     lookX += ((lookingBack ? 0 : lookTx) - lookX) * lookBlend;
     lookY += ((lookingBack ? 0 : lookTy) - lookY) * lookBlend;
+    const pitch = lookY * (vrmRig?.lookPitchSign ?? 1);
     const gestureAge = clock.elapsedTime - gesture.start;
     if (!mainAction && gestureAge >= 0 && gestureAge < 2.4 && gesture.kind) {
       const envelope = Math.sin(Math.PI * gestureAge / 2.4);
-      if (gesture.kind === 'wave' && lookBones.arm) {
-        lookBones.arm.rotateZ(-.7 * envelope);
-        if (lookBones.elbow) lookBones.elbow.rotateX(.3 * Math.sin(gestureAge * 12) * envelope);
-      }
       if (lookBones.head) {
         if (gesture.kind === 'nod') lookBones.head.rotateX(.16 * Math.sin(gestureAge * 8) * envelope);
-        else lookBones.head.rotateZ(.12 * Math.sin(gestureAge * 4) * envelope);
+        else if (gesture.kind === 'glance') lookBones.head.rotateY(.08 * Math.sin(gestureAge * 2) * envelope);
+        else lookBones.head.rotateZ(.06 * Math.sin(gestureAge * 4) * envelope);
       }
     }
     // helper 在动画之后保存干净骨骼，下一帧恢复，因此这里的附加旋转不累积。
@@ -492,16 +493,16 @@ function applyLookPose(delta) {
     // 光标在左 → 头前向 x 和眼球前向 x 都是负的，两个都朝画面左）。
     for (const eye of lookBones.eyes) {
       eye.rotateY(lookX);
-      eye.rotateX(lookY);
+      eye.rotateX(pitch);
     }
     // 脖子/头也跟一点点俯仰：只转眼球的话"跟不动"，看着像没在看她指的地方
     if (lookBones.neck) {
       lookBones.neck.rotateY(lookX * 0.35);
-      lookBones.neck.rotateX(lookY * 0.28);
+      lookBones.neck.rotateX(pitch * 0.28);
     }
     if (lookBones.head) {
       lookBones.head.rotateY(lookX * 0.25);
-      lookBones.head.rotateX(lookY * 0.20);
+      lookBones.head.rotateX(pitch * 0.20);
       if (!mainAction) {
         lookBones.head.rotateZ(contactStrength * (contactPoseRegion === 'head' ? 0.065 : 0.025));
         lookBones.head.rotateX(contactStrength * 0.04);
@@ -521,7 +522,8 @@ function applyLookPose(delta) {
       heldArm.shoulder?.rotateZ(strength * side * .025);
       heldArm.arm?.rotateX(-strength * .12);
       heldArm.arm?.rotateZ(strength * side * .08);
-      heldArm.elbow?.rotateX(-strength * (.32 + sway));
+      if (vrmRig) heldArm.elbow?.rotateY(-strength * side * (.22 + sway));
+      else heldArm.elbow?.rotateX(-strength * (.32 + sway));
       heldHand.rotateZ(strength * side * .08);
       heldHand.rotateX(strength * sway);
     }
@@ -532,17 +534,19 @@ function tickFrame() {
   const delta = Math.min(clock.getDelta(), 0.05);
   lookFrameDelta = delta;
   if (model) {
+    vrmRig?.reset(clock.elapsedTime);
+    updatePointerAttention();
     updateContact(delta);
     const t = clock.elapsedTime;
     if (t >= touch.until && touch.kind !== 'idle') touch.kind = t < touch.attentionUntil ? 'linger' : 'idle';
     touch.dodge += ((touch.kind === 'dodge' && !mainAction ? 1 : 0) - touch.dodge) * frameBlend(0.12, delta);
     let py = baseY;
     // 没有动作时靠这点摆动撑着；有动作就交给 VMD，别两边打架
-    if (!hasClip) py += Math.sin(t * 1.3) * height * 0.004;
+    if (!hasClip && !vrmRig) py += Math.sin(t * 1.3) * height * 0.004;
     // 视角：右键拖动转，松手后带一点惯性（缩放走窗口尺寸，不在这动相机）
     viewYaw += spinVel * delta * 60;
     spinVel *= frameDecay(0.86, delta);
-    model.rotation.y = yawOffset + viewYaw + (hasClip ? 0 : Math.sin(t * 0.45) * 0.06);
+    model.rotation.y = yawOffset + viewYaw + (hasClip || vrmRig ? 0 : Math.sin(t * 0.45) * 0.06);
     if (reactLeft > 0) {
       reactLeft = Math.max(0, reactLeft - delta);
       py += Math.sin(t * 22) * height * 0.02 * (reactLeft / 0.5);
@@ -608,9 +612,14 @@ function tickFrame() {
       }
     }
   }
+  if (vrmRig) {
+    applyLookPose(delta);
+    vrmRig.update(delta, clock.elapsedTime);
+  }
   updateBubblePosition();
   updateTouchParticles();
   renderer.render(scene, camera);
+  renderMagnifier(delta);
   renderedStartupReady = startupInitialized && startupAssetsLoaded && !window.__nyalumeStartup?.failed;
   boxDirty = false; // 新尺寸已经画出来了，可以继续推帧
 }
@@ -672,6 +681,35 @@ function updateBubblePosition() {
 }
 
 let gesture = {kind: '', start: 0};
+const pointerAttention = {near: false, since: 0, noticed: false};
+function noticePointer(pointer) {
+  const now = clock.elapsedTime;
+  if (!pointer?.active || quietMode || contact || mainAction || menuSprite?.visible || !lookBones?.head
+      || !Number.isFinite(pointer.x) || !Number.isFinite(pointer.y)) {
+    pointerAttention.near = false;
+    return;
+  }
+  const head = lookBones.head.getWorldPosition(new THREE.Vector3());
+  head.y += height * .045;
+  const radius = height * .085 * pixelsPerUnit(head.z) / renderer.getPixelRatio();
+  head.project(camera);
+  const x = pointer.x * baseW, y = pointer.y * baseH;
+  const near = Math.abs(x - (head.x + 1) * baseW / 2) < radius * 2.2
+    && Math.abs(y - (1 - head.y) * baseH / 2) < radius * 1.25;
+  if (near && !pointerAttention.near) {
+    pointerAttention.since = now; pointerAttention.noticed = false;
+  }
+  pointerAttention.near = near;
+}
+function updatePointerAttention() {
+  if (!pointerAttention.near || quietMode || contact || mainAction || menuSprite?.visible
+      || clock.elapsedTime - gesture.start < 2.4 || Date.now() - lastTouch < 3000) return;
+  if (!pointerAttention.noticed && clock.elapsedTime - pointerAttention.since >= .6) {
+    pointerAttention.noticed = true;
+    gesture = {kind: 'nod', start: clock.elapsedTime};
+    touch.attentionUntil = clock.elapsedTime + 1.2;
+  }
+}
 const touchParticles = [];
 const particleTextures = new Map();
 function burstTouch(symbol) {
@@ -712,12 +750,14 @@ function updateTouchParticles() {
     item.sprite.material.opacity = Math.max(0, 1 - age / 1.8);
   }
 }
-window.__interact = function(kind) {
-  if (!model || !['pat', 'wave', 'nod', 'cheer'].includes(kind)) return false;
+window.__interact = function(kind, silent = false) {
+  if (!model || contact || !['pat', 'nod', 'cheer'].includes(kind)) return false;
   gesture = {kind, start: clock.elapsedTime}; lastTouch = Date.now();
   if (kind === 'pat') window.__touch('head');
-  else {
-    window.__react(kind === 'wave' ? 'hand' : 'head', '', kind === 'cheer' ? '✨' : '♡');
+  else if (!silent) {
+    window.__react('head', '', kind === 'cheer' ? '✨' : '♡');
+  } else {
+    window.__face('happy', 1.4);
   }
   return true;
 };
@@ -837,18 +877,17 @@ setInterval(() => {
 
 // 待机自发小动作：没人碰的时候过一会儿自己动一下（换个重心、看看别处、待久了犯困）
 function idleBeat() {
-  if (quietMode || contact) { // 互动时不抢表情，也不自己冒泡
+  if (quietMode || contact || menuSprite?.visible || pointerAttention.near) {
     scheduleIdleBeat();
     return;
   }
   const quietSecs = (Date.now() - lastTouch) / 1000;
   if (quietSecs > 8 && !mainAction && model) {
     if (quietSecs > 150) {
-      window.__react('belly', '', 'zzz');
+      if (vrmRig) window.__face('blink', .6);
+      else window.__react('belly', '', 'zzz');
     } else {
-      const regions = ['head', 'chest', 'hand', 'belly', 'skirt'];
-      // 跟单击一样：弹一下 + 表情（__react 里已经带了弹跳）
-      window.__react(regions[Math.floor(Math.random() * regions.length)], '');
+      gesture = {kind: Math.random() < .7 ? 'glance' : 'nod', start: clock.elapsedTime};
     }
   }
   scheduleIdleBeat();
@@ -1010,7 +1049,8 @@ function reactionNames(region) {
   const dict = model?.morphTargetDictionary || {};
   const custom = modelProfile.expressions?.[region];
   if (custom) return custom; // 空数组是用户明确关闭此反馈。
-  const available = (REACT_POOLS[region] || []).filter(names => names.some(name => dict[name] !== undefined));
+  const available = (vrmRig?.reactions[region] || REACT_POOLS[region] || [])
+    .filter(names => names.some(name => dict[name] !== undefined));
   const different = available.filter(names => names.join('+') !== lastReactCombo);
   const pool = different.length ? different : available;
   return pool.length ? pool[Math.floor(Math.random() * pool.length)] : [];
@@ -1035,7 +1075,7 @@ window.__react = function (region, text, symbol = '') {
   window.__lastReact = [region, combo.join('+')];
   reactLevel = 1;
   reactHold = REACT_HOLD;
-  reactLeft = region === 'head' || mainAction ? 0 : 0.5;
+  reactLeft = 0;
   if (text) showBubble(text);
   else if (symbol) burstTouch(symbol);
   else touchSymbol(region);
@@ -1070,8 +1110,12 @@ window.__touch = function (region, reuseReaction = false) {
     if (!reuseReaction) window.__react(region, '');
     if (region === 'head') { headTapAt = now; reactHold = 0.95; }
   }
-  // 摸头只轻微点头，不把整个人当球弹；其他部位保留轻点弹动。
-  reactLeft = region === 'head' || mainAction ? 0 : 0.5;
+  // 触碰以局部关节回应，脚底保持稳定。
+  reactLeft = 0;
+  if (region === 'face' && touch.kind !== 'dodge') {
+    window.__face('blink', .25);
+    gesture = {kind: 'glance', start: now};
+  }
   return true;
 };
 
@@ -1245,6 +1289,8 @@ window.__interaction = async function(action) {
     return;
   }
   if (action.phase === 'begin') {
+    pointerAttention.near = false;
+    gesture.kind = '';
     const ended = finishContact(true);
     if (ended) await petApi()?.interaction_info?.(ended.id, ended.region, ended.phase);
     if (!model) return;
@@ -1265,7 +1311,7 @@ window.__interaction = async function(action) {
     if (!dodging) { touch.kind = 'notice'; touch.until = clock.elapsedTime + 0.95; }
     touch.attentionUntil = clock.elapsedTime + 3;
     if (!dodging) window.__react(region, '');
-    reactLeft = 0; // Alt 互动按下时也不触发整体轻弹。
+    reactLeft = 0;
     lastTouch = Date.now();
     await petApi()?.interaction_info?.(action.id, region, 'begin');
     return;
@@ -1294,22 +1340,29 @@ window.__interaction = async function(action) {
 
 // agent 用情绪名指挥表情：happy / shy / surprise / angry / sad / sleepy / calm / love，
 // 也可以直接传部位名（head/face/chest/...）。困了就额外飘个 zzz。
-window.__face = function (emotion) {
+window.__face = function (emotion, duration = REACT_HOLD) {
   const key = String(emotion || 'happy').toLowerCase();
-  const custom = modelProfile.expressions?.[key];
+  if (key === 'neutral') { reactMorphs = []; reactHold = 0; return true; }
+  const hold = Number.isFinite(duration) ? THREE.MathUtils.clamp(duration, 0.2, 10) : REACT_HOLD;
+  const custom = modelProfile.expressions?.[key] ?? vrmRig?.emotions[key]
+    ?? (key === 'blink' ? ['まばたき'] : undefined);
   if (custom) {
     const dict = model?.morphTargetDictionary || {};
     reactMorphs = custom.map(name => dict[name]).filter(index => index !== undefined);
     reactLevel = 1;
-    reactHold = REACT_HOLD;
-    return true;
+    reactHold = hold;
+    if (key === 'sleepy') burstTouch('zzz');
+    return reactMorphs.length > 0;
   }
   const region = REACT_POOLS[key] ? key : (EMOTION_TO_REGION[key] || 'head');
   if (key === 'sleepy') {
     window.__react(region, '', 'zzz');
+    reactHold = hold;
     return true;
   }
-  return window.__react(region, '');
+  const result = window.__react(region, '');
+  if (result) reactHold = hold;
+  return result;
 };
 
 // 单击：Python 把点击位置归一化发过来，这里当场判定戳到哪儿 + 给反应。
@@ -1352,13 +1405,122 @@ let gradeIndex = 0;
 const gradeCanvas = document.createElement('canvas');
 const gradeCtx = gradeCanvas.getContext('2d');
 
+// The native viewer is shared with Unity; this renderer supplies its own crop.
+const magnifierCamera = new THREE.PerspectiveCamera();
+const magnifierCenter = new THREE.Vector2();
+const magnifierVelocity = new THREE.Vector2();
+const magnifierPoint = new THREE.Vector3();
+const magnifierCanvas = document.createElement('canvas');
+magnifierCanvas.width = magnifierCanvas.height = 256;
+const magnifierCtx = magnifierCanvas.getContext('2d');
+const magnifierGraded = document.createElement('canvas');
+magnifierGraded.width = magnifierGraded.height = 256;
+const magnifierGradeCtx = magnifierGraded.getContext('2d');
+let magnifierEnabled = false, magnifierMoving = false, magnifierAnchor = null;
+let magnifierLocalPoint = new THREE.Vector3(), magnifierTarget = null;
+let magnifierPixels = null, magnifierImage = null, magnifierNext = 0, magnifierSending = false;
+let magnifierRequest = 0, magnifierSentAt = 0;
+
+window.__magnifier = function(action) {
+  if (!model) return;
+  model.updateMatrixWorld(true); camera.updateMatrixWorld(true);
+  if (action.kind === 'magnifier') {
+    magnifierEnabled = Boolean(action.value); magnifierMoving = false;
+    if (magnifierEnabled) {
+      magnifierAnchor = lookBones?.head || model;
+      magnifierPoint.copy(magnifierAnchor.getWorldPosition(new THREE.Vector3()));
+      magnifierPoint.y += height * .065;
+      magnifierLocalPoint.copy(magnifierAnchor.worldToLocal(magnifierPoint.clone()));
+      magnifierPoint.project(camera);
+      magnifierCenter.set((magnifierPoint.x+1)/2,(1-magnifierPoint.y)/2);
+      magnifierVelocity.set(0,0); magnifierNext = 0;
+    }
+  } else if (action.kind === 'magnifier_move') {
+    magnifierMoving = Boolean(action.value);
+  } else if (action.kind === 'magnifier_select') {
+    magnifierCenter.set(THREE.MathUtils.clamp(action.x,0,1),THREE.MathUtils.clamp(action.y,0,1));
+    magnifierVelocity.set(0,0); magnifierNext = 0;
+    if (action.phase === 'end') {
+      const hit = pickBone(magnifierCenter.x,magnifierCenter.y);
+      if (hit) {
+        magnifierAnchor = hit.anchorBone || hit.bone;
+        magnifierLocalPoint.copy(magnifierAnchor.worldToLocal(hit.world.clone()));
+      } else if (magnifierAnchor) {
+        magnifierPoint.copy(magnifierLocalPoint); magnifierAnchor.localToWorld(magnifierPoint);
+        magnifierPoint.project(camera);
+        magnifierPoint.set(magnifierCenter.x*2-1,1-magnifierCenter.y*2,magnifierPoint.z).unproject(camera);
+        magnifierLocalPoint.copy(magnifierAnchor.worldToLocal(magnifierPoint));
+      }
+    }
+  }
+};
+
+function renderMagnifier(delta) {
+  const api = petApi()?.set_magnifier_frame;
+  if (!magnifierEnabled || !model || !api) return;
+  const span = [256/(renderer.domElement.width*3),256/(renderer.domElement.height*3)];
+  if (!magnifierMoving && magnifierAnchor) {
+    magnifierPoint.copy(magnifierLocalPoint); magnifierAnchor.localToWorld(magnifierPoint);
+    if (magnifierPoint.clone().applyMatrix4(camera.matrixWorldInverse).z >= 0) return;
+    magnifierPoint.project(camera);
+    const tracked = [(magnifierPoint.x+1)/2,(1-magnifierPoint.y)/2];
+    const omega = 2/.2, step = omega*delta;
+    const decay = 1/(1+step+.48*step*step+.235*step*step*step);
+    for (let i=0;i<2;i++) {
+      const current = magnifierCenter.getComponent(i), difference = tracked[i]-current;
+      const distance = Math.max(0,Math.abs(difference)-span[i]*.3);
+      if (!distance) { magnifierVelocity.setComponent(i,0); continue; }
+      const goal = current+Math.sign(difference)*distance;
+      const change = current-goal, temp = (magnifierVelocity.getComponent(i)+omega*change)*delta;
+      magnifierVelocity.setComponent(i,(magnifierVelocity.getComponent(i)-omega*temp)*decay);
+      magnifierCenter.setComponent(i,goal+(change+temp)*decay);
+    }
+  }
+  const now = performance.now();
+  if (now<magnifierNext || (magnifierSending && now-magnifierSentAt<2000)) return;
+  magnifierNext=now+1000/30;
+  if (!magnifierTarget) {
+    magnifierTarget = new THREE.WebGLRenderTarget(256,256,{samples:2});
+    magnifierTarget.texture.colorSpace = THREE.SRGBColorSpace;
+    magnifierPixels = new Uint8Array(256*256*4);
+    magnifierImage = magnifierCtx.createImageData(256,256);
+  }
+  magnifierCamera.copy(camera,false);
+  const crop = new THREE.Matrix4().makeScale(1/span[0],1/span[1],1);
+  crop.elements[12]=-(magnifierCenter.x*2-1)/span[0];
+  crop.elements[13]=-(1-magnifierCenter.y*2)/span[1];
+  magnifierCamera.projectionMatrix.premultiply(crop);
+  magnifierCamera.projectionMatrixInverse.copy(magnifierCamera.projectionMatrix).invert();
+  const overlays = [bubble,menuSprite,...touchParticles.map(p=>p.sprite)].filter(Boolean);
+  const visibility = overlays.map(o=>o.visible), previousTarget = renderer.getRenderTarget();
+  try {
+    overlays.forEach(o=>{o.visible=false;});
+    renderer.setRenderTarget(magnifierTarget); renderer.render(scene,magnifierCamera);
+    renderer.readRenderTargetPixels(magnifierTarget,0,0,256,256,magnifierPixels);
+  } finally {
+    renderer.setRenderTarget(previousTarget); overlays.forEach((o,i)=>{o.visible=visibility[i];});
+  }
+  for(let y=0;y<256;y++) magnifierImage.data.set(magnifierPixels.subarray((255-y)*1024,(256-y)*1024),y*1024);
+  magnifierCtx.putImageData(magnifierImage,0,0);
+  magnifierGradeCtx.filter = GRADE_FILTERS[gradeIndex].css;
+  magnifierGradeCtx.clearRect(0,0,256,256); magnifierGradeCtx.drawImage(magnifierCanvas,0,0);
+  const region = [magnifierCenter.x,magnifierCenter.y,...span], request = ++magnifierRequest;
+  magnifierSending=true; magnifierSentAt=now;
+  Promise.resolve(api(magnifierGraded.toDataURL('image/png').split(',')[1],region))
+    .catch(error=>console.warn('放大镜画面传送失败：'+error))
+    .finally(()=>{if(request===magnifierRequest)magnifierSending=false;});
+}
+
 function applyStyle(i) {
   const s = STYLE_PRESETS[i];
-  const li = LIGHT_PRESETS.findIndex((p) => p.name === s.light);
+  const li = isVRM && s.light.startsWith('游戏味') ? 2 : LIGHT_PRESETS.findIndex((p) => p.name === s.light);
   const gi = GRADE_FILTERS.findIndex((p) => p.name === s.grade);
   lightPreset = li < 0 ? 0 : li;
   gradeIndex = gi < 0 ? 0 : gi;
   applyLightPreset(lightPreset);
+  const enhancedVRM = vrmRig && params.get('vrmLook') !== 'original' && i !== 4;
+  vrmRig?.style?.(Boolean(enhancedVRM));
+  // Preserve the chosen palette and lighting; refine MToon materials separately.
   if (webMode) renderer.domElement.style.filter = GRADE_FILTERS[gradeIndex].css;
   const api = petApi();
   // 让 /pet_state 说得出当前风格，并存盘（换模型要重启，风格不能丢）
@@ -1508,6 +1670,21 @@ async function start(mesh, loader) {
   const missingMorphs = [...new Set(Object.values(modelProfile.expressions || {}).flat())]
     .filter(name => mesh.morphTargetDictionary[name] === undefined);
   if (missingMorphs.length) console.warn('模型配置中不存在的表情：' + missingMorphs.join('、'));
+  if (vrmRig) {
+    vrmRig.reset();
+    applyStyle(stylePreset);
+    vrmRig.initializePhysics();
+    const bone = name => mesh.skeleton.bones.find(b => b.name === name);
+    lookBones = { eyes: ['左目', '右目'].map(bone).filter(Boolean),
+      neck: bone('首'), head: bone('頭') };
+    scheduleIdleBeat();
+    tip.textContent = '';
+    startupInitialized = true;
+    window.__nyalumeStartup?.stage(startupAssetsLoaded ? 'display' : 'model');
+    tick();
+    if (webMode) petApi()?.ready?.();
+    return;
+  }
   // 拆包模型的材质色阶不统一：洛茜整套是 diffuse 0.87 / ambient 0.67，其他模型都是
   // 1.0 / 0.5 —— 渲染出来就是"灰蒙蒙、塑料感"。基准只统计**有贴图的材质**：
   // three 只对这类材质做 emissive *= 0.2（没贴图的保留原 ambient），混在一起算会偏。
@@ -1557,8 +1734,6 @@ async function start(mesh, loader) {
       mesh.skeleton.bones.find((b) => b.name === '左目'),
       mesh.skeleton.bones.find((b) => b.name === '右目'),
     ].filter(Boolean),
-    arm: mesh.skeleton.bones.find(b => b.name === '右腕'),
-    elbow: mesh.skeleton.bones.find(b => b.name === '右ひじ'),
     neck: mesh.skeleton.bones.find((b) => b.name === '首'),
     head: mesh.skeleton.bones.find((b) => b.name === '頭'),
   };
@@ -1673,6 +1848,7 @@ async function start(mesh, loader) {
 // 给 Python 侧（stdin 命令）用的运行期动作切换：url 传空表示回到 idle
 let motionRequest = 0;
 window.__setMotion = async function (url) {
+  if (vrmRig) return !url; // VMD tracks address MMD bones, not a VRM humanoid.
   const request = ++motionRequest;
   if (!model || !helper || !loaderRef) return false;
   try {
@@ -1758,10 +1934,12 @@ window.__menu = function (items) {
   const font = `500 ${fontSize}px "Microsoft YaHei", system-ui, sans-serif`;
   const meas = document.createElement('canvas').getContext('2d');
   meas.font = font;
-  const textW = Math.max(0, ...items.map(it => meas.measureText(it.label).width));
+  const labels = items.map(it => it.label.replaceAll(' ▸', '').replace('← ', '')
+    .replace('‹ ', '').replace(' ›', '').replace(/^[　●▶ ]+/, ''));
+  const textW = Math.max(0, ...labels.map(label => meas.measureText(label).width));
   const width = Math.ceil(Math.min(frameW - pad * 2, 252 * dpr,
     Math.max(204 * dpr, textW + pad * 4)));
-  const height2 = items.length * rowH + pad * 2;
+  const height2 = items.length * rowH + pad * 2 + (items.some(it => it.id === 'quit') ? 8 * dpr : 0);
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height2;
@@ -1778,30 +1956,64 @@ window.__menu = function (items) {
   g.textBaseline = 'middle';
   const shorten = (label, maxWidth) => {
     if (g.measureText(label).width <= maxWidth) return label;
+    if (g.measureText('…').width > maxWidth) return '';
     const chars = [...label];
     while (chars.length && g.measureText(chars.join('') + '…').width > maxWidth) chars.pop();
     return chars.join('') + '…';
   };
+  const rowPositions = [];
+  let rowY = pad;
+  const arrow = (x, y, direction, color) => {
+    g.strokeStyle = color; g.lineWidth = 2 * dpr;
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    g.beginPath();
+    g.moveTo(x - direction * 2 * dpr, y - 3 * dpr);
+    g.lineTo(x + direction * dpr, y);
+    g.lineTo(x - direction * 2 * dpr, y + 3 * dpr);
+    g.stroke();
+  };
   items.forEach((item, i) => {
-    const y = pad + rowH * i;
+    if (item.id === 'quit') {
+      g.strokeStyle = 'rgba(122,104,117,0.18)'; g.lineWidth = dpr;
+      g.beginPath(); g.moveTo(pad * 2, rowY + 3 * dpr);
+      g.lineTo(width - pad * 2, rowY + 3 * dpr); g.stroke();
+      rowY += 8 * dpr;
+    }
+    const y = rowY;
+    rowPositions.push(y); rowY += rowH;
+    const label = labels[i];
     const selected = /^[●▶]/.test(item.label);
     if (selected) {
       g.fillStyle = 'rgba(198,95,142,0.12)';
       g.beginPath();
       g.roundRect(pad, y + 2 * dpr, width - pad * 2, rowH - 4 * dpr, 6 * dpr);
       g.fill();
+      g.fillStyle = '#923660';
+      g.beginPath(); g.arc(pad + 5 * dpr, y + rowH / 2, 2 * dpr, 0, Math.PI * 2); g.fill();
     }
-    g.fillStyle = selected ? '#923660' : item.id === 'quit' ? '#7a6875' : '#34313e';
+    const color = selected ? '#923660' : ['quit', 'none'].includes(item.id) ? '#675763' : '#34313e';
+    g.fillStyle = color;
     if (item.id === 'style') {
-      g.textAlign = 'left';
-      g.fillText('‹', pad * 2, y + rowH / 2);
+      arrow(pad * 2, y + rowH / 2, -1, color);
+      arrow(width - pad * 2, y + rowH / 2, 1, color);
       g.textAlign = 'center';
-      g.fillText(item.label, width / 2, y + rowH / 2);
-      g.textAlign = 'right';
-      g.fillText('›', width - pad * 2, y + rowH / 2);
+      g.fillText(label, width / 2, y + rowH / 2);
       g.textAlign = 'left';
     } else {
-      g.fillText(shorten(item.label, width - pad * 4), pad * 2, y + rowH / 2);
+      const back = /^[←‹]/.test(item.label);
+      const forward = item.id.startsWith('page:') && !back;
+      const textX = pad * 2 + (back ? 10 * dpr : selected ? 3 * dpr : 0);
+      const right = width - pad * 2 - (forward ? 12 * dpr : 0);
+      if (back || forward) arrow(back ? pad * 2 + 2 * dpr : width - pad * 2 - 2 * dpr,
+        y + rowH / 2, back ? -1 : 1, '#675763');
+      const detail = shorten(String(item.detail || ''), Math.min(82 * dpr,
+        Math.max(0, right - textX - g.measureText(label).width - 12 * dpr)));
+      const available = right - textX - (detail ? g.measureText(detail).width + 12 * dpr : 0);
+      g.fillText(shorten(label, available), textX, y + rowH / 2);
+      if (detail) {
+        g.fillStyle = '#675763'; g.textAlign = 'right';
+        g.fillText(detail, right, y + rowH / 2); g.textAlign = 'left';
+      }
     }
   });
   const texture = new THREE.CanvasTexture(canvas);
@@ -1831,7 +2043,7 @@ window.__menu = function (items) {
   const rects = items.map((item, i) => ({
     id: item.id,
     x: rect.x + pad * fit,
-    y: rect.y + (pad + i * rowH) * fit,
+    y: rect.y + rowPositions[i] * fit,
     w: rect.w - pad * 2 * fit,
     h: rowH * fit,
   }));
@@ -1875,15 +2087,16 @@ async function pullActions() {
   // 这几类不该关菜单：视线跟随每 40ms 就来一条；她主动搭话/做个表情是"自己冒出来的"，
   // 正在右键浏览菜单时被气泡挤掉很烦（用户反馈）。菜单自己选完会用 menu_close 关。
   // 换风格要连点（菜单那行左右半边），所以 style/style_step 也不能关菜单
-  const keepMenu = ['menu', 'look', 'say', 'face', 'style', 'style_step'].includes(action.kind);
+  const keepMenu = ['menu', 'look', 'say', 'face', 'style', 'style_step', 'magnifier', 'magnifier_move', 'magnifier_select'].includes(action.kind);
   if (!keepMenu) window.__menu_close();
-  if (action.kind === 'interaction') {
+  if (action.kind.startsWith('magnifier')) {
+    window.__magnifier(action);
+  } else if (action.kind === 'interaction') {
     await window.__interaction(action);
   } else if (action.kind === 'motion') {
     window.__setMotion(action.url || '');
   } else if (action.kind === 'tap') {
     const region = window.__tap(action.x, action.y);
-    if (region && action.bounce && !mainAction && touch.kind !== 'dodge') reactLeft = .5;
     const tapi = petApi();
     if (tapi && tapi.tap_info) tapi.tap_info(region || '-');
   } else if (action.kind === 'interact') {
@@ -1921,7 +2134,7 @@ async function pullActions() {
       await api.proactive_displayed(action.delivery_id);
     }
   } else if (action.kind === 'face') {
-    window.__face(action.emotion);
+    window.__face(action.emotion, action.duration);
   } else if (action.kind === 'quiet') {
     quietMode = Boolean(action.value);
   } else if (action.kind === 'ik') {
@@ -1930,6 +2143,7 @@ async function pullActions() {
     const m = petApi();
     if (m && m.switch_model) m.switch_model(action.index);
   } else if (action.kind === 'look') {
+    noticePointer(action.pointer);
     // 光标位置 → 视线目标（右边看右、上面看上；符号在测试里校准过）
     // 幅度按用户反馈收小（眼睛 ±11°、竖直 ±9°）：原来是 ±17°/±15°，眼睛转得太满，
     // 而且眼球转到底会顶出色块。脖子/头仍按比例跟。
@@ -1948,7 +2162,7 @@ async function pullActions() {
     // 松手再弹回来就是"回弹/卡顿"。缩小幅度后回弹几乎看不见，甩动主要来自速度。
     dragLag.tx = THREE.MathUtils.clamp((-action.dx / unit) * 1.8, -0.55, 0.55);
     dragLag.ty = THREE.MathUtils.clamp((action.dy / unit) * 1.8, -0.45, 0.45);
-    // 普通左键长按拖动只做整体惯性；局部抓取由 Alt＋左键负责。
+    // Alt＋左键搬动只做整体惯性；普通左键负责局部接触。
     leanTgt = THREE.MathUtils.clamp((action.dx / unit) * 0.14, -0.35, 0.35);
   } else if (action.kind === 'menu') {
     window.__menu(action.items);
@@ -2004,6 +2218,8 @@ window.__dispose = () => {
       material.dispose();
     }
   });
+  vrmRig?.disposeMaterials?.();
+  magnifierEnabled = false; magnifierTarget?.dispose();
   renderer.dispose(); renderer.forceContextLoss();
 };
 if (webMode) {
@@ -2055,6 +2271,19 @@ if (!pmx) {
   };
   manager.onError = url => window.__nyalumeStartup?.failure('资源加载失败：' + url);
   if (webMode) manager.setURLModifier(browserHost.resolve);
+  if (isVRM) {
+    import('./vrm.js').then(async ({ loadVRM }) => {
+      vrmRig = await loadVRM(pmx, manager, usePhysics);
+      vrmRig.initializeMaterials?.(renderer);
+      vrmRig.reset();
+      vrmRig.update(0, 0);
+      await start(vrmRig.model, null);
+    }).catch(err => {
+      tip.textContent = 'VRM 加载失败：' + err;
+      window.__nyalumeStartup?.failure(tip.textContent);
+      petApi()?.failure?.(tip.textContent);
+    });
+  } else {
   const loader = new MMDLoader(manager);
   loader.load(
     pmx,
@@ -2070,6 +2299,7 @@ if (!pmx) {
       petApi()?.failure?.(tip.textContent);
     },
   );
+  }
 }
 </script>
 </body>

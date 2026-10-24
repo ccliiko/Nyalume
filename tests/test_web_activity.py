@@ -21,8 +21,10 @@ def test_activity_counter_tracks_overlapping_runs():
     server._active_runs = 0
     server._pet_tap_seq = 0
     server._pet_meow_seq = 0
+    server._pet_emotion = {"seq": 0, "emotion": "", "at": 0.0}
     assert server.activity_state() == {
         "working": False, "pet_tap_seq": 0, "pet_meow_seq": 0,
+        "pet_emotion": {"seq": 0, "emotion": "", "at": 0.0},
     }
     server._change_activity(1)
     server._change_activity(1)

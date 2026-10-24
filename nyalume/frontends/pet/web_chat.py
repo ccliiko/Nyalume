@@ -15,6 +15,8 @@ import time
 import traceback
 import webbrowser
 
+from .startup_animation import StartupAnimation
+
 WEB_PORT = 8000
 SERVER_LAST_ERROR = {"msg": ""}
 _REPO_ROOT = os.path.dirname(
@@ -97,6 +99,7 @@ class WebChat:
         self._reply_text = ""
         self._proc = None
         self._visible = False
+        self._startup = None
         from nyalume.core import memory
         self._sid = None if fantasy else memory.daily_session()
         self._fresh = False
@@ -177,7 +180,11 @@ class WebChat:
 
     def show(self) -> bool:
         if not self._alive():
+            startup = StartupAnimation(self._plog, kind="chat")
+            self._startup = startup
+            startup.__enter__()
             if not start_web_server_if_needed():
+                startup.close()
                 self._plog(
                     "server start FAILED: "
                     + (SERVER_LAST_ERROR["msg"] or "unknown")
@@ -185,6 +192,7 @@ class WebChat:
                 )
                 return False
             self._plog("server ok, spawning child")
+            startup.send("stage", stage="model")
             if getattr(sys, "frozen", False):
                 args = [
                     sys.executable,
@@ -200,18 +208,22 @@ class WebChat:
                     "--url",
                     self._window_url(),
                 ]
-            self._proc = subprocess.Popen(
-                args,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=open(self._errlog, "a", encoding="utf-8"),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
+            try:
+                with open(self._errlog, "a", encoding="utf-8") as errors:
+                    self._proc = subprocess.Popen(
+                        args,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=errors,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+            except Exception:
+                startup.close()
+                raise
             self._plog(f"child pid={self._proc.pid}")
             self._visible = True
             self._fresh = True
-            # 不阻塞 Tk：后台稍后检查子进程是否秒退，退则退回默认浏览器
-            threading.Thread(target=self._watch_child, daemon=True).start()
+            threading.Thread(target=self._watch_child, args=(self._proc, startup), daemon=True).start()
         else:
             self._send("show")
             self._visible = True
@@ -236,16 +248,34 @@ class WebChat:
             self._send("session " + self._sid)
         return True
 
-    def _watch_child(self) -> None:
-        time.sleep(2.2)
-        if self._proc is not None and self._proc.poll() is not None:
-            self._plog(
-                f"child exited early rc={self._proc.returncode}, open browser"
-            )
+    def _watch_child(self, proc, startup) -> None:
+        """Finish the splash on actual page readiness, or clean it up on failure."""
+        ready = False
+        try:
+            for line in proc.stdout:
+                if not ready and line.strip() == b"nyalume-chat-loading":
+                    startup.send("stage", stage="display")
+                elif not ready and line.strip() == b"nyalume-chat-ready":
+                    ready = True
+                    startup.send("ready")
+                    animation_proc = startup.proc
+                    if animation_proc is not None:
+                        try:
+                            animation_proc.wait(timeout=2)
+                        except (subprocess.TimeoutExpired, OSError):
+                            pass
+                    startup.close()
+        finally:
+            proc.stdout.close()
+            startup.close()
+        if not ready and self._proc is proc and self._visible:
+            self._plog(f"child exited before page readiness rc={proc.poll()}, open browser")
             webbrowser.open(self._window_url())
             self._visible = False
 
     def hide(self) -> None:
+        if self._startup is not None:
+            self._startup.close()
         if self._alive():
             self._send("hide")
         self._visible = False
@@ -266,6 +296,9 @@ class WebChat:
 
 
     def close(self) -> None:
+        self._visible = False
+        if self._startup is not None:
+            self._startup.close()
         if self._alive():
             self._send("quit")
             try:

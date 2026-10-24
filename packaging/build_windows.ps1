@@ -1,7 +1,13 @@
 ﻿param(
-    [string]$Version = "0.45",
-    # 本机构建默认保留原有 2D 角色；无素材构建显式传 -PersonalAssets:$false。
+    [string]$Version = "0.5.2",
+    # 本机构建默认保留原有 2D 角色；排除 2D 素材显式传 -PersonalAssets:$false。
     [switch]$PersonalAssets = $true,
+    # README 允许注明作者后二配的模型，默认明文附带；不走 -WithModels 的私人素材流程。
+    [switch]$BundleMikuQ = $true,
+    [switch]$BundledEku = $true,
+    [string]$UnityPlayerSource = "",
+    [string]$BuildOutputRoot = "",
+    [switch]$SkipApplicationBuild,
     # 带模型/动作的个人版：-ModelSource 下含 .pmx 的模型目录全带，动作只带 -MotionPick 白名单
     [switch]$WithModels,
     # 本机素材根：模型和动作是分开的两个目录
@@ -23,6 +29,13 @@ $buildRoot = Join-Path $projectRoot "build"
 $distRoot = Join-Path $projectRoot "dist"
 $distDir = Join-Path $distRoot "Nyalume"
 $releaseRoot = Join-Path $projectRoot "release"
+if ($BuildOutputRoot) {
+    $BuildOutputRoot = [IO.Path]::GetFullPath($BuildOutputRoot)
+    $buildRoot = Join-Path $BuildOutputRoot "build"
+    $distRoot = Join-Path $BuildOutputRoot "dist"
+    $releaseRoot = Join-Path $BuildOutputRoot "release"
+}
+$distDir = Join-Path $distRoot "Nyalume"
 $packageName = "Nyalume-v$Version-windows-x64" + $(if ($PersonalAssets) { "" } else { "-no-2d" }) + $(if ($WithModels) { "-models" } else { "" })
 $releaseDir = Join-Path $releaseRoot $packageName
 $zipPath = Join-Path $releaseRoot "$packageName.zip"
@@ -31,9 +44,37 @@ if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
     throw "找不到 .venv Python：$python"
 }
 
+if ($BundledEku) {
+    if (-not $UnityPlayerSource) {
+        $UnityPlayerSource = Join-Path $projectRoot "build\eku-v052-release\player"
+    }
+    foreach ($file in @("EkuPlayer.exe", "pose.json", "manifest.json", "Eku-LICENSE-ja.pdf",
+                        "EkuPlayer_Data\StreamingAssets\eku.bin", "EkuPlayer_Data\Plugins\x86_64\eku_decoder.dll")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $UnityPlayerSource $file) -PathType Leaf)) {
+            throw "内置 Eku 发行文件缺失：$file；请先运行 tools/build_eku_release.py"
+        }
+    }
+}
+
+$mikuSource = Join-Path $projectRoot "models\野餐式MikuQ"
+if ($BundleMikuQ) {
+    foreach ($file in @("野餐式MikuQ-1.1.pmx", "Readme.txt")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $mikuSource $file) -PathType Leaf)) {
+            throw "野餐式 MikuQ 随包文件缺失：$file"
+        }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $mikuSource "texture") -PathType Container)) {
+        throw "野餐式 MikuQ 贴图目录缺失"
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot "借物表.md") -PathType Leaf)) {
+        throw "野餐式 MikuQ 借物表缺失"
+    }
+}
+
 function Remove-ProjectItem([string]$Path) {
     $fullPath = [IO.Path]::GetFullPath($Path)
-    $rootPrefix = [IO.Path]::GetFullPath($projectRoot) + [IO.Path]::DirectorySeparatorChar
+    $allowedRoot = $(if ($BuildOutputRoot) { $BuildOutputRoot } else { $projectRoot })
+    $rootPrefix = [IO.Path]::GetFullPath($allowedRoot) + [IO.Path]::DirectorySeparatorChar
     if (-not $fullPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
         throw "拒绝清理项目目录之外的路径：$fullPath"
     }
@@ -46,12 +87,21 @@ function Remove-ProjectItem([string]$Path) {
     }
 }
 
-Remove-ProjectItem (Join-Path $buildRoot "Nyalume")
-Remove-ProjectItem $distDir
+if (-not $SkipApplicationBuild) {
+    Remove-ProjectItem (Join-Path $buildRoot "Nyalume")
+    Remove-ProjectItem $distDir
+} else {
+    foreach ($file in @("Nyalume2D.exe", "Nyalume3D.exe")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $distDir $file) -PathType Leaf)) {
+            throw "待复用的程序构建缺失：$file"
+        }
+    }
+}
 Remove-ProjectItem $releaseDir
 Remove-ProjectItem $zipPath
 New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
 
+if (-not $SkipApplicationBuild) {
 Push-Location $projectRoot
 $oldAssetSetting = $env:NYALUME_BUNDLE_PERSONAL_ASSETS
 try {
@@ -68,6 +118,7 @@ finally {
     $env:NYALUME_BUNDLE_PERSONAL_ASSETS = $oldAssetSetting
     Pop-Location
 }
+}
 
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "README.txt") -Destination $distDir
 # 声明类：第三方组件/服务/素材合成一份（THIRD_PARTY_NOTICES.md）。
@@ -81,8 +132,12 @@ Copy-Item -LiteralPath (Join-Path $projectRoot "docs\3D桌宠说明.md") -Destin
 
 # 固定素材目录必须解压后就看得见：启动时那句弹窗让用户"把模型放进 models\"，
 # 目录不存在的话他只能自己猜。空目录进 zip 不可靠，所以各放一行说明当占位。
+$modelHint = "把模型文件夹整个放进来（每个模型一个子目录），重启桌宠即可看见。其他模型请自行从作者发布处取得。"
+if ($BundleMikuQ) {
+    $modelHint += "本包附带野餐式 MikuQ，署名见包根目录借物表.md，条款见该模型的原始 Readme.txt。"
+}
 $hints = @(
-    @("models",  "放模型到这里.txt", "把模型文件夹整个放进来（每个模型一个子目录，例如 锁瞑\xxx.pmx），重启桌宠即可看见。程序不附带任何模型，请自行从作者发布处取得。"),
+    @("models",  "放模型到这里.txt", $modelHint),
     @("motions", "放动作到这里.txt", ".vmd 放进来就行，子目录会被递归查找；不放的话只播程序自带的待机动作。程序不附带任何第三方动作。")
 )
 foreach ($h in $hints) {
@@ -99,8 +154,15 @@ function Copy-CmdLauncher([string]$Source, [string]$Destination) {
     [IO.File]::WriteAllText($Destination, $text, [Text.UTF8Encoding]::new($false))
 }
 
-Copy-CmdLauncher (Join-Path $PSScriptRoot "launch_pet3d.cmd") (Join-Path $distDir "启动3D桌宠.cmd")
 Copy-CmdLauncher (Join-Path $PSScriptRoot "launch_pet3d.cmd") (Join-Path $distDir "启动3D桌宠-管理员.cmd")
+
+if ($BundledEku) {
+    $unityDestination = Join-Path $distDir "unity"
+    New-Item -ItemType Directory -Force -Path $unityDestination | Out-Null
+    Get-ChildItem -LiteralPath $UnityPlayerSource -Force |
+        Where-Object { $_.Name -ne "material-state.json" } |
+        Copy-Item -Destination $unityDestination -Recurse -Force
+}
 
 if ($WithModels) {
     # 布局跟不带模型的包一致：模型进 models\、动作进 motions\（程序按这两个固定目录找）。
@@ -111,6 +173,7 @@ if ($WithModels) {
     $picked = @()
     # 模型：只挑含 .pmx 的子目录（纯贴图、半成品打进去只是白占空间）
     foreach ($dir in Get-ChildItem -LiteralPath $ModelSource -Directory) {
+        if ($BundleMikuQ -and $dir.Name -eq "野餐式MikuQ") { continue }
         $hit = Get-ChildItem -LiteralPath $dir.FullName -Recurse -File -Include *.pmx -ErrorAction SilentlyContinue |
             Select-Object -First 1
         if (-not $hit) { continue }
@@ -128,6 +191,16 @@ if ($WithModels) {
     Write-Output ("Bundled models: " + ($picked -join ", "))
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "素材声明-必读.md") -Destination (Join-Path $bundleDir "素材声明-必读.md")
 }
+if ($BundleMikuQ) {
+    # 只带作者发布的模型文件、贴图和 README，不复制本机生成的配置或诊断文件。
+    $mikuDestination = Join-Path $distDir "models\野餐式MikuQ"
+    New-Item -ItemType Directory -Force -Path $mikuDestination | Out-Null
+    foreach ($file in @("野餐式MikuQ-1.1.pmx", "Readme.txt", "texture")) {
+        Copy-Item -LiteralPath (Join-Path $mikuSource $file) -Destination $mikuDestination -Recurse
+    }
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot "借物表.md") -Destination $distDir
+    Write-Output "Bundled model: MikuQ (original PMX, textures and Readme; unencrypted)"
+}
 Set-Content -LiteralPath (Join-Path $distDir "VERSION.txt") -Value $Version -Encoding ascii
 Copy-Item -LiteralPath $distDir -Destination $releaseDir -Recurse
 Compress-Archive -LiteralPath $releaseDir -DestinationPath $zipPath -CompressionLevel Optimal
@@ -136,6 +209,7 @@ $zip = Get-Item -LiteralPath $zipPath
 $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash
 # ASCII output keeps Windows PowerShell 5 parsing reliable for UTF-8 files without BOM.
 Write-Output ("Package: " + $zip.FullName)
-Write-Output ("Executable: " + (Join-Path $releaseDir "Nyalume.exe"))
+Write-Output ("3D executable: " + (Join-Path $releaseDir "Nyalume3D.exe"))
+Write-Output ("2D executable: " + (Join-Path $releaseDir "Nyalume2D.exe"))
 Write-Output ("Size: " + [math]::Round($zip.Length / 1MB, 1) + " MB")
 Write-Output ("SHA256: " + $hash)

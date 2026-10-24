@@ -1,3 +1,6 @@
 # Development/test dependencies; runtime only needs requirements.txt.
 pytest>=9.0
+pytest-timeout>=2.3  # 全套测试限时，避免个别用例挂住
 pyinstaller==6.22.2
+cryptography>=44.0  # Eku 资源加密构建与发行测试
+psycopg[binary]>=3.2  # tests/test_web_boundaries.py 需要（云服务依赖）

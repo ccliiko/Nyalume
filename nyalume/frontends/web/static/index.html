@@ -5,6 +5,27 @@
   <link rel="icon" href="/favicon.ico">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Nyalume · AI 桌宠</title>
+  <script>
+    // Apply before CSS/first paint; WebView2 keeps this preference across closes.
+    window.NyalumeTheme = (() => {
+      let mode = 'auto';
+      try { mode = localStorage.getItem('nyalume:theme') || 'auto'; } catch (_) {}
+      const resolve = (choice, hour) => choice === 'light' || choice === 'dark' ? choice
+        : hour >= 18 || hour < 6 ? 'dark' : 'light';
+      function apply(choice = mode) {
+        mode = ['auto', 'light', 'dark'].includes(choice) ? choice : 'auto';
+        document.documentElement.dataset.theme = resolve(mode, new Date().getHours());
+        document.documentElement.style.colorScheme = document.documentElement.dataset.theme;
+        return mode;
+      }
+      function set(choice) {
+        apply(choice);
+        try { localStorage.setItem('nyalume:theme', mode); } catch (_) {}
+      }
+      apply();
+      return { apply, set, resolve, get mode() { return mode; } };
+    })();
+  </script>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; font-family: "Microsoft YaHei", sans-serif; height: 100vh; }
@@ -803,8 +824,8 @@
       padding: 0 2px;
     }
     .ops-row .stat { flex: 0 0 auto; font-size: 11px; font-weight: 600; }
-    .stat .add { color: #188038; }
-    .stat .del { color: #d93025; }
+    .stat .add { color: var(--success); }
+    .stat .del { color: var(--danger); }
     .diff-pop {
       position: fixed;
       z-index: 400;
@@ -812,16 +833,17 @@
       max-width: 460px;
       max-height: 320px;
       overflow: auto;
-      background: #fff;
+      background: var(--surface);
       border: 1px solid #d9dee7;
       border-radius: 8px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+      box-shadow: var(--panel-shadow);
       padding: 6px 8px;
       font-family: Consolas, monospace;
+      border-color: var(--line);
     }
-    .diff-line { font-size: 12px; white-space: pre-wrap; word-break: break-all; color: #3c4043; }
-    .diff-line.del { background: #fdecea; color: #a50e0e; }
-    .diff-line.add { background: #e6f4ea; color: #137333; }
+    .diff-line { font-size: 12px; white-space: pre-wrap; word-break: break-all; color: var(--ink); }
+    .diff-line.del { background: var(--soft); color: var(--danger); }
+    .diff-line.add { background: var(--success-soft); color: var(--success); }
     .diff-empty { color: #98a1af; padding: 4px; }
     #task-panel {
       max-width: 860px;
@@ -845,37 +867,53 @@
       padding: 4px 10px;
       font-size: 12px;
     }
-    .task-row.running { border-color: #0b57d0; background: #eaf1ff; }
+    .task-row.running { border-color: var(--a1); background: var(--soft); }
     .task-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #3a4049; }
     .task-state { color: #8a93a3; flex: 0 0 auto; font-size: 11px; }
     .task-row .mini-btn { padding: 0 6px; }
     .inline-edit-modal {
-      position: fixed; inset: 0; z-index: 9999;
-      display: flex; align-items: center; justify-content: center;
-      background: rgba(0,0,0,0.35); backdrop-filter: blur(2px);
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--overlay);
     }
     .inline-edit-modal.hidden { display: none; }
     .inline-edit-box {
-      background: #fff; border-radius: 14px; padding: 20px 22px;
-      box-shadow: 0 16px 48px rgba(0,0,0,0.22);
+      background: #fff;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: var(--panel-shadow);
       width: min(480px, calc(100vw - 48px));
-      display: flex; flex-direction: column; gap: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: calc(100dvh - 32px);
+      overflow: auto;
     }
-    .inline-edit-box h3 { margin: 0; font-size: 15px; color: #2b3542; }
+    .inline-edit-box h3 { margin: 0; font-size: 18px; color: var(--ink); font-weight: 500; }
     .inline-edit-box textarea {
       width: 100%; min-height: 72px; resize: vertical;
       border: 1px solid #d0d7e2; border-radius: 8px; padding: 10px 12px;
       font: inherit; font-size: 14px; color: #2b3542; background: #f7f9fc;
     }
-    .inline-edit-box textarea:focus { outline: none; border-color: #0b57d0; background: #fff; }
-    .inline-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .inline-edit-box textarea:focus { outline: 2px solid var(--a1); border-color: var(--a1); background: var(--surface); outline-offset: 2px; color: var(--ink); }
+    .inline-edit-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
     .inline-edit-actions button {
-      border: 1px solid #d0d7e2; border-radius: 8px; padding: 7px 18px;
-      font-size: 13px; cursor: pointer; background: #fff; color: #3a4049;
+      border: 1px solid #d0d7e2;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      background: var(--surface);
+      color: var(--ink);
+      border-color: var(--line);
     }
-    .inline-edit-actions button:hover { background: #eef1f6; }
-    .inline-edit-actions button.primary { background: #0b57d0; color: #fff; border-color: #0b57d0; }
-    .inline-edit-actions button.primary:hover { background: #0949b8; }
+    .inline-edit-actions button:hover { background: var(--hover); }
+    .inline-edit-actions button.primary { background: var(--a1); color: var(--on-accent); border-color: var(--a1); }
+    .inline-edit-actions button.primary:hover { background: var(--a2); border-color: var(--a2); }
     #input-row {
       display: grid;
       grid-template-columns: auto auto minmax(0, 1fr) auto;
@@ -963,20 +1001,10 @@
     .exec-summary::-webkit-details-marker { display: none; }
     .exec-summary::before { content: "▸ "; color: #9aa0a8; }
     .exec-item[open] > .exec-summary::before { content: "▾ "; }
-    .exec-summary.running {
-      background: linear-gradient(90deg, #6b7280 0%, #6b7280 40%, #dfe4ec 50%, #6b7280 60%, #6b7280 100%);
-      background-size: 200% 100%;
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-      animation: exec-shimmer 2s linear infinite;
-    }
-    @keyframes exec-shimmer {
-      0% { background-position: -100% 0; }
-      100% { background-position: 100% 0; }
-    }
+    .exec-summary.running { color: var(--a2); font-weight: 600; }
+    .exec-summary.running::before { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 6px 1px 0; border-radius: 50%; background: var(--a1); }
     .exec-item-name { display: inline-block; max-width: min(640px, 100%); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .exec-item-body { margin: 4px 0 2px 14px; padding: 6px 9px; border-left: 2px solid #e5e8ee; color: #3f4856; background: rgba(247, 248, 251, .6); font: 12px/1.5 Consolas, "SFMono-Regular", monospace; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto; }
+    .exec-item-body { margin: 4px 0 2px 14px; padding: 6px 9px; border-left: 1px solid var(--line); color: #3f4856; background: rgba(247, 248, 251, .6); font: 12px/1.5 Consolas, "SFMono-Regular", monospace; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto; }
     .tool-card {
       width: min(700px, 100%);
       overflow: hidden;
@@ -1002,34 +1030,64 @@
     .tool-group .tool-card { width: 100%; border: 0; border-top: 1px solid #e5e8ee; border-radius: 0; }
     .tool-paths { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 10px 6px; }
     .local-path-link {
-      min-width: 0; max-width: min(420px, 100%); overflow: hidden; text-overflow: ellipsis;
-      white-space: nowrap; border: 0; background: transparent; color: #3156a3;
-      padding: 0; font: inherit; text-decoration: underline; cursor: pointer; text-align: left;
+      min-width: 0;
+      max-width: min(420px, 100%);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      border: 0;
+      background: transparent;
+      color: var(--a2);
+      padding: 0;
+      font: inherit;
+      text-decoration: underline;
+      cursor: pointer;
+      text-align: left;
     }
     .tool-card.search-card { overflow: visible; }
     .search-tool-output { max-height: none; overflow: visible; font-family: inherit; }
     .search-source-strip { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
     .search-source-chip { position: relative; display: inline-flex; }
     .search-source-chip > a {
-      display: inline-grid; place-items: center; min-width: 24px; height: 22px;
-      padding: 0 5px; border: 1px solid #d6dce7; border-radius: 6px;
-      color: #4f46a5; background: #f7f6ff; text-decoration: none; font-weight: 700;
+      display: inline-grid;
+      place-items: center;
+      min-width: 24px;
+      height: 22px;
+      padding: 0 5px;
+      border: 1px solid #d6dce7;
+      border-radius: 6px;
+      color: var(--a2);
+      background: var(--soft);
+      text-decoration: none;
+      font-weight: 700;
+      border-color: var(--line);
     }
     .search-source-preview {
-      display: none; position: absolute; z-index: 30; left: 0; bottom: calc(100% + 7px);
-      width: min(340px, 70vw); padding: 9px 10px; border: 1px solid #dce1ea;
-      border-radius: 9px; background: #fff; color: #4b5563;
-      box-shadow: 0 10px 28px rgba(31, 41, 55, .18); line-height: 1.45;
+      display: none;
+      position: absolute;
+      z-index: 30;
+      left: 0;
+      bottom: calc(100% + 7px);
+      width: min(340px, 70vw);
+      padding: 9px 10px;
+      border: 1px solid #dce1ea;
+      border-radius: 9px;
+      background: var(--surface);
+      color: var(--ink-2);
+      box-shadow: var(--panel-shadow);
+      line-height: 1.45;
+      border-color: var(--line);
+      overflow-wrap: anywhere;
     }
     .search-source-preview strong { display: block; color: #252b36; margin-bottom: 3px; }
     .search-source-chip:hover .search-source-preview,
     .search-source-chip:focus-within .search-source-preview { display: block; }
     .search-results-fold { margin-top: 7px; }
-    .search-results-fold summary { cursor: pointer; color: #697386; user-select: none; }
+    .search-results-fold summary { cursor: pointer; color: var(--ink-2); user-select: none; }
     .search-results-fold ol { margin: 7px 0 0; padding-left: 25px; }
     .search-results-fold li { margin: 7px 0; }
-    .search-results-fold a { color: #3156a3; text-decoration: none; font-weight: 600; }
-    .search-results-fold p { margin: 2px 0 0; color: #747d8c; }
+    .search-results-fold a { color: var(--a2); text-decoration: none; font-weight: 600; }
+    .search-results-fold p { margin: 2px 0 0; color: var(--ink-3); }
     .reply-meta { font-size: 11px; color: #98a1af; margin: 4px 0 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .chat-img { max-width: 320px; max-height: 320px; display: block; margin: 6px 0; border-radius: 10px; cursor: zoom-in; box-shadow: 0 2px 10px rgba(0,0,0,.12); }
     .chat-img.chat-video { max-width: 420px; max-height: 380px; cursor: default; background: #000; }
@@ -1046,7 +1104,7 @@
     .msg.user.editing { background: #fff; border: 1px dashed #0b57d0; }
     .edit-box { width: 100%; min-height: 64px; resize: vertical; border: 1px solid #ccd3dd; border-radius: 6px; padding: 6px; font: inherit; background: #fff; }
     .edit-btns { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
-    .mini-btn.primary-mini { background: #0b57d0; border-color: #0b57d0; color: #fff; }
+    .mini-btn.primary-mini { background: var(--a1); border-color: var(--a1); color: var(--on-accent); }
     .mini-btn {
       border: 1px solid #d3dbe6;
       background: #fff;
@@ -1084,17 +1142,17 @@
       margin: 2px 0 8px;
       transition: background 0.15s, border-color 0.15s;
     }
-    .ops-bubble:hover { background: #eef4ff; border-color: #bcd4f7; }
+    .ops-bubble:hover { background: var(--hover); border-color: var(--line); }
     .ops-bubble .cap { font-size: 11px; color: #98a1af; margin-bottom: 2px; }
     .ops-line { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 2px 0; }
-    .ops-line .op-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #3a4049; border: 0; background: transparent; padding: 0; text-align: left; cursor: pointer; }
-    .ops-line .op-name:hover { color: #3156a3; text-decoration: underline; }
+    .ops-line .op-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); border: 0; background: transparent; padding: 0; text-align: left; cursor: pointer; }
+    .ops-line .op-name:hover { color: var(--a2); text-decoration: underline; }
     .ops-line .stat { cursor: pointer; user-select: none; font-weight: 600; flex: 0 0 auto; }
     .ops-line .stat .num { display: inline; }
-    .ops-line .stat .prev { display: none; color: #9aa3b2; font-weight: 400; }
+    .ops-line .stat .prev { display: none; color: var(--ink-3); font-weight: 400; }
     .ops-line:hover .stat .num { display: none; }
     .ops-line:hover .stat .prev { display: inline; }
-    .ops-more summary { padding: 4px 0 2px; color: #6f7886; font-size: 11px; cursor: pointer; }
+    .ops-more summary { padding: 4px 0 2px; color: var(--ink-2); font-size: 12px; cursor: pointer; }
     .ops-pop {
       position: absolute;
       left: 10px;
@@ -1102,14 +1160,16 @@
       width: min(760px, calc(100% - 20px));
       max-height: 240px;
       overflow: auto;
-      background: #fff;
+      background: var(--surface);
       border: 1px solid #d9dee7;
       border-radius: 8px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+      box-shadow: var(--panel-shadow);
       padding: 6px 8px;
       display: none;
       z-index: 50;
       font-family: Consolas, monospace;
+      color: var(--ink);
+      border-color: var(--line);
     }
     #diff-panel {
       position: absolute;
@@ -1140,7 +1200,7 @@
       align-items: center;
       gap: 8px;
       padding: 8px 12px;
-      border-bottom: 1px solid #e4e7ec;
+      border-bottom: 1px solid var(--line);
       font-size: 13px;
       font-weight: 600;
     }
@@ -1161,35 +1221,39 @@
     .modal-overlay.hidden { display: none; }
     .modal-box {
       width: min(440px, 90vw);
-      background: #fff;
-      border-radius: 14px;
-      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
-      padding: 18px 20px;
+      background: var(--surface);
+      border-radius: 16px;
+      box-shadow: var(--panel-shadow);
+      padding: 24px;
       font-size: 14px;
-      color: #2b3542;
+      color: var(--ink);
+      max-height: calc(100dvh - 32px);
+      overflow: auto;
     }
-    .modal-box h3 { margin: 0 0 10px; font-size: 15px; }
-    .modal-box .modal-desc { white-space: pre-wrap; background: #f4f7fb; border-radius: 8px; padding: 10px; margin: 6px 0 14px; word-break: break-all; max-height: 200px; overflow-y: auto; }
-    .modal-btns { display: flex; justify-content: flex-end; gap: 8px; }
+    .modal-box h3 { margin: 0 0 16px; font-size: 18px; font-weight: 500; }
+    .modal-box .modal-desc { white-space: pre-wrap; background: var(--paper); border-radius: 8px; padding: 12px; margin: 8px 0 16px; word-break: normal; max-height: 200px; overflow-y: auto; color: var(--ink-2); overflow-wrap: anywhere; }
+    .modal-btns { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
     .modal-btns button {
       border: 1px solid #ccd3dd;
-      background: #fff;
+      background: var(--surface);
       border-radius: 8px;
-      padding: 7px 14px;
+      padding: 8px 12px;
       cursor: pointer;
       font-size: 13px;
+      border-color: var(--line);
+      color: var(--ink);
     }
-    .modal-btns .primary { background: #0b57d0; border-color: #0b57d0; color: #fff; }
-    .modal-btns .danger { color: #d93025; }
+    .modal-btns .primary { background: var(--a1); border-color: var(--a1); color: var(--on-accent); }
+    .modal-btns .danger { color: var(--danger); }
     .modal-btns button:disabled { opacity: 0.6; cursor: not-allowed; }
     .wall-crop-box {
       width: min(900px, 94vw);
       max-height: 92vh;
       overflow-y: auto;
-      background: #fff;
-      border-radius: 14px;
-      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
-      padding: 16px 18px;
+      background: var(--surface);
+      border-radius: 16px;
+      box-shadow: var(--panel-shadow);
+      padding: 24px;
     }
     .wall-crop-box h3 { margin: 0; font-size: 15px; }
     .wall-crop-help { margin: 4px 0 10px; color: #7b8492; font-size: 12px; }
@@ -1208,31 +1272,35 @@
     .wall-crop-controls input { flex: 1; accent-color: #ec4899; }
     .full-overlay { position: fixed; inset: 0; z-index: 950; background: #fff; display: flex; flex-direction: column; }
     .full-overlay.hidden { display: none; }
-    .full-top { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid #e4e7ec; background: #fafbfd; }
+    .full-top { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
     .full-top strong { font-size: 15px; }
     .full-top .close { margin-left: auto; border: none; background: none; font-size: 18px; cursor: pointer; color: #6b7280; padding: 4px 8px; border-radius: 6px; }
-    .full-top .close:hover { background: #eef2f7; }
+    .full-top .close:hover { background: var(--hover); }
     .settings-body { display: flex; flex: 1; min-height: 0; }
     .settings-nav { width: 168px; border-right: 1px solid #e4e7ec; padding: 12px 8px; box-sizing: border-box; }
-    .settings-nav button { width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; border: none; background: none; cursor: pointer; color: #2b3542; font-size: 13px; }
-    .settings-nav button.active { background: #e8f0fe; color: #0b57d0; font-weight: 600; }
-    .settings-main { flex: 1; overflow-y: auto; padding: 24px 30px; }
+    .settings-nav button { width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; border: none; background: none; cursor: pointer; color: var(--ink-2); font-size: 13px; }
+    .settings-nav button.active { background: var(--soft); color: var(--a2); font-weight: 600; }
+    .settings-main { flex: 1; overflow-y: auto; padding: 24px 32px; min-width: 0; }
     .settings-panel.hidden { display: none; }
-    .skill-toolbar { display: flex; align-items: center; gap: 10px; max-width: 720px; margin-bottom: 10px; }
-    .skill-toolbar button { border: 1px solid #f472b6; background: #fff; color: #db2777; border-radius: 9px; padding: 8px 14px; cursor: pointer; font-size: 13px; font-weight: 600; }
-    .skill-toolbar button:hover { background: #fff1f7; }
+    #update-status, #update-notes { max-width: 720px; color: var(--ink-2); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+    #update-notes { white-space: pre-wrap; font-family: inherit; }
+    #panel-updates button:disabled { opacity: .55; cursor: default; }
+    #panel-updates a { color: var(--a2); text-underline-offset: 3px; }
+    .skill-toolbar { display: flex; align-items: center; gap: 8px; max-width: 720px; margin-bottom: 12px; flex-wrap: wrap; }
+    .skill-toolbar button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .skill-toolbar button:hover { background: var(--hover); }
     .skill-help { max-width: 720px; color: var(--ink-3); font-size: 12px; line-height: 1.65; margin: 0 0 16px; }
     #skill-status { color: var(--ink-3); font-size: 12px; margin-left: auto; }
     #skill-list { display: flex; flex-direction: column; gap: 10px; max-width: 720px; }
-    .skill-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; border: 1px solid var(--line); background: rgba(255,255,255,.92); border-radius: 12px; padding: 13px 15px; }
-    .skill-name { color: var(--ink); font-size: 14px; font-weight: 700; }
-    .skill-desc { color: var(--ink-2); font-size: 12px; line-height: 1.55; margin-top: 3px; }
-    .skill-meta { color: var(--ink-3); font-size: 11px; margin-top: 7px; }
+    .skill-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 16px; }
+    .skill-name { color: var(--ink); font-size: 14px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+    .skill-desc { color: var(--ink-2); font-size: 13px; line-height: 1.7; margin-top: 3px; overflow-wrap: anywhere; }
+    .skill-meta { color: var(--ink-3); font-size: 12px; margin-top: 7px; line-height: 1.7; overflow-wrap: anywhere; }
     .skill-perms { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-    .skill-perm { border-radius: 999px; padding: 2px 8px; background: #f2f4f8; color: #667085; font-size: 11px; }
-    .skill-perm.safe { background: #edf8f1; color: #287a45; }
+    .skill-perm { border-radius: 999px; padding: 2px 8px; background: var(--soft); color: var(--ink-2); font-size: 12px; }
+    .skill-perm.safe { background: var(--success-soft); color: var(--success); }
     .skill-toggle { display: flex; align-items: center; gap: 7px; color: var(--ink-2); font-size: 12px; cursor: pointer; align-self: start; }
-    .skill-toggle input { width: 18px; height: 18px; accent-color: #f472b6; cursor: pointer; }
+    .skill-toggle input { width: 18px; height: 18px; accent-color: var(--a1); cursor: pointer; }
     .disc-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; max-width: 660px; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
     .disc-row .d-title { font-size: 13px; font-weight: 600; color: var(--ink); }
     .disc-row .d-desc { font-size: 11px; color: var(--ink-3); margin-top: 2px; }
@@ -1240,32 +1308,32 @@
     #audit-list { max-width: 660px; max-height: 42vh; overflow-y: auto; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 4px 6px; }
     .audit-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); padding: 6px 8px; border-bottom: 1px solid rgba(23,32,64,.05); }
     .audit-row:last-child { border-bottom: none; }
-    .audit-row .ok { color: #188038; font-weight: 600; }
-    .audit-row .fail { color: #d93025; font-weight: 600; }
+    .audit-row .ok { color: var(--success); font-weight: 600; }
+    .audit-row .fail { color: var(--danger); font-weight: 600; }
     .audit-row .a-tool { font-weight: 600; color: var(--ink); flex: 0 0 auto; }
     .audit-row .a-args { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); }
     .audit-row .a-ms { flex: 0 0 auto; color: var(--ink-3); }
-    .cfg-title { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 700; margin-bottom: 18px; }
+    .cfg-title { display: flex; align-items: center; gap: 8px; font-size: 22px; font-weight: 500; margin-bottom: 24px; position: relative; }
     .cfg-help { width: 20px; height: 20px; border-radius: 50%; background: #eef1f5; border: 1px solid #dbe1e8; color: #8a93a3; font-size: 12px; display: flex; align-items: center; justify-content: center; cursor: help; }
-    .cfg-help-wrap { position: relative; }
-    .cfg-help-pop { position: absolute; left: 0; top: 26px; width: min(440px, 78vw); background: #fff; border: 1px solid #dbe1e8; border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,.16); padding: 12px 14px; font-size: 12px; line-height: 1.7; color: #4a5560; z-index: 30; display: none; white-space: pre-line; }
+    .cfg-help-wrap { position: static; }
+    .cfg-help-pop { position: absolute; left: 0; top: calc(100% + 8px); width: min(440px, 100%); background: var(--surface); border: 1px solid #dbe1e8; border-radius: 12px; box-shadow: var(--panel-shadow); padding: 12px 14px; font-size: 12px; line-height: 1.7; color: var(--ink-2); z-index: 30; display: none; white-space: pre-line; max-height: calc(100dvh - 180px); overflow: auto; box-sizing: border-box; border-color: var(--line); }
     .cfg-help-pop.show { display: block; }
     .cfg-form { display: flex; flex-direction: column; gap: 16px; max-width: 660px; }
-    .cfg-row label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+    .cfg-row label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 8px; line-height: 1.7; }
     .cfg-row label .req { color: #d93025; margin-left: 4px; font-size: 11px; }
     .cfg-row label .filled { color: #188038; margin-left: 4px; font-size: 11px; }
-    .cfg-row input, .cfg-row select { width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid #d0d7e2; border-radius: 8px; font-size: 13px; background: #fff; }
+    .cfg-row input, .cfg-row select { width: 100%; box-sizing: border-box; padding: 6px 10px; border: 1px solid #d0d7e2; border-radius: 8px; font-size: 13px; background: var(--surface); height: 36px; border-color: var(--line); color: var(--ink); }
     .cfg-row.hidden { display: none; }
     .cfg-group { border: 1px solid #e4e7ec; border-radius: 10px; overflow: hidden; }
-    .cfg-group-head { display: flex; align-items: center; gap: 6px; width: 100%; border: none; background: #f7f9fc; padding: 9px 12px; cursor: pointer; font-size: 13px; font-weight: 600; color: #2b3542; text-align: left; }
+    .cfg-group-head { display: flex; align-items: center; gap: 6px; width: 100%; border: none; background: var(--paper); padding: 12px 16px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--ink); text-align: left; }
     .cfg-group-head .mark { width: 12px; color: #8a93a3; }
-    .cfg-group-body { padding: 14px 16px 6px; display: flex; flex-direction: column; gap: 14px; }
+    .cfg-group-body { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
     .cfg-group.collapsed .cfg-group-body { display: none; }
     .cfg-secret-row { display: flex; gap: 8px; align-items: center; }
     .cfg-secret-row input { flex: 1; }
     .cfg-status-chip { font-size: 11px; color: #188038; background: #e6f4ea; border-radius: 10px; padding: 3px 8px; white-space: nowrap; }
     .cfg-clear-btn { border: none; background: none; color: #d93025; cursor: pointer; font-size: 12px; padding: 3px 6px; white-space: nowrap; }
-    .cfg-btns { margin-top: 6px; }
+    .cfg-btns { margin-top: 16px; max-width: 660px; display: flex; justify-content: flex-end; gap: 8px; }
     .model-wrap { position: relative; flex: none; }
     #model-chip { border: none; background: none; color: #9aa2ad; font-size: 12px; cursor: pointer; padding: 6px 8px; border-radius: 6px; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #model-chip:hover { background: #eef2f7; color: #6b7280; }
@@ -1274,7 +1342,7 @@
     #model-menu button { display: block; width: 100%; text-align: left; border: none; background: none; padding: 7px 10px; border-radius: 7px; cursor: pointer; font-size: 12px; color: #2b3542; }
     #model-menu button:hover { background: #eef2f7; }
     #model-menu button.current { color: #0b57d0; font-weight: 600; }
-    .cfg-btns button { border: 1px solid #0b57d0; background: #0b57d0; color: #fff; border-radius: 8px; padding: 8px 20px; cursor: pointer; font-size: 13px; }
+    .cfg-btns button { border: 1px solid #0b57d0; background: var(--a1); color: var(--on-accent); border-radius: 8px; padding: 8px 16px; cursor: pointer; font-size: 13px; border-color: var(--a1); }
     .cfg-btns button:hover { opacity: 0.9; }
     .perm-wrap { position: relative; flex: none; }
     #perm-btn { border: none; background: none; color: #8a93a3; font-size: 12px; padding: 8px 9px; border-radius: 50%; cursor: pointer; white-space: nowrap; }
@@ -1328,20 +1396,6 @@
     #cat-tap-btn .cat-mouth-open { opacity: 0; fill: #ec4899; stroke: currentColor; stroke-width: 1.2; }
     #cat-tap-btn.is-meow .cat-mouth-rest { opacity: 0; }
     #cat-tap-btn.is-meow .cat-mouth-open { opacity: 1; }
-    #cat-tap-stats-btn {
-      width: 22px;
-      height: 22px;
-      padding: 0;
-      border: 1px solid #d9dce5;
-      border-radius: 50%;
-      background: rgba(255,255,255,.92);
-      color: #817687;
-      cursor: pointer;
-      font-size: 11px;
-      line-height: 1;
-      box-shadow: 0 2px 7px rgba(0,0,0,.1);
-    }
-    #cat-tap-stats-btn:hover { color: #be185d; border-color: rgba(236,72,153,.38); }
     #cat-tap-stats {
       position: absolute;
       right: 0;
@@ -1415,14 +1469,14 @@
       display: flex;
       gap: 6px;
       font-size: 12px;
-      padding: 6px 8px;
+      padding: 8px 12px;
       border-radius: 6px;
       cursor: pointer;
-      color: #3a4049;
+      color: var(--ink);
     }
-    .jump-item:hover { background: #eef1f6; }
-    .jump-item .who { color: #0b57d0; flex: 0 0 auto; }
-    .jump-item.assistant .who { color: #5b6472; }
+    .jump-item:hover { background: var(--hover); }
+    .jump-item .who { color: var(--a2); flex: 0 0 auto; }
+    .jump-item.assistant .who { color: var(--ink-2); }
     .jump-item .txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .msg.flash { animation: flashbg 1.2s ease; }
     @keyframes flashbg { 0% { background: #ffe9a8; } 100% { background: transparent; } }
@@ -1432,8 +1486,8 @@
       top: 50%;
       transform: translate(-50%, -50%);
       z-index: 999;
-      background: rgba(11, 87, 208, 0.92);
-      color: #fff;
+      background: var(--a1);
+      color: var(--on-accent);
       padding: 18px 28px;
       border-radius: 14px;
       font-size: 15px;
@@ -1462,8 +1516,8 @@
     .msg.assistant:not(.latest) .reply-options, .chat-turn:not(.latest-turn) .reply-options, .pending-turn .reply-options { display: none; }
     .reply-choice-card { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; margin: 7px 0; border: 1px solid #e7e0d8; border-radius: 11px; cursor: pointer; background: white; }
     .reply-choice-card:has(input:checked) { background: #fff1e6; border-color: #dba278; }
-    .reply-choice-card:focus-within { outline: 2px solid #dba278; outline-offset: 1px; }
-    .reply-choice-card input { margin: 3px 0 0; flex-shrink: 0; accent-color: #c68152; }
+    .reply-choice-card:focus-within { outline: 2px solid var(--a1); outline-offset: 1px; }
+    .reply-choice-card input { margin: 3px 0 0; flex-shrink: 0; accent-color: var(--a1); }
     .reply-choice-card span { min-width: 0; }
     .reply-choice-card strong { display: block; font-size: 13px; color: #55483e; }
     .reply-choice-card small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 3px; font-size: 12px; line-height: 1.5; color: #897a6c; overflow-wrap: anywhere; }
@@ -1473,7 +1527,7 @@
     .reply-story { margin-bottom: 10px; color: #6c7251; }
     .reply-story strong, .reply-story small { display: block; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
   </style>
-  <link rel="stylesheet" href="/static/companion.css?v=20261011-plan-mode">
+  <link rel="stylesheet" href="/static/companion.css?v=0.5.2">
   <link rel="stylesheet" href="/static/daily-card.css?v=trio-v1">
 </head>
 <body>
@@ -1483,7 +1537,7 @@
   <div id="drop-hint" class="hidden">松开：文件夹会加入项目，文件会导入当前对话</div>
   <div id="approval-overlay" class="modal-overlay hidden">
     <div class="modal-box">
-      <h3>⚠️ 需要你审批</h3>
+      <h3><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 22 21H2Z"/><path d="M12 9v5m0 3h.01"/></svg><span>需要你审批</span></h3>
       <div id="approval-desc" class="modal-desc"></div>
       <div class="modal-btns">
         <button id="approval-remember">同意并记住（本会话同类不再问）</button>
@@ -1523,19 +1577,21 @@
   <div id="settings-overlay" class="full-overlay hidden">
     <div class="full-top">
       <strong>设置</strong>
-      <button class="close" id="settings-close" title="关闭">✕</button>
+      <button class="close" id="settings-close" title="关闭" aria-label="关闭设置"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
     </div>
     <div class="settings-body">
       <nav class="settings-nav" aria-label="设置分类">
         <button type="button" data-settings-panel="api" class="active">模型 API</button>
         <button type="button" data-settings-panel="skills">Skill 管理</button>
+        <button type="button" data-settings-panel="pet">桌宠状态</button>
+        <button type="button" data-settings-panel="updates">检查更新</button>
       </nav>
       <div class="settings-main">
         <div class="settings-panel" id="panel-api">
           <div class="cfg-title">
             <span>配置 API</span>
             <span class="cfg-help-wrap">
-              <span class="cfg-help" id="cfg-help">?</span>
+              <button class="cfg-help" id="cfg-help" type="button" aria-label="查看模型连接设置说明" aria-controls="cfg-help-pop" aria-expanded="false">?</button>
               <div class="cfg-help-pop" id="cfg-help-pop">每个选项怎么填：
 • 先选择 API 供应商，再填写该平台提供的 Key。
 • Key 只保存在本机 .env，页面仅显示末尾 4 位，可随时清除。
@@ -1562,6 +1618,50 @@
           <input id="skill-file" type="file" accept=".zip,.md,.markdown,application/zip,text/markdown" hidden>
           <div id="skill-list"><div class="state-empty">加载中…</div></div>
         </div>
+        <div class="settings-panel hidden" id="panel-pet">
+          <h2>桌宠状态与动作</h2>
+          <p class="state-empty">查看连接状态，或检查当前模型的动作库。</p>
+          <div id="pet-state-body"><p class="state-empty">正在读取桌宠状态…</p></div>
+        </div>
+        <div class="settings-panel hidden" id="panel-updates">
+          <h2>版本与更新</h2>
+          <p class="update-intro">与 GitHub Releases 同步，获取 Nyalume 的最新正式版。</p>
+          <div class="update-versions"><p id="update-version">正在读取当前版本…</p><p id="update-latest" hidden></p></div>
+          <div id="update-result" data-phase="idle">
+            <strong id="update-heading">准备检查更新</strong>
+            <p id="update-status" role="status" aria-live="polite">检查后可查看新版内容与安装选项。</p>
+            <div id="update-progress-wrap" hidden>
+              <progress id="update-progress" aria-label="安装包下载进度" max="100"></progress>
+              <span id="update-progress-text"></span>
+            </div>
+            <p id="update-checked" hidden></p>
+          </div>
+          <div class="skill-toolbar update-actions">
+            <button id="update-check" type="button" class="update-primary">从 GitHub 检查更新</button>
+            <button id="update-install" type="button" class="update-primary" hidden>下载并安装最新版</button>
+            <a href="https://github.com/ccliiko/Nyalume/releases" target="_blank" rel="noopener">在 GitHub 查看发行版 <span aria-hidden="true">↗</span></a>
+          </div>
+          <p class="skill-help update-help">下载期间可继续使用。校验完成后，退出桌宠并关闭聊天窗口，即可自动安装、重新启动。保留本地配置、聊天记录和自备模型。</p>
+          <details id="update-details" hidden><summary>新版更新内容</summary><pre id="update-notes"></pre></details>
+          <details id="update-source-details"><summary>更新源与网络设置</summary>
+          <form id="update-source-form" class="cfg-form">
+            <div class="cfg-row">
+              <label for="update-source">更新源</label>
+              <select id="update-source">
+                <option value="auto">自动加速（推荐）</option>
+                <option value="github">GitHub 直连</option>
+                <option value="custom">自定义镜像</option>
+              </select>
+            </div>
+            <div class="cfg-row hidden" id="update-prefix-row">
+              <label for="update-prefix">镜像前缀（HTTPS）</label>
+              <input id="update-prefix" type="url" placeholder="https://your-proxy.example/" autocomplete="off" aria-describedby="update-source-help">
+            </div>
+            <p class="skill-help" id="update-source-help">自动模式在 GitHub 查询失败时使用加速源，下载优先加速。自定义镜像需支持 GitHub API 和发行包的完整链接前缀转发。加速服务由第三方提供，仅转发公开发行信息与文件，下载后仍校验 SHA-256。</p>
+            <div class="skill-toolbar"><button id="update-source-save" type="submit">保存更新源</button></div>
+          </form>
+          </details>
+        </div>
       </div>
     </div>
   </div>
@@ -1569,12 +1669,13 @@
     <aside id="sidebar">
       <div class="side-head">
         <strong><span class="brand-mark" aria-hidden="true">✧</span>Nyalume</strong>
-        <span class="brand-caption">陪伴手记</span>
+        <select id="chat-mode-select" aria-label="切换聊天模式"><option value="work">工作助手</option><option value="daily">日常陪伴</option></select>
       </div>
       <button id="new-btn" type="button" title="新建最近对话"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>开启新对话</span></button>
       <nav class="lounge-nav" aria-label="主要导航">
         <button id="home-nav" type="button"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7M5 9v11h14V9M9 20v-7h6v7"/></svg>今日小窝</button>
         <button id="chat-nav" type="button" aria-current="page"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15a3 3 0 0 1-3 3H9l-5 3V6a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3ZM8 8h8M8 12h5"/></svg>继续对话</button>
+        <button id="memory-nav" type="button"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v15M12 6C9 4 5 4 3 5v14c3-1 6-1 9 1 3-2 6-2 9-1V5c-2-1-6-1-9 1Z"/></svg>共同经历与记忆</button>
       </nav>
       <div id="side-search">
         <svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
@@ -1599,36 +1700,47 @@
           <div id="session-list"></div>
         </div>
       </section>
-      <section class="side-sec collapsed" id="sec-state">
-        <button class="side-sec-head" type="button" title="打开小约定、共同经历和桌宠状态" aria-controls="companion-body" aria-expanded="false">
-          <span class="mark" aria-hidden="true">▸</span><span class="section-name">小约定 · 共同经历</span>
-        </button>
-        <div class="side-sec-body" id="companion-body">
-          <div id="state-body"><div class="state-empty">展开后选择会话显示</div></div>
-        </div>
-      </section>
       </div>
       <footer class="sidebar-foot">
         <button id="command-open" type="button"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m7 9 3 3-3 3m6 0h4"/></svg><span>快捷入口</span><kbd>Ctrl K</kbd></button>
         <button id="config-btn" type="button" title="API 配置"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg><span>设置与技能</span></button>
+        <button id="updates-open" type="button"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5"/></svg><span>版本更新</span></button>
         <div class="sidebar-local"><span class="status-dot"></span>记忆保存在本机<span>NYALUME</span></div>
       </footer>
     </aside>
     <button id="sidebar-scrim" type="button" aria-label="关闭导航"></button>
     <main>
       <header id="chat-head">
-        <button id="sidebar-toggle" type="button" aria-label="打开导航" aria-expanded="false" aria-controls="sidebar">☰</button>
+        <button id="sidebar-toggle" type="button" aria-label="打开导航" aria-expanded="false" aria-controls="sidebar"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
         <span id="chat-title">新对话</span>
         <button id="focus-chip" type="button" hidden title="查看陪伴专注"></button>
         <a id="fantasy-entry" href="/fantasy" target="_blank" rel="noopener" style="white-space:nowrap;font-size:13px;color:#786198;text-decoration:none" title="在独立窗口开始或继续剧情">✦ 奇幻冒险 ↗</a>
         <a id="full-chat-link" href="/" target="_blank" rel="noopener">完整聊天 ↗</a>
+        <div id="cat-tap-wrap">
+          <button id="cat-tap-btn" type="button" title="敲敲猫猫头" aria-label="敲敲猫猫头" aria-expanded="false" aria-controls="cat-tap-stats">
+            <svg viewBox="0 0 36 36" aria-hidden="true">
+              <path class="cat-head" d="M7.2 15.3 8.5 5.8l7 4.3a17 17 0 0 1 5 0l7-4.3 1.3 9.5c1.2 1.8 1.7 4 1.2 6.6-1 5.1-5.5 8.2-12 8.2S7 27 6 21.9c-.5-2.6 0-4.8 1.2-6.6Z"/>
+              <path class="cat-face" d="M12.3 19.1h.1m11.2 0h.1"/>
+              <path class="cat-face cat-mouth-rest" d="M18 21.7v.65m0 0c-.65.75-1.35.75-1.9.15m1.9-.15c.65.75 1.35.75 1.9.15"/>
+              <ellipse class="cat-mouth-open" cx="18" cy="24" rx="2.2" ry="2.6"/>
+            </svg>
+          </button>
+          <div id="cat-tap-stats" class="hidden" role="status">
+            <div class="cat-tap-stat"><span>敲击次数</span><strong id="cat-tap-count">0 次</strong></div>
+            <div class="cat-tap-stat"><span>喵次数</span><strong id="cat-meow-count">0 次</strong></div>
+            <small id="cat-meow-chance">未抽取今日卡片 · 喵概率 20%</small>
+          </div>
+          <div id="cat-tap-feedback" class="hidden" aria-live="polite"></div>
+          <div id="cat-meow-layer" aria-hidden="true"></div>
+        </div>
         <button id="daily-nyalume-btn" type="button" title="每天 0:00 刷新">✦ 今日 Nyalume</button>
         <div class="wall-wrap">
-          <button id="wall-btn" class="wall-btn" title="聊天壁纸">🖼 壁纸</button>
+          <button id="wall-btn" class="wall-btn" type="button" title="聊天壁纸"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 16 5-5 4 4 3-3 6 6"/></svg><span>壁纸</span></button>
           <div id="wall-menu" class="wall-menu hidden">
             <button data-act="upload">上传图片…</button>
             <div class="pop-sep"></div>
             <div class="pop-head">Wallpaper Engine</div>
+            <button data-act="we-current">使用当前壁纸</button>
             <button data-act="we-recent">最近壁纸　›</button>
             <div id="we-recent-list" class="we-recent-list hidden"></div>
             <button data-act="we-next">下一张</button>
@@ -1642,15 +1754,19 @@
             </div>
           </div>
         </div>
+        <label class="theme-setting" for="theme-select"><span>外观</span><select id="theme-select" aria-label="窗口外观"><option value="auto">自动</option><option value="light">白天</option><option value="dark">黑夜</option></select></label>
         <select id="persona-select" title="切换人设"></select>
       </header>
       <section id="home-panel" aria-label="今日小窝" hidden>
         <div class="home-inner">
           <div class="home-dateline"><span id="home-date"></span><span>NYALUME'S DIARY / 日常篇</span></div>
           <div class="home-hero">
-            <div class="hero-chapter">✧ 与你相伴的日常</div>
             <h1><span id="home-greeting">欢迎回来，</span><br>今天的故事，<em>也想有你。</em></h1>
             <div class="home-dialogue"><span class="dialogue-name">Nyalume <span>✧</span></span><p>今天想认真一点，还是想被陪着？<br>无论哪一种，都给你留了位置喵。</p></div>
+            <div class="home-entry-actions">
+              <button id="home-chat-open" class="home-primary" type="button">和我聊聊</button>
+              <button id="home-focus-open" class="home-secondary" type="button">一起专注</button>
+            </div>
             <img id="home-portrait" class="home-portrait" src="/api/pet/portrait" alt="在小窝等你的 Nyalume" width="300" height="300" hidden>
             <svg class="home-cat" viewBox="0 0 200 180" fill="none" aria-hidden="true">
               <circle cx="106" cy="83" r="65" fill="#edf0e4"/>
@@ -1665,9 +1781,10 @@
           </div>
           <div class="home-grid">
             <section id="focus-card" class="home-card focus-card" aria-labelledby="focus-heading">
-              <div class="home-label">CH.01 / 陪伴专注</div>
               <h2 id="focus-heading">这次的小任务，陪你一起。</h2>
               <p id="focus-intro">这一小段时间，就交给我们吧。我会安静陪着你。</p>
+              <details id="focus-details">
+                <summary>安排一段安静时间</summary>
               <form id="focus-start-form" hidden>
                 <label for="focus-goal">这段时间，想做什么？</label>
                 <input id="focus-goal" maxlength="120" required placeholder="比如，读完十页书" autocomplete="off">
@@ -1701,15 +1818,15 @@
               </form>
               <p id="focus-feedback" role="status">正在读取专注记录…</p>
               <button id="focus-retry" class="home-secondary" type="button" hidden>重新加载</button>
+              </details>
             </section>
             <section class="home-card" aria-labelledby="home-chat-heading">
-              <div class="home-label">CH.02 / 心事频道</div>
               <h2 id="home-chat-heading">要和我说说吗？</h2>
               <p>小小的烦恼、突然的灵感，或者一句「我回来啦」。</p>
               <div class="home-paths">
-                <button type="button" data-prompt="我有一件一直拖着没做的事，请先问我是什么，再帮我找一个五分钟就能开始的小步骤。"><span class="path-icon">↗</span><span>把难事，拆小一点<small>一起找到可以开始的第一步</small></span><span class="path-arrow">→</span></button>
-                <button type="button" data-prompt="今天我想和你聊聊近况。先问问我今天过得怎么样，不急着给建议。"><span class="path-icon">☁</span><span>让心事，有处安放<small>聊聊今天，或者什么都不做</small></span><span class="path-arrow">→</span></button>
-                <button type="button" data-prompt="我想整理一下今天：请一次只问我一个问题，陪我回顾今天的小收获，再选一件明天想做的事。"><span class="path-icon">✎</span><span>给今天，留一页记录<small>看见那些微小的进展</small></span><span class="path-arrow">→</span></button>
+                <button type="button" data-prompt="我有一件一直拖着没做的事，请先问我是什么，再帮我找一个五分钟就能开始的小步骤。"><span class="path-icon"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 17 10-10M7 7h10v10"/></svg></span><span>把难事，拆小一点<small>一起找到可以开始的第一步</small></span><span class="path-arrow"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></span></button>
+                <button type="button" data-prompt="今天我想和你聊聊近况。先问问我今天过得怎么样，不急着给建议。"><span class="path-icon"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-1 2v-8.5A8.5 8.5 0 0 1 11.5 5H13a8 8 0 0 1 8 6.5Z"/></svg></span><span>让心事，有处安放<small>聊聊今天，或者什么都不做</small></span><span class="path-arrow"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></span></button>
+                <button type="button" data-prompt="我想整理一下今天：请一次只问我一个问题，陪我回顾今天的小收获，再选一件明天想做的事。"><span class="path-icon"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 1-5L17 3l4 4L9 19Zm10-14 4 4"/></svg></span><span>给今天，留一页记录<small>看见那些微小的进展</small></span><span class="path-arrow"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></span></button>
               </div>
             </section>
           </div>
@@ -1721,6 +1838,14 @@
           <div class="home-section-head"><h2>我们的进度手记</h2><span id="focus-today">专注足迹 · 本地保存</span></div>
           <div id="focus-history" class="focus-history"><div class="history-empty">正在读取…</div></div>
           <div class="home-footer"><span>TO BE CONTINUED / 和你的下一页</span><span>故事不用赶，我会在这里喵。</span></div>
+        </div>
+      </section>
+      <section id="memory-panel" aria-labelledby="memory-heading" hidden>
+        <div class="memory-inner">
+          <h1 id="memory-heading" tabindex="-1">我们的记忆</h1>
+          <p class="memory-intro">小约定、共同经历，还有想替你记住的事。</p>
+          <p id="memory-context" class="memory-context"></p>
+          <div id="state-body"><p class="state-empty">正在读取记忆与共同经历…</p></div>
         </div>
       </section>
       <div id="daily-nyalume-layer" class="hidden">
@@ -1735,14 +1860,14 @@
         <div class="add-wrap">
           <button id="add-btn" type="button" title="添加：图片 / 文件 / 文件夹">＋</button>
           <div id="add-menu">
-            <button data-kind="image">🖼 图片（发给我看）</button>
-            <button data-kind="file">📄 文件 / 文档</button>
-            <button data-kind="folder">📁 文件夹（导入资料）</button>
+            <button data-kind="image"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 16 5-5 4 4 3-3 6 6"/></svg><span>图片（发给我看）</span></button>
+            <button data-kind="file"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg><span>文件 / 文档</span></button>
+            <button data-kind="folder"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg><span>文件夹（导入资料）</span></button>
           </div>
         </div>
         <input id="image-input" type="file" accept="image/*" hidden>
-        <div class="perm-wrap">
-          <button id="perm-btn" type="button" title="切换聊天模式与访问权限">请求审批</button>
+        <div class="perm-wrap" id="work-permissions">
+          <button id="perm-btn" type="button" title="工作助手的访问权限">请求审批</button>
           <div id="perm-menu"></div>
         </div>
         <div class="model-wrap">
@@ -1751,28 +1876,10 @@
         </div>
         <button id="send">发送</button>
       </div>
-      <div id="composer-caption"><span>Enter 发送 · Shift + Enter 换行 · / 快捷指令</span><button id="plan-toggle" type="button" aria-pressed="false" title="只读分析、澄清需求并制定计划；退出后可执行">计划模式</button><span id="goal-mode" hidden>目标模式 <button id="goal-exit" type="button">退出</button></span><span id="draft-status" role="status">草稿仅存于当前浏览器</span></div>
+      <div id="composer-caption"><button id="plan-toggle" type="button" aria-pressed="false" title="只读分析、澄清需求并制定计划；退出后可执行">计划模式</button><span id="goal-mode" hidden>目标模式 <button id="goal-exit" type="button">退出</button></span></div>
       <div id="chat-floats">
-        <div id="cat-tap-wrap">
-          <button id="cat-tap-btn" type="button" title="敲敲猫猫头" aria-label="敲敲猫猫头">
-            <svg viewBox="0 0 36 36" aria-hidden="true">
-              <path class="cat-head" d="M7.2 15.3 8.5 5.8l7 4.3a17 17 0 0 1 5 0l7-4.3 1.3 9.5c1.2 1.8 1.7 4 1.2 6.6-1 5.1-5.5 8.2-12 8.2S7 27 6 21.9c-.5-2.6 0-4.8 1.2-6.6Z"/>
-              <path class="cat-face" d="M12.3 19.1h.1m11.2 0h.1"/>
-              <path class="cat-face cat-mouth-rest" d="M18 21.7v.65m0 0c-.65.75-1.35.75-1.9.15m1.9-.15c.65.75 1.35.75 1.9.15"/>
-              <ellipse class="cat-mouth-open" cx="18" cy="24" rx="2.2" ry="2.6"/>
-            </svg>
-          </button>
-          <button id="cat-tap-stats-btn" type="button" title="查看敲击记录" aria-label="查看敲击记录" aria-expanded="false" aria-controls="cat-tap-stats">⌄</button>
-          <div id="cat-tap-stats" class="hidden" role="status">
-            <div class="cat-tap-stat"><span>敲击次数</span><strong id="cat-tap-count">0 次</strong></div>
-            <div class="cat-tap-stat"><span>喵次数</span><strong id="cat-meow-count">0 次</strong></div>
-            <small id="cat-meow-chance">未抽取今日卡片 · 喵概率 20%</small>
-          </div>
-          <div id="cat-tap-feedback" class="hidden" aria-live="polite"></div>
-          <div id="cat-meow-layer" aria-hidden="true"></div>
-        </div>
-        <button id="jump-panel-btn" class="float-btn" title="快速跳转到某条对话">☷</button>
-        <button id="jump-down-btn" class="float-btn hidden" title="回到最新消息">↓</button>
+        <button id="jump-panel-btn" class="float-btn" title="快速跳转到某条对话" aria-label="快速跳转到某条对话"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 9h8M9 15h8M6 9h.01M6 15h.01"/></svg></button>
+        <button id="jump-down-btn" class="float-btn hidden" title="回到最新消息" aria-label="回到最新消息"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14m-6-6 6 6 6-6"/></svg></button>
         <div id="jump-panel"></div>
       </div>
       <aside id="diff-panel" class="hidden">
@@ -1780,14 +1887,14 @@
         <div class="diff-head">
           <span id="diff-title">文件改动</span>
           <button id="diff-undo" class="mini-btn">撤销</button>
-          <button id="diff-close" class="mini-btn">✕ 关闭</button>
+          <button id="diff-close" class="mini-btn"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg><span>关闭</span></button>
         </div>
         <div id="diff-body"></div>
       </aside>
     </main>
   </div>
   <dialog id="command-dialog" aria-labelledby="command-heading">
-    <div class="command-head"><h2 id="command-heading">想去哪里？</h2><button id="command-close" type="button" aria-label="关闭快捷入口">Esc ✕</button></div>
+    <div class="command-head"><h2 id="command-heading">想去哪里？</h2><button id="command-close" type="button" aria-label="关闭快捷入口"><span>Esc</span><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
     <input id="command-search" type="search" placeholder="搜索入口，如：专注、壁纸、设置…" aria-label="搜索快捷入口" autocomplete="off">
     <div id="command-list"></div>
     <div class="command-foot">↑ ↓ 选择 · Enter 打开 · Esc 关闭</div>
@@ -1795,7 +1902,7 @@
   <div id="ui-notice" role="status" hidden></div>
   <script src="/static/daily_nyalume/catalog.js?v=trio-v1"></script>
   <script src="/static/daily-card.js?v=trio-v1"></script>
-  <script src="/static/companion.js?v=20261011-plan-mode"></script>
+  <script src="/static/companion.js?v=20261012-cat-hover"></script>
   <script>
     const log = document.getElementById("log");
     let followLatest = true;
@@ -1814,7 +1921,6 @@
     const dailyNyalumePopover = document.getElementById("daily-nyalume-popover");
     const catTapWrap = document.getElementById("cat-tap-wrap");
     const catTapBtn = document.getElementById("cat-tap-btn");
-    const catTapStatsBtn = document.getElementById("cat-tap-stats-btn");
     const catTapStatsBox = document.getElementById("cat-tap-stats");
     const catTapCount = document.getElementById("cat-tap-count");
     const catMeowCount = document.getElementById("cat-meow-count");
@@ -1828,7 +1934,8 @@
     const state = {
       currentId: null, currentProject: "", busy: false, stopped: false,
       pendingMessage: "", queue: [], currentTask: null, planMode: false,
-      speaker: "nyalume", wallMode: "", chatMode: "workspace"
+      speaker: "nyalume", wallMode: "", chatMode: "workspace",
+      workPermission: "workspace"
     };
     const wallBtn = document.getElementById("wall-btn");
     const wallMenu = document.getElementById("wall-menu");
@@ -1944,7 +2051,7 @@
     async function renderWallpaperRecents() {
       wallRecentList.innerHTML = '<div class="we-recent-empty">正在读取…</div>';
       try {
-        const rows = await api("/api/wallpaper-engine/recent");
+        const rows = (await api("/api/wallpaper-engine/recent")).filter(row => !row.preview);
         wallRecentList.innerHTML = "";
         if (!rows.length) {
           wallRecentList.innerHTML = '<div class="we-recent-empty">暂无可用的图片或 MP4</div>';
@@ -1954,9 +2061,8 @@
           button.type = "button";
           button.dataset.act = "we-pick";
           button.dataset.index = row.index;
-          const suffix = row.preview ? "（静态预览）" : "";
-          button.textContent = (row.kind === "video" ? "▶ " : "▧ ") + row.name + suffix;
-          button.title = row.name + suffix;
+          button.textContent = (row.kind === "video" ? "▶ " : "▧ ") + row.name;
+          button.title = row.name;
           wallRecentList.appendChild(button);
         }
         const sep = document.createElement("div");
@@ -2230,20 +2336,45 @@
       ], { duration: meowed ? 360 : 300, easing: "ease-out" });
     }
 
-    catTapBtn.addEventListener("click", tapCatHead);
-    catTapStatsBtn.addEventListener("click", event => {
-      event.stopPropagation();
-      const willOpen = catTapStatsBox.classList.contains("hidden");
-      catTapStatsBox.classList.toggle("hidden", !willOpen);
-      catTapStatsBtn.setAttribute("aria-expanded", String(willOpen));
-      catTapStatsBtn.textContent = willOpen ? "⌃" : "⌄";
+    let catStatsTimer;
+    let catStatsHover = false;
+    function hideCatStats() {
+      clearTimeout(catStatsTimer);
+      catTapStatsBox.classList.add('hidden');
+      catTapBtn.setAttribute('aria-expanded', 'false');
+    }
+    function scheduleCatStats() {
+      hideCatStats();
+      catStatsTimer = setTimeout(() => {
+        catTapStatsBox.classList.remove('hidden');
+        catTapBtn.setAttribute('aria-expanded', 'true');
+      }, 600);
+    }
+    catTapBtn.addEventListener('pointerenter', event => {
+      if (event.pointerType === 'touch') return;
+      catStatsHover = true;
+      scheduleCatStats();
+    });
+    catTapWrap.addEventListener('pointerleave', () => {
+      catStatsHover = false;
+      hideCatStats();
+    });
+    catTapBtn.addEventListener('focus', () => {
+      if (catTapBtn.matches(':focus-visible')) scheduleCatStats();
+    });
+    catTapWrap.addEventListener('focusout', event => {
+      if (!catTapWrap.contains(event.relatedTarget)) hideCatStats();
+    });
+    catTapBtn.addEventListener('keydown', event => {
+      if (event.key === 'Escape') hideCatStats();
+    });
+    catTapBtn.addEventListener('click', () => {
+      tapCatHead();
+      hideCatStats();
+      if (catStatsHover || catTapBtn.matches(':focus-visible')) scheduleCatStats();
     });
     document.addEventListener("click", event => {
-      if (!catTapWrap.contains(event.target)) {
-        catTapStatsBox.classList.add("hidden");
-        catTapStatsBtn.setAttribute("aria-expanded", "false");
-        catTapStatsBtn.textContent = "⌄";
-      }
+      if (!catTapWrap.contains(event.target)) hideCatStats();
     });
     updateCatTapStats();
 
@@ -2388,7 +2519,8 @@
       close.className = "daily-nyalume-close";
       close.type = "button";
       close.title = "收起";
-      close.textContent = "✕";
+      close.innerHTML = '<svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>';
+      close.setAttribute("aria-label", "收起收藏");
       close.addEventListener("click", closeDailyNyalume);
       head.append(heading, close);
 
@@ -3155,6 +3287,7 @@
           const addAction = (label, action) => {
             const button = document.createElement('button');
             button.className = 'side-mini-btn'; button.type = 'button'; button.textContent = label;
+            button.dataset.action = action;
             button.onclick = async () => {
               button.disabled = true;
               try {
@@ -3263,43 +3396,49 @@
 
     async function renderState() {
       if (!state.currentId) return;
+      const sessionId = state.currentId;
       try {
         const [st, pet] = await Promise.all([
-          api("/api/state?session_id=" + encodeURIComponent(state.currentId)),
+          api("/api/state?session_id=" + encodeURIComponent(sessionId)),
           api("/api/pet/state").catch(() => ({ ok: false })),
         ]);
+        if (sessionId !== state.currentId) return;
         const body = document.getElementById("state-body");
         const memoryQuery = document.getElementById('memory-search')?.value || '';
         const memoryCategory = document.getElementById('memory-category')?.value || '';
-        let html = "";
-        html += '<div class="state-section">3D 桌宠 · 此次刷新</div>';
-        html += pet.ok
+        let petHtml = '';
+        petHtml += pet.ok
           ? '<div class="summary-box">' + esc([
               pet["模型"], pet["当前动作"], pet["心情"], pet["风格"],
               pet["安静模式"] ? "安静中" : "陪伴中",
             ].filter(Boolean).join(" · ")) + '</div>'
-          : '<div class="state-empty">桌宠未运行或控制口不可用</div>';
-        html += '<button id="pet-motion-check" class="side-mini-btn" type="button"' + (checkingMotions ? ' disabled' : '') + '>'
+          : '<p class="state-empty">暂未连接桌宠。请先启动桌宠，再重新读取状态。</p>';
+        petHtml += '<button id="pet-state-refresh" class="side-mini-btn" type="button">重新读取状态</button> '
+          + '<button id="pet-motion-check" class="side-mini-btn" type="button"' + (checkingMotions ? ' disabled' : '') + '>'
           + (checkingMotions ? '正在检查动作…' : '检查当前模型动作库') + '</button><div id="pet-motion-report">' + motionReportHtml(lastMotionReport) + '</div>';
-        html += '<div class="state-section">共同经历 · 跨对话保留</div>'
+        document.getElementById('pet-state-body').innerHTML = petHtml;
+        document.getElementById('pet-state-refresh').onclick = renderState;
+        document.getElementById('memory-context').textContent = '摘要、便签与资料来自当前对话：' + (chatTitle.textContent || '新对话');
+        let html = '';
+        html += '<h2 class="state-section">共同经历 · 跨对话保留</h2>'
           + '<form id="companion-form"><label for="companion-content">约定一件想一起做的小事</label>'
           + '<textarea id="companion-content" maxlength="200" placeholder="例如：一起整理完这周的照片"></textarea>'
           + '<button class="side-mini-btn" type="submit">记下我们的约定</button></form>'
           + '<div id="companion-feedback" class="state-empty" role="status"></div><div id="companion-list"></div>';
         if (st.mode === "daily") {
-          html += '<div class="state-section">日常模式</div>'
+          html += '<h2 class="state-section">日常陪伴</h2>'
             + '<div class="summary-box">当前好感度：' + Number(st.affection) + '</div>';
         }
         memoryCards = st.shared_memories || [];
-        html += '<div class="state-section">记忆 · 与您有关的事</div>'
+        html += '<h2 class="state-section">记忆 · 与你有关的事</h2>'
           + '<div class="memory-toolbar"><input id="memory-search" aria-label="搜索记忆" placeholder="搜索标题、摘要、关键词">'
           + '<select id="memory-category" aria-label="记忆分类"><option value="">全部</option value="user">用户（您）</option><option value="topic">主题</option><option value="domain">领域</option></select>'
           + '<button id="memory-add" class="side-mini-btn" type="button">添加记忆</button></div><div id="memory-cards"></div>';
-        html += '<div class="state-section">对话摘要</div>';
+        html += '<h2 class="state-section">对话摘要</h2>';
         html += st.summary
           ? '<div class="summary-box">' + esc(st.summary) + "</div>"
           : '<div class="state-empty">暂无，多聊几句会自动生成</div>';
-        html += '<div class="state-section">对话便签</div>';
+        html += '<h2 class="state-section">对话便签</h2>';
         if (!st.notes.length) html += '<div class="state-empty">还没有便签</div>';
         for (const n of st.notes) {
           html += '<article class="memory-card"><strong>' + esc(n.tag || '对话便签') + '</strong>'
@@ -3308,7 +3447,7 @@
             + '<button class="note-edit" data-id="' + n.id + '" type="button">编辑</button>'
             + '<button class="state-del" data-type="note" data-id="' + n.id + '" title="删除便签">删除</button></div></article>';
         }
-        html += '<div class="state-section">对话资料</div>';
+        html += '<h2 class="state-section">对话资料</h2>';
         const docs = st.docs || [];
         if (!docs.length) html += '<div class="state-empty">还没有导入资料</div>';
         for (const d of docs) {
@@ -3387,7 +3526,6 @@
           try { await api("/api/backups/open", { method: "POST" }); }
           catch (e) { alert("没打开成功喵：" + e.message); }
         });
-        const stateSec = document.getElementById("sec-state");
         // Backups load when the user expands their section.
       } catch (e) { /* 网络抖动忽略 */ }
     }
@@ -3843,6 +3981,7 @@
     }
 
     async function newProjectChat(projectId) {
+      if (!(await leaveDailyForNewChat())) return;
       const created = await api("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -4078,41 +4217,66 @@
     async function initPermission() {
       const PERMS = [
         { value: "workspace", label: "请求审批" },
-        { value: "daily", label: "日常模式" },
         { value: "read_only", label: "只读工作" },
         { value: "full", label: "完全批准" }
       ];
+      const modeSelect = document.getElementById('chat-mode-select');
+      let workPermission = 'workspace';
+      let changing = false;
+      async function changePermission(mode) {
+        if (changing) return;
+        if (state.busy || state.editingUser) {
+          modeSelect.value = state.chatMode === 'daily' ? 'daily' : 'work';
+          showTaskToast('请先停止当前回复或完成编辑，再切换模式与权限');
+          return;
+        }
+        changing = true;
+        modeSelect.disabled = true;
+        permBtn.disabled = true;
+        try {
+          const r = await api('/api/permissions', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode })
+          });
+          renderPerm(r.mode);
+          if (r.mode === 'daily') await switchTo((await api('/api/companionship/daily-session')).id);
+          else if (state.currentId === 'nyalume-daily') await switchTo((await api('/api/sessions', {method: 'POST'})).id);
+          await renderState();
+        } catch (error) {
+          renderPerm(state.chatMode);
+          showTaskToast('切换未完成，请重试：' + error.message);
+        } finally {
+          changing = false;
+          modeSelect.disabled = false;
+          permBtn.disabled = false;
+          permMenu.classList.remove('show');
+        }
+      }
+      modeSelect.onchange = () => changePermission(modeSelect.value === 'daily' ? 'daily' : workPermission);
       permMenu.innerHTML = "";
       for (const p of PERMS) {
         const b = document.createElement("button");
         b.type = "button";
         b.textContent = p.label;
-        b.addEventListener("click", async () => {
-          try {
-            const r = await api("/api/permissions", {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ mode: p.value })
-            });
-            renderPerm(r.mode);
-            if (r.mode === "daily") await switchTo((await api("/api/companionship/daily-session")).id);
-            else if (state.currentId === "nyalume-daily") await switchTo((await api("/api/sessions", {method: "POST"})).id);
-            await renderState();
-            permMenu.classList.remove("show");
-          } catch (e) { alert("模式没切过去喵：" + e.message); }
-        });
+        b.addEventListener('click', () => changePermission(p.value));
         permMenu.appendChild(b);
       }
       function renderPerm(mode) {
         const cur = PERMS.find((p) => p.value === mode) || PERMS[0];
-        state.chatMode = cur.value;
-        if (cur.value === 'daily') setPlanMode(false);
+        const daily = mode === 'daily';
+        state.chatMode = daily ? 'daily' : cur.value;
+        if (!daily) { workPermission = cur.value; state.workPermission = cur.value; }
+        modeSelect.value = daily ? 'daily' : 'work';
+        document.getElementById('work-permissions').hidden = daily;
+        document.getElementById('plan-toggle').hidden = daily;
+        document.getElementById('composer-caption').hidden = daily;
+        if (daily) { setPlanMode(false); setPursuitMode(false); }
+        if (daily) { permMenu.classList.remove('show'); addMenu.classList.remove('show'); }
         permBtn.textContent = cur.label;
-        permBtn.title = cur.value === "daily"
-          ? "日常模式：陪伴聊天与虚拟小窝，好感度生效；文件、命令和联网工具关闭"
-          : "工作权限：" + cur.label;
-        addBtn.disabled = cur.value === "daily";
-        addBtn.title = cur.value === "daily"
+        permBtn.title = "工作权限：" + cur.label;
+        modeSelect.title = daily ? '陪伴聊天；文件、命令和联网工具关闭' : '一起处理任务；可选择访问权限与计划模式';
+        addBtn.disabled = daily;
+        addBtn.title = daily
           ? "日常模式不导入文件；切回工作模式后可用"
           : "添加：图片 / 文件 / 文件夹";
         permMenu.querySelectorAll("button").forEach((x) => {
@@ -4202,10 +4366,27 @@
       }
     }
 
+    /** 日常模式只有一个常驻对话，服务端还会把消息并回它；开新对话前必须先退出。 */
+    async function leaveDailyForNewChat() {
+      if (state.chatMode !== "daily") return true;
+      const mode = state.workPermission || "workspace";
+      try {
+        const saved = await api("/api/permissions", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode })
+        });
+        state.renderPerm?.(saved.mode || mode);
+        return true;
+      } catch (error) {
+        showTaskToast("切回工作模式没成功，先没开新对话：" + (error && error.message ? error.message : error));
+        return false;
+      }
+    }
+
     async function newChat() {
-      const created = state.chatMode === "daily"
-        ? await api("/api/companionship/daily-session")
-        : await api("/api/sessions", { method: "POST" });
+      if (!(await leaveDailyForNewChat())) return;
+      const created = await api("/api/sessions", { method: "POST" });
       setPursuitMode(false);
       setPlanMode(false);
       await switchTo(created.id);
@@ -4876,7 +5057,7 @@
     }
     window._startPlanMode = () => {
       if (state.busy || state.editingUser) { showTaskToast('请先停止当前回复或完成编辑'); return; }
-      if (state.chatMode === 'daily') { showTaskToast('请先通过权限菜单切回工作模式，再进入计划模式'); return; }
+      if (state.chatMode === 'daily') { showTaskToast('请先切换到工作助手，再进入计划模式'); return; }
       setPlanMode(true); input.focus();
     };
     document.getElementById('plan-toggle').onclick = () => {
@@ -4887,7 +5068,7 @@
     window._startPursuitMode = async () => {
       if (state.busy || state.editingUser) { showTaskToast('请先停止当前回复或完成编辑'); return; }
       if (state.chatMode === 'daily') {
-        showTaskToast('请先通过权限菜单切回工作模式，再进入目标模式'); return;
+        showTaskToast('请先切换到工作助手，再进入目标模式'); return;
       }
       setPursuitMode(true); input.focus();
     };
@@ -5568,7 +5749,130 @@
       }
     }
 
+    let updateTimer = null;
+    let updateBusy = false;
+    let updateSourceDirty = false;
+
+    function renderUpdate(data) {
+      const busy = updateBusy || ['checking', 'downloading', 'ready'].includes(data.phase);
+      for (const id of ['update-source', 'update-prefix', 'update-source-save']) document.getElementById(id).disabled = busy;
+      if (!updateSourceDirty) {
+        document.getElementById('update-source').value = data.source?.mode || 'auto';
+        document.getElementById('update-prefix').value = data.source?.prefix || '';
+        document.getElementById('update-prefix-row').classList.toggle('hidden', document.getElementById('update-source').value !== 'custom');
+      }
+      document.getElementById('update-version').textContent = '当前版本 v' + data.current_version;
+      const latest = document.getElementById('update-latest');
+      latest.hidden = !data.latest_version;
+      latest.textContent = data.latest_version ? 'GitHub 正式版 ' + data.latest_version : '';
+      document.getElementById('update-status').textContent = data.message || '';
+      document.getElementById('update-result').dataset.phase = data.phase;
+      document.getElementById('update-heading').textContent = {
+        checking: '正在连接 GitHub Releases', downloading: '正在下载更新', ready: '更新已准备好',
+        error: '暂时无法更新', configured: '更新源已保存', installed: '更新安装完成',
+        checked: data.available ? '发现新版本' : '当前版本无需更新'
+      }[data.phase] || '准备检查更新';
+      const checked = document.getElementById('update-checked');
+      checked.hidden = !data.checked_at;
+      checked.textContent = data.checked_at ? '上次检查 ' + new Date(data.checked_at * 1000).toLocaleString('zh-CN')
+        + (data.metadata_source ? ' · 版本信息来自 ' + data.metadata_source : '') : '';
+      document.getElementById('update-progress-wrap').hidden = data.phase !== 'downloading';
+      const progress = document.getElementById('update-progress');
+      if (data.total > 0) {
+        const percent = Math.min(100, Math.max(0, Math.floor((data.downloaded || 0) * 100 / data.total)));
+        progress.value = percent;
+        document.getElementById('update-progress-text').textContent = percent + '% · '
+          + ((data.downloaded || 0) / 1048576).toFixed(1) + ' / ' + (data.total / 1048576).toFixed(1) + ' MB';
+      } else {
+        progress.removeAttribute('value');
+        document.getElementById('update-progress-text').textContent = '正在连接与准备安装包…';
+      }
+      document.getElementById('update-check').disabled = busy || updateSourceDirty;
+      const install = document.getElementById('update-install');
+      install.hidden = !data.installable;
+      install.disabled = busy || updateSourceDirty;
+      install.textContent = data.latest_version ? '下载并安装 ' + data.latest_version : '下载并安装最新版';
+      document.getElementById('update-check').classList.toggle('update-primary', !data.installable);
+      document.getElementById('update-notes').textContent = data.notes || '';
+      document.getElementById('update-details').hidden = !data.notes;
+      if (['checking', 'downloading', 'ready'].includes(data.phase)) {
+        clearTimeout(updateTimer);
+        updateTimer = setTimeout(loadUpdateStatus, 1000);
+      }
+    }
+
+    async function loadUpdateStatus() {
+      clearTimeout(updateTimer);
+      try { renderUpdate(await api('/api/updates')); }
+      catch (e) { document.getElementById('update-status').textContent = '读取更新状态失败：' + e.message; }
+    }
+
+    async function runUpdate(action) {
+      if (updateBusy) return;
+      updateBusy = true;
+      document.getElementById('update-check').disabled = true;
+      document.getElementById('update-install').disabled = true;
+      for (const id of ['update-source', 'update-prefix', 'update-source-save']) document.getElementById(id).disabled = true;
+      document.getElementById('update-status').textContent = action === 'check' ? '正在检查最新正式版…' : '正在准备下载…';
+      document.getElementById('update-heading').textContent = action === 'check' ? '正在连接 GitHub Releases' : '正在准备更新';
+      let data;
+      try {
+        data = await api('/api/updates/' + action, {method: 'POST', headers: {'X-Nyalume-Update': '1'}});
+      } catch (e) {
+        document.getElementById('update-result').dataset.phase = 'error';
+        document.getElementById('update-heading').textContent = '暂时无法更新';
+        document.getElementById('update-status').textContent = e.message + '，可重试或打开发行页。';
+      } finally {
+        updateBusy = false;
+        if (data) renderUpdate(data);
+        else {
+          document.getElementById('update-check').disabled = updateSourceDirty;
+          document.getElementById('update-install').hidden = true;
+          for (const id of ['update-source', 'update-prefix', 'update-source-save']) document.getElementById(id).disabled = false;
+        }
+      }
+    }
+    document.getElementById('update-check').addEventListener('click', () => runUpdate('check'));
+    document.getElementById('update-install').addEventListener('click', () => runUpdate('install'));
+    function markUpdateSourceDirty() {
+      updateSourceDirty = true;
+      document.getElementById('update-prefix-row').classList.toggle('hidden', document.getElementById('update-source').value !== 'custom');
+      document.getElementById('update-check').disabled = true;
+      document.getElementById('update-install').disabled = true;
+      document.getElementById('update-status').textContent = '更新源尚未保存，请点击“保存更新源”。';
+    }
+    document.getElementById('update-source').addEventListener('change', markUpdateSourceDirty);
+    document.getElementById('update-prefix').addEventListener('input', markUpdateSourceDirty);
+    document.getElementById('update-source-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      if (updateBusy) return;
+      updateBusy = true;
+      document.getElementById('update-source-save').disabled = true;
+      document.getElementById('update-source').disabled = true;
+      document.getElementById('update-prefix').disabled = true;
+      document.getElementById('update-check').disabled = true;
+      document.getElementById('update-install').disabled = true;
+      document.getElementById('update-status').textContent = '正在保存更新源…';
+      try {
+        const data = await api('/api/updates/source', {method: 'POST',
+          headers: {'Content-Type': 'application/json', 'X-Nyalume-Update': '1'},
+          body: JSON.stringify({mode: document.getElementById('update-source').value,
+                                prefix: document.getElementById('update-prefix').value})});
+        updateSourceDirty = false;
+        updateBusy = false;
+        renderUpdate(data);
+      } catch (e) {
+        document.getElementById('update-status').textContent = '保存更新源失败：' + e.message;
+      } finally {
+        updateBusy = false;
+        document.getElementById('update-source-save').disabled = false;
+        document.getElementById('update-source').disabled = false;
+        document.getElementById('update-prefix').disabled = false;
+      }
+    });
+
     function selectSettingsPanel(name) {
+      clearTimeout(updateTimer);
       document.querySelectorAll("[data-settings-panel]").forEach((button) => {
         button.classList.toggle("active", button.dataset.settingsPanel === name);
       });
@@ -5576,6 +5880,8 @@
         panel.classList.toggle("hidden", panel.id !== "panel-" + name);
       });
       if (name === "skills") loadSkills();
+      else if (name === 'pet') renderState();
+      else if (name === 'updates') loadUpdateStatus();
       else loadConfigForm();
     }
 
@@ -5584,6 +5890,7 @@
       selectSettingsPanel(panel);
     }
     function closeSettings() {
+      clearTimeout(updateTimer);
       document.getElementById("settings-overlay").classList.add("hidden");
       sessionStorage.setItem("cfg-guide", "1"); // 本次会话不再自动弹配置引导
     }
@@ -5607,17 +5914,23 @@ async function loadConfigForm() {
         providerPresets = data.providers || {};
         cfgConfigured = {};
         form.innerHTML = "";
+        const primaryKeys = ['LLM_PROVIDER', 'LLM_API_KEY', 'LLM_MODEL'];
         const groups = {
-          req: { title: "必填", rows: [] },
-          opt: { title: "选填", rows: [] }
+          main: { title: '模型连接', rows: [] },
+          advanced: { title: '高级配置 · 接口地址与其他选项', rows: [] }
         };
-        for (const f of configFields) {
+        const orderedFields = [...configFields].sort((a, b) => {
+          const rank = key => primaryKeys.includes(key) ? primaryKeys.indexOf(key) : primaryKeys.length;
+          return rank(a.key) - rank(b.key);
+        });
+        for (const f of orderedFields) {
           cfgConfigured[f.key] = !!f.configured;
           const row = document.createElement("div");
           row.className = "cfg-row";
           row.dataset.configKey = f.key;
           if (f.hidden) continue;
           const label = document.createElement("label");
+          label.htmlFor = 'cfg-input-' + f.key;
           label.textContent = f.label;
           if (f.required) {
             const star = document.createElement("span");
@@ -5651,7 +5964,7 @@ async function loadConfigForm() {
             const input = document.createElement("input");
             input.type = "password";
             input.id = "cfg-input-" + f.key;
-            input.placeholder = "sk-…";
+            input.placeholder = f.configured ? '已设置，可留空保持' : '填写所选供应商的 API Key';
             input.addEventListener("input", () => updateReqState(f.key));
             wrap.appendChild(input);
             if (f.configured) {
@@ -5666,6 +5979,7 @@ async function loadConfigForm() {
               clearBtn.addEventListener("click", () => {
                 input.value = "";
                 input.dataset.clear = "1";
+                input.placeholder = '填写所选供应商的 API Key';
                 chip.remove();
                 clearBtn.remove();
                 updateReqState(f.key);
@@ -5683,35 +5997,31 @@ async function loadConfigForm() {
             if (f.required) input.addEventListener("input", () => updateReqState(f.key));
             row.appendChild(input);
           }
-          groups[f.required ? "req" : "opt"].rows.push(row);
-          if (f.required) updateReqState(f.key);
+          groups[primaryKeys.includes(f.key) || f.required ? 'main' : 'advanced'].rows.push(row);
         }
-        for (const key of ["req", "opt"]) {
+        for (const key of ['main', 'advanced']) {
           const g = groups[key];
           if (!g.rows.length) continue;
-          const section = document.createElement("div");
+          const section = document.createElement(key === 'advanced' ? 'details' : 'section');
           section.className = "cfg-group";
-          const head = document.createElement("button");
-          head.type = "button";
+          if (key === 'advanced') section.id = 'cfg-advanced';
+          const head = document.createElement(key === 'advanced' ? 'summary' : 'h2');
           head.className = "cfg-group-head";
-          const mark = document.createElement("span");
-          mark.className = "mark";
-          mark.textContent = "▾";
-          const title = document.createElement("span");
-          title.textContent = g.title;
-          head.append(mark, title);
-          head.addEventListener("click", () => {
-            section.classList.toggle("collapsed");
-            mark.textContent = section.classList.contains("collapsed") ? "▸" : "▾";
-          });
+          head.textContent = g.title;
           const body = document.createElement("div");
           body.className = "cfg-group-body";
           for (const rowEl of g.rows) body.appendChild(rowEl);
+          if (key === 'main') {
+            const modelHint = document.createElement('p');
+            modelHint.id = 'cfg-model-hint'; modelHint.className = 'cfg-field-hint';
+            body.append(modelHint);
+          }
           section.append(head, body);
           form.appendChild(section);
         }
         const provider = document.getElementById("cfg-input-LLM_PROVIDER");
         if (provider) applyProviderPreset(provider.value, false);
+        for (const f of configFields) if (f.required) updateReqState(f.key);
       } catch (e) {
         form.innerHTML = '<div class="state-empty">加载失败：' + esc(e.message) + "</div>";
       }
@@ -5723,9 +6033,15 @@ async function loadConfigForm() {
       const model = document.getElementById("cfg-input-LLM_MODEL");
       const modelRow = document.querySelector('[data-config-key="LLM_MODEL"]');
       if (modelRow) modelRow.classList.toggle("hidden", key !== "custom");
-      if (!fill || !preset) return;
-      if (base) base.value = preset.base_url || "";
-      if (model) model.value = preset.model || "";
+      if (fill && preset) {
+        if (base) base.value = preset.base_url || '';
+        if (model) model.value = preset.model || '';
+      }
+      const modelHint = document.getElementById('cfg-model-hint');
+      if (modelHint) {
+        modelHint.hidden = key === 'custom';
+        modelHint.textContent = '当前模型：' + (model?.value || preset?.model || '未设置') + '。保存后可在聊天输入框旁切换模型。';
+      }
     }
 
     let cfgConfigured = {};
@@ -5733,8 +6049,9 @@ async function loadConfigForm() {
       const input = document.getElementById("cfg-input-" + key);
       const el = document.getElementById("req-state-" + key);
       if (!input || !el) return;
-      const filled = Boolean(input.value && input.value.trim()) || !!cfgConfigured[key];
-      el.textContent = filled ? "已填" : "*必填";
+      const configured = !!cfgConfigured[key] && input.dataset.clear !== '1';
+      const filled = Boolean(input.value && input.value.trim()) || configured;
+      el.textContent = configured && !input.value.trim() ? '已设置 · 可留空保持' : filled ? '已填' : '*必填';
       el.className = filled ? "filled" : "req";
     }
 
@@ -5895,18 +6212,22 @@ async function loadConfigForm() {
     const helpBtn = document.getElementById("cfg-help");
     const helpPop = document.getElementById("cfg-help-pop");
     if (helpBtn && helpPop) {
+      const showHelp = visible => { helpPop.classList.toggle('show', visible); helpBtn.setAttribute('aria-expanded', String(visible)); };
       helpBtn.addEventListener("mouseenter", () => {
         clearTimeout(helpTimer);
-        helpTimer = setTimeout(() => helpPop.classList.add("show"), 500);
+        helpTimer = setTimeout(() => showHelp(true), 500);
       });
       helpBtn.addEventListener("mouseleave", () => {
         clearTimeout(helpTimer);
-        helpPop.classList.remove("show");
+        showHelp(false);
       });
-      helpBtn.addEventListener("click", () => helpPop.classList.toggle("show"));
+      helpBtn.addEventListener('click', () => showHelp(!helpPop.classList.contains('show')));
+      helpBtn.addEventListener('keydown', event => { if (event.key === 'Escape') showHelp(false); });
+      helpBtn.addEventListener('blur', () => showHelp(false));
     }
 
     document.getElementById("config-btn").addEventListener("click", () => openSettings("api"));
+    document.getElementById("updates-open").addEventListener("click", () => openSettings("updates"));
     document.getElementById("settings-close").addEventListener("click", closeSettings);
     document.getElementById("config-save").addEventListener("click", saveConfig);
 
@@ -5979,7 +6300,8 @@ async function loadConfigForm() {
       addMenu.classList.toggle("show");
     });
     addMenu.addEventListener("click", (e) => {
-      const kind = e.target && e.target.dataset && e.target.dataset.kind;
+      const button = e.target.closest('button[data-kind]');
+      const kind = button && addMenu.contains(button) && button.dataset.kind;
       if (!kind) return;
       addMenu.classList.remove("show");
       if (kind === "image") imageInput.click();
@@ -6041,7 +6363,7 @@ async function loadConfigForm() {
         button.disabled = true;
         button.textContent = "正在切换…";
         const action = act === "we-pick" ? "recent?index=" + button.dataset.index
-          : act === "we-next" ? "next" : "open";
+          : act === "we-current" ? "current" : act === "we-next" ? "next" : "open";
         const ok = await useWallpaperEngine(action);
         button.disabled = false;
         button.textContent = label;
@@ -6194,7 +6516,12 @@ async function loadConfigForm() {
       document.getElementById("full-chat-link").href = wantSession ? '/?session=' + encodeURIComponent(wantSession) : '/';
       if (wantSession) {
         try {
-          await switchTo(wantSession); // 桌宠拖文件夹建项目后直达对应会话
+          if (state.currentId === wantSession) {
+            await showMessages(wantSession);
+            await renderState();
+          } else {
+            await switchTo(wantSession); // 桌宠拖文件夹建项目后直达对应会话
+          }
         } catch (e) {
           if (state.currentId) {
             await showMessages(state.currentId);
@@ -6214,6 +6541,7 @@ async function loadConfigForm() {
       await initWallpaper();
       await initFirstRunGuide();
       if (new URLSearchParams(location.search).get('home') === '1') NyalumeUI.showHome();
+      if (new URLSearchParams(location.search).get('memory') === '1') NyalumeUI.showMemory();
       requestAnimationFrame(() => {
         log.scrollTop = log.scrollHeight;
         updateFloatButtons();

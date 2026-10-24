@@ -51,6 +51,11 @@ dist/
 # 3D 桌宠的固定素材目录：模型放 models/、动作放 motions/（用户自备，不入库）
 /models/
 /motions/
+/voices/
+/outputs/eku-natural-20261013/
+/outputs/eku-wardrobe/
+/outputs/eku-presence-20261020/
+/outputs/eku-breeze-20261020/
 
 # 个人文档（教程、调试记录、设计笔记）只留本地，不公开发布
 /docs/

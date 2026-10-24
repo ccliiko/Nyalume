@@ -25,7 +25,7 @@ def pointer(tmp_path, monkeypatch):
 
 def test_touch_never_moves_window_and_boundaries_survive_other_actions(pointer):
     api, now, keys, notes = pointer
-    api._start_left(200, 300, alt=True)
+    api._start_left(200, 300, alt=False)
     gid = api._left['id']
     for x in range(201, 400):
         api._move_left(x, 300)
@@ -45,12 +45,12 @@ def test_touch_never_moves_window_and_boundaries_survive_other_actions(pointer):
 
 
 @pytest.mark.parametrize('scale', [1.0, 1.5, 2.0])
-def test_left_drag_immediately_uses_logical_pixels_without_local_grab(pointer, scale):
+def test_alt_drag_immediately_uses_logical_pixels_without_local_grab(pointer, scale):
     api, now, keys, notes = pointer
-    api._start_left(200, 300, alt=False, scale=scale)
+    api._start_left(200, 300, alt=True, scale=scale)
     api._move_left(200 + 6 * scale, 300)
     assert (api._x, api._y) == (100, 200)
-    keys[0x12] = 0x8000  # 中途按下 Alt 不切换模式。
+    keys[0x12] = 0  # 中途松开 Alt 不切换模式。
     api._move_left(200 + 10 * scale, 300 + 4 * scale)
     assert now[0] == api._left['started']  # 不需要等待任何时间门槛。
     assert (api._x, api._y) == (100 + 10 * scale, 200 + 4 * scale)
@@ -62,12 +62,12 @@ def test_left_drag_immediately_uses_logical_pixels_without_local_grab(pointer, s
     assert not api._interaction_events and not notes
 
 
-def test_alt_released_mid_touch_does_not_move_and_updates_have_logical_size(pointer):
+def test_alt_pressed_mid_touch_does_not_move_and_updates_have_logical_size(pointer):
     api, now, keys, notes = pointer
-    api._start_left(200, 300, alt=True, scale=2)
+    api._start_left(200, 300, alt=False, scale=2)
     begin = api.poll_action()
     assert begin['width'] == 220 and begin['height'] == 330
-    keys[0x12] = 0
+    keys[0x12] = 0x8000
     api._move_left(300, 400)
     now[0] += 0.7
     update = api.poll_action()
@@ -77,26 +77,49 @@ def test_alt_released_mid_touch_does_not_move_and_updates_have_logical_size(poin
     assert (api._x, api._y) == (100, 200)
 
 
-def test_plain_click_is_queued_once_after_release_without_contact(pointer):
+@pytest.mark.parametrize('guard', ['quiet', 'menu', 'fullscreen', 'locked', 'move'])
+def test_stationary_pointer_is_disarmed_when_automatic_notices_are_suppressed(pointer, guard):
+    api, now, keys, notes = pointer
+    api.update_look(200, 300)
+    active = api.poll_action()
+    assert active['pointer']['x'] == pytest.approx(100 / 440)
+    assert active['pointer']['y'] == pytest.approx(100 / 660)
+    assert active['pointer']['active'] is True and active['pointer']['valid']
+    if guard == 'quiet': api._effective_quiet = True
+    elif guard == 'menu': api._menu_rects = [(0, 0, 1, 1)]
+    elif guard == 'fullscreen': api._desk['fullscreen'] = True
+    elif guard == 'locked': api._locked = True; api._eff_cursor = (200, 300)
+    else: api._start_left(200, 300, alt=True)
+    api.update_look(200, 300)  # No mouse movement: changing the guard still crosses the bridge.
+    inactive = api.poll_action()
+    assert inactive['kind'] == 'look' and inactive['pointer']['active'] is False
+    assert api._pet_state.taps == 0 and not notes
+
+
+def test_plain_click_uses_one_contact_and_counts_after_renderer_confirmation(pointer):
     api, now, keys, notes = pointer
     api._start_left(200, 300, alt=False)
-    assert not api._interaction_events
+    gid = api._left['id']
     api._move_left(203, 302)
     now[0] += .15
     api._finish_left()
     api._finish_left()
     api._pending = {'kind': 'face', 'emotion': 'happy'}
-    tap = api.poll_action()
-    assert tap == {'kind': 'tap', 'x': 103 / 440, 'y': 102 / 660, 'bounce': True}
+    begin, end = api.poll_action(), api.poll_action()
+    assert begin['phase'] == 'begin' and end['phase'] == 'end'
+    assert end['x'] == pytest.approx(103 / 440)
+    assert begin['id'] == end['id'] == gid
     assert api.poll_action() == {'kind': 'face', 'emotion': 'happy'}
-    assert not api._interaction_records and (api._x, api._y) == (100, 200)
-    api.tap_info('head')
-    assert api._pet_state.taps == 1 and len(notes) == 1
+    assert (api._x, api._y) == (100, 200)
+    api.interaction_info(gid, 'head', 'begin')
+    api.interaction_info(gid, 'head', 'end')
+    assert not api._interaction_records
+    assert api._pet_state.taps == 1 and len(notes) == 2
 
 
 def test_fast_drag_moves_immediately_without_replaying_click(pointer):
     api, now, keys, notes = pointer
-    api._start_left(200, 300, alt=False)
+    api._start_left(200, 300, alt=True)
     api._move_left(240, 320)
     assert (api._x, api._y) == (140, 220)
     assert api.poll_action()['kind'] == 'drag'
@@ -108,7 +131,7 @@ def test_fast_drag_moves_immediately_without_replaying_click(pointer):
 @pytest.mark.parametrize('cancel,moved', [(True, 0), (False, 20)])
 def test_cancel_and_fast_drag_do_not_click(pointer, cancel, moved):
     api, now, keys, notes = pointer
-    api._start_left(200, 300, alt=False)
+    api._start_left(200, 300, alt=True)
     api._move_left(200 + moved, 300)
     now[0] += .1
     api._finish_left(cancel=cancel)
@@ -116,19 +139,21 @@ def test_cancel_and_fast_drag_do_not_click(pointer, cancel, moved):
     assert (api._x, api._y) == ((100, 200) if cancel else (120, 200))
 
 
-def test_static_left_hold_never_enters_interaction(pointer):
+def test_static_alt_hold_never_enters_interaction(pointer):
     api, now, keys, notes = pointer
-    api._start_left(200, 300, alt=False)
+    api._start_left(200, 300, alt=True)
     now[0] += 1
     assert api._poll_interaction() is None
     assert not api._interaction_records and (api._x, api._y) == (100, 200)
     api._finish_left()
-    assert api.poll_action()['kind'] == 'tap'
+    action = api.poll_action()
+    assert action is None or action['kind'] == 'look'
+    assert not api._interaction_events
 
 
 def test_one_valid_gesture_records_start_end_and_counts_only_once(pointer):
     api, now, keys, notes = pointer
-    api._start_left(200, 300, alt=True)
+    api._start_left(200, 300, alt=False)
     gid = api._left['id']
     api.interaction_info(gid, 'head', 'begin')
     api.interaction_info(gid, 'head', 'begin')
@@ -140,14 +165,14 @@ def test_one_valid_gesture_records_start_end_and_counts_only_once(pointer):
     api.interaction_info(gid, 'head', 'end')
     assert len(notes) == 2 and api._pet_state.taps == 1
     assert len(api._pet_state.history) == 1
-    api._start_left(200, 300, alt=True)
+    api._start_left(200, 300, alt=False)
     api.interaction_info(api._left['id'], None, 'end')
     assert len(notes) == 2 and api._pet_state.taps == 1
 
 
 def test_missed_release_cancels_contact_without_replaying_click(pointer):
     api, now, keys, notes = pointer
-    api._start_left(200, 300, alt=True)
+    api._start_left(200, 300, alt=False)
     assert api.poll_action()['phase'] == 'begin'
     now[0] += 1
     keys[0x01] = 0
@@ -159,7 +184,7 @@ def test_missed_release_cancels_contact_without_replaying_click(pointer):
 
 def test_resize_cancels_before_geometry_changes(pointer):
     api, now, keys, notes = pointer
-    api._start_left(200, 300, alt=True)
+    api._start_left(200, 300, alt=False)
     assert api.poll_action()['phase'] == 'begin'
     api.request_resize(880, 1320, 2)
     assert api.poll_action()['phase'] == 'cancel'
@@ -169,7 +194,7 @@ def test_resize_cancels_before_geometry_changes(pointer):
 def test_suspended_renderer_queue_is_bounded_and_resets_old_contact(pointer):
     api, now, keys, notes = pointer
     for _ in range(40):
-        api._start_left(200, 300, alt=True)
+        api._start_left(200, 300, alt=False)
         api._finish_left()
     assert len(api._interaction_events) <= 64
     first = api.poll_action()
@@ -222,8 +247,8 @@ def test_global_hook_and_game_raw_input_share_gestures_without_swallowing(pointe
     pet._display_window_thread(api, None, '', '')
     assert len(forwarded) == (3 if raw else 4)
     assert api._left is None
-    assert api._x == (100 if alt else 120)
-    if not alt:
+    assert api._x == (120 if alt else 100)
+    if alt:
         assert not api._interaction_events
         assert api._drag_dx == 20
     else:
@@ -235,7 +260,7 @@ def test_global_hook_and_game_raw_input_share_gestures_without_swallowing(pointe
 
 def test_menu_interrupt_preserves_cancel_before_menu(pointer):
     api, now, keys, notes = pointer
-    api._start_left(200, 300, alt=True)
+    api._start_left(200, 300, alt=False)
     assert api.poll_action()['phase'] == 'begin'
     api._pending = {'kind': 'menu', 'items': []}
     assert api.poll_action()['phase'] == 'cancel'
@@ -245,7 +270,7 @@ def test_menu_interrupt_preserves_cancel_before_menu(pointer):
 
 def test_companion_record_io_does_not_block_global_pointer_lock(pointer, monkeypatch):
     api, now, keys, notes = pointer
-    api._start_left(200, 300, alt=True)
+    api._start_left(200, 300, alt=False)
 
     def write_note():
         finished = threading.Event()
@@ -266,7 +291,7 @@ def test_already_queued_proactive_bubble_obeys_touch_cooldown(pointer, monkeypat
     api, now, keys, notes = pointer
     monkeypatch.setattr(companionship, 'delivery_valid', lambda _: True)
     api._proactive = True
-    api._start_left(200, 300, alt=True)
+    api._start_left(200, 300, alt=False)
     gid = api._left['id']
     api._finish_left()
     api.poll_action()
@@ -280,3 +305,50 @@ def test_already_queued_proactive_bubble_obeys_touch_cooldown(pointer, monkeypat
     monkeypatch.setattr(pet.time, 'time', lambda: after_cooldown)
     api._pending = action
     assert api.poll_action() == action
+
+
+@pytest.mark.parametrize('trigger', ['middle', 'menu'])
+def test_deliberate_close_never_relaunches_the_pet(pointer, monkeypatch, trigger):
+    """中键 / 菜单"退出"是用户自己要关，不能被她自己的看门狗当成崩溃再拉起来。
+
+    用户报的现象：中键关掉后几秒桌宠又自己开一遍 —— 退出路径只把 `_display_hwnd`
+    置 0，而送帧线程把"句柄为 0"读成"显示线程死了"，于是 restart_with() 又起了一只。
+    这里走真实的钩子 → 消息泵链路，两个关闭入口都要立住"正在退出"这道闸。
+    """
+    api, now, keys, notes = pointer
+    api._alpha = np.full((660, 440), 255, dtype=np.uint8)
+    callback, popped, destroyed = [], [], threading.Event()
+    monkeypatch.setattr(pet, '_log', lambda *_: None)
+    monkeypatch.setattr(pet, '_dbg', lambda *_: None)
+    monkeypatch.setattr(pet, '_create_layered_window', lambda: 123)
+    monkeypatch.setattr(pet, '_register_raw_mouse', lambda _: True)
+    monkeypatch.setattr(pet, '_HOOKPROC', lambda cb: cb)
+    monkeypatch.setattr(pet.time, 'time', lambda: now[0])
+    monkeypatch.setattr(pet._user32, 'SetWindowsHookExW', lambda _, cb, *__: callback.append(cb) or 1)
+    monkeypatch.setattr(pet._user32, 'CallNextHookEx', lambda *_: 0)
+    monkeypatch.setattr(pet._user32, 'UnhookWindowsHookEx', lambda *_: True)
+    monkeypatch.setattr(pet._user32, 'TranslateMessage', lambda *_: 0)
+    monkeypatch.setattr(pet._user32, 'DispatchMessageW', lambda *_: 0)
+    monkeypatch.setattr(pet.subprocess, 'Popen', lambda *a, **k: popped.append(a))
+    window = type('Window', (), {'destroy': lambda _self: destroyed.set()})()
+
+    def receive(message, *_):
+        if callback and api._display_hwnd:  # 关掉之后窗口没了，消息泵自然结束
+            if trigger == 'menu':
+                api._menu_rects = [{'id': 'quit', 'x': 0, 'y': 0, 'w': 440, 'h': 660}]
+                kind = pet._WM_LBUTTONDOWN
+            else:
+                kind = pet._WM_MBUTTONUP
+            info = pet._MsllHookStruct()
+            info.pt.x, info.pt.y = 200, 300
+            callback[0](0, kind, ctypes.addressof(info))
+        message._obj.message = 0
+        return 1
+
+    monkeypatch.setattr(pet._user32, 'GetMessageW', receive)
+    pet._display_window_thread(api, window, '', '')
+    assert destroyed.wait(1)  # 窗口确实拆了
+    assert api._display_hwnd == 0
+    # 看门狗（送帧线程 / _fps_watch）唯一的恢复动作就是 restart_with：退出中必须拒掉。
+    assert api.restart_with() is False
+    assert not popped

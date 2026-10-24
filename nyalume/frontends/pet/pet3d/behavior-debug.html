@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nyalume · 自主行为观察</title>
+  <style>
+    :root { color-scheme: dark; --bg:#171d1d; --surface:#202827; --ink:#edf1ec; --muted:#b0bfba; --line:#3d4c47; --accent:#a3cfb5; --warn:#eed39f; --error:#f1b3a8; }
+    * { box-sizing:border-box; }
+    [hidden] { display:none !important; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.65 system-ui,"Microsoft YaHei",sans-serif; }
+    ::selection { color:var(--bg); background:var(--accent); }
+    :focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
+    a { color:var(--accent); text-underline-offset:4px; }
+    button { font:inherit; color:var(--ink); background:var(--surface); border:1px solid var(--line); padding:7px 15px; border-radius:6px; cursor:pointer; }
+    button:hover { background:#2d3a35; }
+    main { max-width:1240px; margin:auto; padding:38px 32px 52px; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:24px; padding-bottom:25px; border-bottom:1px solid var(--line); }
+    h1 { font-size:26px; font-weight:600; margin:0 0 5px; }
+    h2 { font-size:18px; font-weight:600; margin:0 0 18px; }
+    p { margin:0; }
+    .muted,dt,th { color:var(--muted); }
+    .toolbar { display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+    #connection { color:var(--warn); }
+    #connection[data-state="live"] { color:var(--accent); }
+    #connection[data-state="error"] { color:var(--error); }
+    .overview { display:grid; grid-template-columns:minmax(280px,1fr) minmax(340px,1.4fr); gap:56px; padding:32px 0; border-bottom:1px solid var(--line); }
+    .need { display:grid; grid-template-columns:64px 1fr 54px; align-items:center; gap:15px; margin:15px 0; }
+    .value { text-align:right; font-variant-numeric:tabular-nums; }
+    meter { display:block; width:100%; height:16px; accent-color:var(--accent); }
+    meter::-webkit-meter-bar { background:#35423c; border:0; border-radius:3px; }
+    meter::-webkit-meter-optimum-value { background:var(--accent); border-radius:3px; }
+    .hint { font-size:13px; color:var(--muted); margin-top:15px; max-width:65ch; }
+    #actual { font-size:30px; line-height:1.3; font-weight:500; margin-bottom:8px; overflow-wrap:anywhere; }
+    dl { display:grid; grid-template-columns:1fr 1fr; gap:18px 30px; margin:24px 0 0; }
+    dt { font-size:13px; }
+    dd { margin:3px 0 0; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+    section.details { padding:30px 0; border-bottom:1px solid var(--line); }
+    section { min-width:0; }
+    .section-title { display:flex; align-items:baseline; justify-content:space-between; gap:20px; }
+    .scroll { overflow:auto; scrollbar-color:var(--line) var(--bg); }
+    table { width:100%; border-collapse:collapse; text-align:left; font-variant-numeric:tabular-nums; }
+    th { font-weight:500; font-size:13px; }
+    td,th { padding:11px 14px 11px 0; border-bottom:1px solid #303e38; vertical-align:top; }
+    tbody tr:last-child td { border-bottom:0; }
+    td:nth-child(2),td:nth-child(3) { white-space:nowrap; }
+    tr[data-selected="true"] { color:var(--accent); background:#22332a; }
+    td:first-child,th:first-child { padding-left:10px; }
+    code { font:12px/1.6 ui-monospace,Consolas,monospace; color:var(--muted); overflow-wrap:anywhere; }
+    .bottom { display:grid; grid-template-columns:1fr 1fr; gap:56px; padding-top:30px; }
+    #events { list-style:none; margin:0; padding:0; max-height:290px; overflow:auto; scrollbar-color:var(--line) var(--bg); }
+    #events li { padding:9px 0; border-bottom:1px solid #303e38; overflow-wrap:anywhere; }
+    #events time { color:var(--muted); font-size:13px; margin-right:16px; font-variant-numeric:tabular-nums; }
+    #empty-scores { padding:16px 10px; }
+    footer { color:var(--muted); font-size:13px; margin-top:32px; }
+    @media (max-width:760px) {
+      main { padding:24px 20px 36px; }
+      header { align-items:flex-start; flex-direction:column; gap:18px; }
+      .overview,.bottom { grid-template-columns:1fr; gap:30px; }
+      .section-title { flex-direction:column; gap:0; margin-bottom:14px; }
+      .section-title h2 { margin-bottom:4px; }
+      table { min-width:470px; }
+      #actual { font-size:27px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div><h1>自主行为观察</h1><p class="muted">Nyalume · 状态、决策与控制接管</p></div>
+    <div class="toolbar"><span id="connection" role="status" aria-live="polite">正在连接…</span><button id="pause" type="button" aria-pressed="false">暂停采样</button></div>
+  </header>
+  <div class="overview">
+    <section aria-labelledby="needs-title">
+      <h2 id="needs-title">内部状态</h2>
+      <div id="needs"></div>
+      <p class="hint" id="source-note">等待播放器状态。缺少的数据将显示为未知。</p>
+    </section>
+    <section aria-labelledby="actual-title">
+      <h2 id="actual-title">角色实际行为</h2><p id="actual">等待状态</p><p id="mode" class="muted">尚未收到自主状态协议</p>
+      <dl>
+        <div><dt>决策器选择</dt><dd id="selected">未知</dd></div>
+        <div><dt>控制接管原因</dt><dd id="owner">未知</dd></div>
+        <div><dt>行为剩余时间</dt><dd id="remaining">未知</dd></div>
+        <div><dt>下次决策</dt><dd id="decision">未知</dd></div>
+        <div><dt>最近中断</dt><dd id="cancel">暂无</dd></div>
+        <div><dt>状态更新时间</dt><dd id="age">尚未收到</dd></div>
+      </dl>
+    </section>
+  </div>
+  <section class="details" aria-labelledby="scores-title">
+    <div class="section-title"><h2 id="scores-title">候选决策</h2><p class="muted">最近一次评分；冷却与门禁决定当前资格</p></div>
+    <div class="scroll"><table><thead><tr><th scope="col">行为</th><th scope="col">评分</th><th scope="col">冷却</th><th scope="col">资格 / 原因</th></tr></thead><tbody id="scores"></tbody></table></div>
+    <p id="empty-scores" class="muted">等待候选评分。</p>
+  </section>
+  <div class="bottom">
+    <section aria-labelledby="capabilities-title"><h2 id="capabilities-title">可用行为</h2><div class="scroll"><table><thead><tr><th scope="col">行为</th><th scope="col">执行能力</th><th scope="col">原因</th></tr></thead><tbody id="capabilities"></tbody></table></div><p id="empty-capabilities" class="muted">当前播放器尚未提供能力信息。</p></section>
+    <section aria-labelledby="events-title"><h2 id="events-title">行为变化</h2><ol id="events" aria-label="最近一百条采样到的行为变化"></ol><p class="hint">只记录本页采样到的变化，最多保留 100 条。短于采样间隔的事件可能不会显示。</p></section>
+  </div>
+  <footer>只读界面，每秒采样一次，不发送动作或聊天请求。<a href="/pet_state" target="_blank" rel="noopener">查看原始状态</a></footer>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  const names = {idle:'待机',stand:'站立待机','look-around':'观察周围',observe:'观察',stretch:'伸懒腰',sit:'坐下',walk:'走动',rest:'休息',Smile:'微笑',Relax:'放松',Wink:'眨眼',ears:'动耳朵',hand:'手势',pose:'蹲 / 趴',curiosity:'观察目标',teasing:'逗弄',approach:'探身',reach:'伸手',contact:'鼠标互动',crouch:'蹲下',prone:'趴下',trial:'导入动作试验'};
+  const reasons = {'':'可参与选择','ambient-cooldown':'待机冷却','mouse-cooldown':'目标互动冷却','reach-cooldown':'伸手冷却','hand-cooldown':'手势冷却','pose-cooldown':'姿态冷却','recent-two':'最近两次已执行','target-unavailable':'没有有效鼠标目标','observe-first':'先观察目标','stationary':'目标静止','unreachable':'目标不可达','low-playfulness':'玩耍需求不足','annoyed':'当前不适合','system-active':'系统仍在活动','below-rest-threshold':'尚未达到休息阈值','wake-cooldown':'唤醒冷却','outside-approach':'不在探身范围','approach-disabled':'探身已关闭','reach-disabled':'伸手已关闭','missing-stretch-clip':'缺少全身伸展动画','missing-sit-clip':'缺少全身坐姿动画','desktop-movement-unavailable':'桌面移动尚未接入','missing-afk-phase':'休息动画段不完整',menu:'菜单操作',contact:'鼠标互动',touch:'触摸',working:'工作中',move:'用户搬动',quiet:'安静模式',fullscreen:'全屏应用',busy:'忙碌状态','locked-pointer':'鼠标锁定','automatic-off':'自动动作已关闭','manual-posture':'手动姿态保持',recovery:'互动恢复中',reaction:'情绪反应',rest:'休息中',occupied:'手动动作执行中'};
+  names['ambient-idle']='自然待机（导入动画）';
+  reasons['reach-motion-cooldown']='伸手动作恢复冷却';
+  Object.assign(reasons,{'needs-observe-only':'当前仅观察新状态','needs-context-stale':'需求上下文已过期','missing-idle-clip':'缺少已接入的待机动画',posture:'当前姿态不允许自主动作'});
+  const label = value => names[value] || value || '待机';
+  const reason = value => reasons[value] || value || '无';
+  const seconds = n => Number.isFinite(n) ? n < 0 ? '保持（手动）' : `${n.toFixed(1)} 秒` : '未知';
+  const fields = [['fatigue','疲劳'],['boredom','无聊'],['curiosity','好奇心'],['mood','心情'],['affinity','亲近度']];
+  const meters = {};
+  for (const [key,title] of fields) {
+    const row=document.createElement('div');row.className='need';
+    const text=document.createElement('label');text.htmlFor=`need-${key}`;text.textContent=title;
+    const meter=document.createElement('meter');meter.id=`need-${key}`;meter.min=0;meter.max=1;meter.value=0;meter.hidden=true;
+    const value=document.createElement('span');value.className='value';value.textContent='未知';
+    row.append(text,meter,value);$('needs').append(row);meters[key]={meter,value};
+  }
+  let paused=false, inFlight=false, timer, lastSignature='', lastData, receivedAt=0, fault='';
+  function cell(row,text) {const td=document.createElement('td');td.textContent=text;row.append(td);return td;}
+  function apply(data) {
+    const animation=data.animation||{}, director=animation.director||{}, needs=animation.autonomy;
+    for(const [key] of fields) {
+      const known=needs?.version===1 && Number.isFinite(needs[key]) && (key!=='affinity' || needs.affinityKnown);
+      const entry=meters[key];entry.meter.hidden=!known;entry.value.textContent=known?`${Math.round(needs[key]*100)}%`:'未知';
+      if(known) {entry.meter.value=Math.max(0,Math.min(1,needs[key]));entry.meter.setAttribute('aria-valuetext',entry.value.textContent);}
+    }
+    $('source-note').textContent=!needs?'当前播放器未提供新需求协议。':!needs.contextKnown?'等待 Python 状态协商；亲近度尚未知。':!needs.contextFresh?'Python 上下文已过期，保留最后有效值；新需求积分已暂停。':'疲劳 / 心情 / 亲近度来自 Python；无聊 / 好奇心由 Unity 汇总。';
+    $('actual').textContent=data.animation_age===null?'等待播放器状态':animation.afk?`休息 · ${{intro:'入睡',main:'渐入休息',loop:'循环',outro:'醒来'}[animation.afk]||animation.afk}`:label(animation.behavior||animation.posture);
+    $('mode').textContent=needs?.mode==='active'?'需求驱动已启用':needs?'状态观察阶段 · 仍沿用原行为决策':'旧播放器或尚未接线';
+    $('selected').textContent=director.action?label(director.action):'未知';
+    $('owner').textContent=animation.blockReason?reason(animation.blockReason):director.blockedReason?reason(director.blockedReason):animation.automatic?'自主控制':'自动动作已关闭';
+    $('remaining').textContent=seconds(animation.behaviorRemaining);$('decision').textContent=seconds(director.decisionIn);
+    $('cancel').textContent=animation.lastCancelReason?reason(animation.lastCancelReason):director.cancelReason?reason(director.cancelReason):'暂无';
+    $('scores').replaceChildren();const scores=director.candidates||[];
+    for(const candidate of scores) {
+      const row=document.createElement('tr');row.dataset.selected=String(candidate.action===director.action && director.action!=='idle');
+      cell(row,label(candidate.action));cell(row,Number.isFinite(candidate.score)?candidate.score.toFixed(3):'未知');cell(row,seconds(candidate.cooldown));
+      const threshold=Number.isFinite(director.minimumScore)?director.minimumScore:null;
+      const eligibility=candidate.reason?reason(candidate.reason):candidate.action==='idle'?'默认等待权重':threshold===null?'未提供选择阈值':candidate.score<threshold?`低于选择阈值 ${threshold.toFixed(2)}`:'可参与选择';
+      cell(row,eligibility);$('scores').append(row);
+    }
+    $('empty-scores').hidden=scores.length>0;
+    $('capabilities').replaceChildren();const capabilities=animation.capabilities||[];
+    for(const capability of capabilities) {
+      const row=document.createElement('tr');cell(row,label(capability.action));cell(row,capability.available?'可执行':'不可执行');cell(row,capability.available?'已接入':reason(capability.reason));$('capabilities').append(row);
+    }
+    $('empty-capabilities').hidden=capabilities.length>0;
+    const signature=JSON.stringify([animation.behavior,animation.afk,animation.blockReason,animation.pinned,animation.lastCancelReason]);
+    if(signature!==lastSignature) {
+      const entry=document.createElement('li'),time=document.createElement('time'),text=document.createElement('span');
+      time.dateTime=new Date().toISOString();time.textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+      text.textContent=`${$('actual').textContent} · ${$('owner').textContent}`;entry.append(time,text);$('events').prepend(entry);
+      while($('events').children.length>100)$('events').lastElementChild.remove();lastSignature=signature;
+    }
+  }
+  function freshness() {
+    const age=Number.isFinite(lastData?.animation_age)?lastData.animation_age+(performance.now()-receivedAt)/1000:null;
+    $('age').textContent=age===null?'尚未收到':`${age.toFixed(1)} 秒前`;
+    const stale=age===null || age>3;
+    $('connection').dataset.state=fault?'error':paused||stale?'stale':'live';
+    $('connection').textContent=fault|| (paused?'采样已暂停':age===null?'等待播放器':stale?'播放器状态已过期':'已连接 · 1 Hz');
+  }
+  async function poll() {
+    if(paused || inFlight)return;
+    inFlight=true;
+    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),4000);
+    try {
+      const response=await fetch('/pet_state',{cache:'no-store',credentials:'same-origin',signal:controller.signal});
+      if(!response.ok)throw new Error(`HTTP ${response.status}`);
+      const data=await response.json();if(!data.ok)throw new Error('状态接口不可用');
+      lastData=data;receivedAt=performance.now();fault='';apply(data);
+    } catch(error) {fault=location.protocol==='file:'?'请通过桌宠本机服务打开本页':'连接中断 · 检查桌宠是否运行';}
+    finally {inFlight=false;clearTimeout(timeout);freshness();if(!paused)timer=setTimeout(poll,1000);}
+  }
+  $('pause').addEventListener('click',()=>{
+    paused=!paused;clearTimeout(timer);$('pause').textContent=paused?'继续采样':'暂停采样';$('pause').setAttribute('aria-pressed',String(paused));freshness();if(!paused)poll();
+  });
+  setInterval(freshness,1000);poll();
+</script>
+</body>
+</html>

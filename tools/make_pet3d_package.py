@@ -42,8 +42,8 @@ def resolve_three(spec: str, base_dir: str) -> str | None:
         path = os.path.join(THREE, "examples", "jsm", spec[len("three/addons/"):])
     elif spec == "three":
         path = os.path.join(THREE, "build", "three.module.js")
-    elif spec.startswith("/node_modules/three/"):
-        path = os.path.join(THREE, spec[len("/node_modules/three/"):])
+    elif spec.startswith("/node_modules/"):
+        path = os.path.join(PET3D, "node_modules", spec[len("/node_modules/"):])
     elif spec.startswith("."):
         path = os.path.join(base_dir, spec)
     return os.path.normpath(path) if path else None
@@ -77,12 +77,17 @@ def collect_three_files() -> list[str]:
 def copy_three(stage: str) -> int:
     n = 0
     for src in collect_three_files():
-        rel = os.path.relpath(src, THREE)
-        dst = os.path.join(stage, "nyalume", "frontends", "pet", "pet3d",
-                           "node_modules", "three", rel)
+        rel = os.path.relpath(src, PET3D)
+        dst = os.path.join(stage, "nyalume", "frontends", "pet", "pet3d", rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(src, dst)
         n += 1
+    vrm_license = os.path.join(PET3D, "node_modules", "@pixiv", "three-vrm", "LICENSE")
+    if os.path.isfile(vrm_license):
+        destination = os.path.join(stage, "nyalume", "frontends", "pet", "pet3d",
+                                   "node_modules", "@pixiv", "three-vrm", "LICENSE")
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        shutil.copy2(vrm_license, destination)
     return n
 
 
@@ -95,6 +100,7 @@ PET_FILES = [
     "nyalume/frontends/pet/pet3d/__init__.py",
     "nyalume/frontends/pet/pet3d/pet3d_win.py",
     "nyalume/frontends/pet/pet3d/viewer.html",
+    "nyalume/frontends/pet/pet3d/behavior-debug.html",
     "nyalume/frontends/pet/pet3d/proactive.py",
     "nyalume/frontends/pet/pet3d/model_profile.py",
     "nyalume/frontends/pet/pet3d/motion_check.py",

@@ -12,6 +12,17 @@ window.NyalumeUI = (() => {
   let storageWarning = false;
   let previousSidebarFocus;
 
+  function updateTheme() {
+    window.NyalumeTheme.apply();
+    const now = new Date();
+    $('home-date').textContent = now.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' });
+    $('home-greeting').textContent = now.getHours() < 6 ? '夜深了，' : now.getHours() < 11 ? '早上好，' : now.getHours() < 14 ? '中午好，' : now.getHours() < 18 ? '下午好，' : '晚上好，';
+  }
+
+  function windowVisibility(visible) {
+    if (visible) updateTheme();
+  }
+
   function notice(message) {
     $('ui-notice').textContent = message;
     $('ui-notice').hidden = false;
@@ -25,9 +36,7 @@ window.NyalumeUI = (() => {
       const key = 'nyalume:draft:' + draftSession;
       if ($('input').value) localStorage.setItem(key, $('input').value);
       else localStorage.removeItem(key);
-      $('draft-status').textContent = $('input').value ? '草稿已保存在此浏览器' : '草稿仅存于当前浏览器';
     } catch (_) {
-      $('draft-status').textContent = '草稿未保存 · 浏览器存储不可用';
       if (!storageWarning) { notice('浏览器存储不可用，请在离开前复制输入内容。'); storageWarning = true; }
     }
   }
@@ -39,7 +48,6 @@ window.NyalumeUI = (() => {
       try { $('input').value = localStorage.getItem('nyalume:draft:' + id) || ''; }
       catch (_) { $('input').value = ''; }
       resizeInput();
-      $('draft-status').textContent = $('input').value ? '已恢复这段对话的草稿' : '草稿仅存于当前浏览器';
     }
     showChat(false);
     closeSidebar();
@@ -55,6 +63,9 @@ window.NyalumeUI = (() => {
     if (document.body.classList.contains('quick-chat')) return;
     saveDraft();
     document.body.classList.add('home-open');
+    document.body.classList.remove('memory-open');
+    $('memory-panel').hidden = true;
+    $('memory-nav').removeAttribute('aria-current');
     $('home-panel').hidden = false;
     $('home-nav').setAttribute('aria-current', 'page');
     $('chat-nav').removeAttribute('aria-current');
@@ -64,11 +75,32 @@ window.NyalumeUI = (() => {
 
   function showChat(focusInput = true) {
     document.body.classList.remove('home-open');
+    document.body.classList.remove('memory-open');
+    $('memory-panel').hidden = true;
+    $('memory-nav').removeAttribute('aria-current');
     $('home-panel').hidden = true;
     $('chat-nav').setAttribute('aria-current', 'page');
     $('home-nav').removeAttribute('aria-current');
     closeSidebar();
     if (focusInput) { resizeInput(); $('input').focus(); }
+  }
+
+  function showMemory() {
+    if (document.body.classList.contains('quick-chat')) {
+      window.open('/?memory=1' + (state.currentId ? '&session=' + encodeURIComponent(state.currentId) : ''), '_blank', 'noopener');
+      return;
+    }
+    saveDraft();
+    document.body.classList.remove('home-open');
+    document.body.classList.add('memory-open');
+    $('home-panel').hidden = true;
+    $('memory-panel').hidden = false;
+    $('home-nav').removeAttribute('aria-current');
+    $('chat-nav').removeAttribute('aria-current');
+    $('memory-nav').setAttribute('aria-current', 'page');
+    closeSidebar();
+    $('memory-heading').focus();
+    renderState();
   }
 
   function closeSidebar() {
@@ -92,6 +124,7 @@ window.NyalumeUI = (() => {
       if (version !== focusVersion) return;
       $('focus-feedback').textContent = '专注记录暂时无法读取，请重试。' + String(error.message || error);
       $('focus-retry').hidden = false;
+      $('focus-details').open = true;
       if (!focusData) $('focus-history').textContent = '连接恢复后，你的足迹会显示在这里。';
     } finally { focusLoading = false; }
   }
@@ -152,6 +185,7 @@ window.NyalumeUI = (() => {
       : current.status === 'paused' ? '休息一下喵。等你准备好，我们再继续。' : '现在只管眼前这一件，我替你守着这段安静。';
     $('focus-heading').textContent = current?.status === 'ready' ? '今天的努力，想替你记下来。' : '这次的小任务，陪你一起。';
     if (current) {
+      $('focus-details').open = true;
       $('focus-goal-display').textContent = current.goal;
       $('focus-review-goal').textContent = '这次的小目标：' + current.goal;
       $('focus-pause').textContent = current.status === 'paused' ? '继续专注' : '暂停一下';
@@ -250,6 +284,9 @@ window.NyalumeUI = (() => {
   }
 
   document.addEventListener('DOMContentLoaded', () => {
+    if (document.body.classList.contains('quick-chat')) {
+      $('chat-title').after($('chat-mode-select'));
+    }
     const portrait = $('home-portrait');
     const revealPortrait = () => {
       const ready = portrait.naturalWidth > 1;
@@ -259,11 +296,16 @@ window.NyalumeUI = (() => {
     portrait.addEventListener('load', revealPortrait);
     portrait.addEventListener('error', revealPortrait);
     if (portrait.complete) revealPortrait();
-    const now = new Date();
-    $('home-date').textContent = now.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' });
-    $('home-greeting').textContent = now.getHours() < 6 ? '夜深了，' : now.getHours() < 11 ? '早上好，' : now.getHours() < 14 ? '中午好，' : now.getHours() < 18 ? '下午好，' : '晚上好，';
+    updateTheme();
+    $('theme-select').value = window.NyalumeTheme.mode;
+    $('theme-select').onchange = event => { window.NyalumeTheme.set(event.target.value); updateTheme(); };
+    setInterval(updateTheme, 60000);
+    window.addEventListener('focus', updateTheme);
+    window.addEventListener('pageshow', updateTheme);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) updateTheme(); });
     $('home-nav').onclick = showHome;
     $('chat-nav').onclick = () => showChat();
+    $('memory-nav').onclick = showMemory;
     $('input').addEventListener('input', saveDraft);
     window.addEventListener('pagehide', saveDraft);
     $('sidebar-toggle').onclick = () => {
@@ -275,6 +317,7 @@ window.NyalumeUI = (() => {
     };
     $('sidebar-scrim').onclick = closeSidebar;
     $('home-daily').onclick = () => $('daily-nyalume-btn').click();
+    $('home-chat-open').onclick = () => showChat();
     document.querySelectorAll('[data-prompt]').forEach(button => {
       button.onclick = () => {
         showChat();
@@ -301,34 +344,39 @@ window.NyalumeUI = (() => {
     const goFocus = () => {
       showHome();
       if (!document.body.classList.contains('quick-chat')) {
+        $('focus-details').open = true;
         $('focus-card').scrollIntoView({ block: 'center' });
         if (!$('focus-start-form').hidden) $('focus-goal').focus();
       } else window.open('/?home=1', '_blank', 'noopener');
     };
     $('focus-chip').onclick = goFocus;
+    $('home-focus-open').onclick = goFocus;
     const dialog = $('command-dialog');
     const commands = [
       ['今日小窝', '首页 · home', showHome],
       ['继续对话', '聊天 · chat', () => showChat()],
       ['新建对话', '新的开始', () => newChat()],
       ['陪伴专注', '计时 · focus', goFocus],
-      ['🎯 目标模式', 'goal · 自主 Agent · 持续执行', startPursuitMode],
-      ['计划模式', 'plan · 只读分析 · 先计划后执行', () => { showChat(false); window._startPlanMode(); }],
+      ['目标模式', 'goal · 自主 Agent · 持续执行', startPursuitMode, true],
+      ['计划模式', 'plan · 只读分析 · 先计划后执行', () => { showChat(false); window._startPlanMode(); }, true],
       ['今日 Nyalume', '每日卡片 · 祝福', () => $('daily-nyalume-btn').click()],
       ['奇幻冒险', '另一段故事', () => window.open('/fantasy', '_blank', 'noopener')],
       ['聊天壁纸', '外观 · 图片', () => { showChat(false); document.body.classList.add('toolbar-open'); $('wall-menu').classList.remove('hidden'); }],
       ['人设与角色', '切换人设', () => { showChat(); document.body.classList.add('toolbar-open'); $('persona-select').focus(); notice('在顶栏的人设选择框中切换角色。'); }],
       ['API 与模型设置', '设置 · 配置', () => openSettings()],
       ['Skill 管理', '技能 · 工具', () => openSettings('skills')],
+      ['共同经历与记忆', '约定 · 记忆 · 资料 · 备份', showMemory],
+      ['桌宠状态', '连接 · 模型 · 动作检查', () => openSettings('pet')],
     ];
     function renderCommands() {
       const query = $('command-search').value.trim().toLowerCase();
       $('command-list').replaceChildren();
-      commands.filter(([label, hint]) => (label + hint).toLowerCase().includes(query)).forEach(([label, hint, run]) => {
+      commands.filter(([label, hint, , workOnly]) => (!workOnly || state.chatMode !== 'daily') && (label + hint).toLowerCase().includes(query)).forEach(([label, hint, run]) => {
         const button = document.createElement('button');
-        button.type = 'button'; button.textContent = label;
+        button.type = 'button';
+        const name = document.createElement('span'); name.textContent = label; button.append(name);
         const small = document.createElement('small'); small.textContent = hint; button.append(small);
-        button.onclick = async () => { dialog.close(); try { await run(); } catch (e) { notice(String(e.message || e)); } };
+        button.onclick = async event => { event.stopPropagation(); dialog.close(); try { await run(); } catch (e) { notice(String(e.message || e)); } };
         $('command-list').append(button);
       });
       if (!$('command-list').children.length) {
@@ -355,7 +403,7 @@ window.NyalumeUI = (() => {
       if (!/^\/[^\s/]*$/.test(value)) return hideSlash();
       const query = value.slice(1).toLowerCase();
       slash.replaceChildren(); selected = 0;
-      slashCommands.filter(([label, hint]) => (label + hint).toLowerCase().includes(query)).forEach(([label, hint, run], index) => {
+      slashCommands.filter(([label, hint, , workOnly]) => (!workOnly || state.chatMode !== 'daily') && (label + hint).toLowerCase().includes(query)).forEach(([label, hint, run], index) => {
         const button = document.createElement('button');
         button.type = 'button'; button.id = 'slash-option-' + index; button.setAttribute('role', 'option');
         button.textContent = label;
@@ -421,5 +469,5 @@ window.NyalumeUI = (() => {
     document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshFocus(); });
     if (new URLSearchParams(location.search).get('home') === '1') showHome();
   });
-  return { sessionChanged, saveDraft, forgetDraft, showHome, showChat, startupError, startPursuitMode };
+  return { sessionChanged, saveDraft, forgetDraft, showHome, showChat, showMemory, startupError, startPursuitMode, windowVisibility };
 })();

@@ -53,6 +53,14 @@ def _run_frozen_child() -> bool:
 
 
 def main() -> None:
+    # Both desktop EXEs share the same application and subprocess dispatch.
+    if getattr(sys, "frozen", False) and os.path.basename(sys.executable).lower() == "nyalume3d.exe":
+        if len(sys.argv) == 1 or sys.argv[1] not in (
+            "--pet3d", "--startup-animation", "--web-chat-window", "--web-server"
+        ):
+            sys.argv.insert(1, "--pet3d")
+            if "--model" not in sys.argv:
+                sys.argv.extend(["--model", "@bundled/Eku.vrm", "--renderer", "unity"])
     if _run_frozen_child():
         return
 

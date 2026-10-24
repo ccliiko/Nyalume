@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlparse, quote
 from types import SimpleNamespace
 
 import pytest
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import expect
 from test_chat_layout import chat_page
 
 from nyalume.core import memory
@@ -167,7 +167,7 @@ def test_quick_chat_layout_and_stream(chat_page, tmp_path):
     assert not errors
 
 
-def test_renderer_reply_button_follows_bubble(tmp_path):
+def test_renderer_reply_button_follows_bubble(browser, tmp_path):
     root = Path(__file__).resolve().parents[1]
     model_dir = root / "models" / "野餐式MikuQ"
     if not model_dir.is_dir():
@@ -175,30 +175,28 @@ def test_renderer_reply_button_follows_bubble(tmp_path):
     model_dir, pmx = pet._resolve_model(str(model_dir))
     api = pet._NativeApi(enabled=False)
     port = pet.start_server(model_dir, api=api)
-    with sync_playwright() as p:
-        browser = p.chromium.launch(channel="msedge", headless=True)
-        page = browser.new_page(viewport={"width": 700, "height": 800})
-        errors = []
-        page.on("pageerror", lambda e: errors.append(str(e)))
-        page.add_init_script("""window.actions = []; window.pywebview = {api: {
-            poll_action: async () => window.actions.shift() || null,
-            reply_target: (rect, text) => { window.reply = {rect, text}; }
-        }};""")
-        try:
-            page.goto(f"http://127.0.0.1:{port}/viewer.html?pmx=/model/{quote(pmx)}&box=440x660&physics=0")
-            page.wait_for_function("document.querySelector('#tip').textContent === ''", timeout=60000)
-            page.evaluate("window.actions.push({kind:'say', text:'今天想学会折纸船'})")
-            page.wait_for_function("window.reply?.rect?.length === 4")
-            rect = page.evaluate("window.reply.rect")
-            assert 0 <= rect[0] < rect[0] + rect[2] <= 1
-            assert 0 <= rect[1] < rect[1] + rect[3] <= 1
-            assert page.evaluate("window.reply.text") == "今天想学会折纸船"
-            page.screenshot(path=str(tmp_path / "reply-bubble.png"))
-            print("PREVIEW", tmp_path / "reply-bubble.png")
-            page.evaluate("window.__menu([{id:'chat', label:'打开聊天窗口'}])")
-            page.wait_for_function("window.reply.rect === null")
-            page.evaluate("window.__menu_close()")
-            page.wait_for_function("window.reply.rect !== null")
-            assert not errors
-        finally:
-            browser.close()
+    page = browser.new_page(viewport={"width": 700, "height": 800})
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script("""window.actions = []; window.pywebview = {api: {
+        poll_action: async () => window.actions.shift() || null,
+        reply_target: (rect, text) => { window.reply = {rect, text}; }
+    }};""")
+    try:
+        page.goto(f"http://127.0.0.1:{port}/viewer.html?pmx=/model/{quote(pmx)}&box=440x660&physics=0")
+        page.wait_for_function("document.querySelector('#tip').textContent === ''", timeout=60000)
+        page.evaluate("window.actions.push({kind:'say', text:'今天想学会折纸船'})")
+        page.wait_for_function("window.reply?.rect?.length === 4")
+        rect = page.evaluate("window.reply.rect")
+        assert 0 <= rect[0] < rect[0] + rect[2] <= 1
+        assert 0 <= rect[1] < rect[1] + rect[3] <= 1
+        assert page.evaluate("window.reply.text") == "今天想学会折纸船"
+        page.screenshot(path=str(tmp_path / "reply-bubble.png"))
+        print("PREVIEW", tmp_path / "reply-bubble.png")
+        page.evaluate("window.__menu([{id:'chat', label:'打开聊天窗口'}])")
+        page.wait_for_function("window.reply.rect === null")
+        page.evaluate("window.__menu_close()")
+        page.wait_for_function("window.reply.rect !== null")
+        assert not errors
+    finally:
+        page.close()

@@ -8,7 +8,7 @@ import uuid
 
 from . import companionship, daily_nyalume, interaction, llm, memory, skills
 from .tracing import Trace
-from .personas import persona_base_prompt, resolve_persona_id
+from .personas import persona_base_prompt, persona_companion_prompt, resolve_persona_id
 from .tools import (
     TOOL_SCHEMAS,
     approval_needed,
@@ -134,7 +134,7 @@ def _system_prompt(
     """Fixed role and permission rules only; dynamic inputs belong in the round packet."""
     persona_id = resolve_persona_id()
     if mode == "daily":
-        return (companionship.DAILY_PROMPT + "\n可在有用时追加 <nyalume_interaction>JSON</nyalume_interaction>，含三个具体 choices(label,text)；允许不附选项。"
+        return (persona_companion_prompt(persona_id) + companionship.DAILY_PROMPT + "\n可在有用时追加 <nyalume_interaction>JSON</nyalume_interaction>，含三个具体 choices(label,text)；允许不附选项。"
                 + "\n故事存档规则：" + interaction.PROMPT.split("故事氛围", 1)[1].removesuffix(interaction.fantasy.PROMPT)
                 + _LANGUAGE_RULE)
     base = persona_base_prompt(persona_id)
@@ -587,7 +587,7 @@ def _run_stream(
     if daily_mode:
         data.update(companionship.packet(response_topic=response_topic, user_text=user_text))
         data['time'] = before_times
-        data['daily_style'] = daily_nyalume.style_prompt()
+        data['daily_style'] = daily_nyalume.style_prompt() if resolve_persona_id() == 'nyalume' else ''
     else:
         data['shared_user_facts'] = memory.companion_memory_context(user_text, daily=False)
         data['request_hint'] = "只读调研后制定计划，等待用户退出计划模式再实施。" if plan_mode else _pre_round_discipline(user_text)

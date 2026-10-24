@@ -2,6 +2,11 @@ import socket
 
 import pytest
 from fastapi import HTTPException
+
+# 这组用例校验云服务的 SSRF / 白名单逻辑，需要 cloud_service 的依赖（psycopg）。
+# 桌面环境不装云依赖，缺了就跳过本模块，别让整个测试收集阶段报错。
+pytest.importorskip("psycopg", reason="需要 cloud_service/requirements.txt 中的 psycopg")
+
 from cloud_service.web import validate_base, DEFAULT_BASES
 
 

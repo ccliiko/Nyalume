@@ -16,13 +16,13 @@ import time
 
 STAGES = {
     "renderer": "猫娘祈祷中…\n愿显卡今天也乖乖的喵。",
-    "model": "正在整理耳朵、尾巴和小裙子…\n少一根呆毛都不出门！",
+    "model": "正在整理头发、蝴蝶结和小裙子…\n今天的发型必须稳住！",
     "animation": "练习优雅登场中…\n刚才同手同脚的那遍不算！",
-    "display": "尾巴就位，准备突袭桌面…\n请藏好你的零食！",
+    "display": "发型就位，准备突袭桌面…\n请藏好你的零食！",
 }
 TAGLINE = "今日份陪伴，附赠一点猫猫捣乱。"
 READY_MESSAGE = "喵到！你的摸鱼搭子上线啦。"
-SLOW_MESSAGE = "加载有点久，猫娘还在梳尾巴…\n可以先隐藏动画喵。"
+SLOW_MESSAGE = "加载有点久，猫娘还在梳头发…\n可以先隐藏动画喵。"
 STAGE_LINES = {
     "renderer": (
         STAGES["renderer"],
@@ -30,19 +30,19 @@ STAGE_LINES = {
         "猫娘施法中…\n咒语忘了一半，问题不大！",
         "正在与像素商量出场费…\n预算是三条小鱼干。",
         "给小爪子通电中…\n今天也要优雅地摸鱼！",
-        "猫娘祈祷中…\n保佑这次不掉呆毛。",
+        "猫娘祈祷中…\n保佑这次发型不乱。",
     ),
     "model": (
         STAGES["model"],
-        "正在翻找失踪的尾巴…\n谁把它塞进贴图里了？",
+        "正在翻找失踪的发夹…\n谁把它塞进贴图里了？",
         "正在挑选今天的蝴蝶结…\n这可是很严肃的事情！",
-        "正在清点猫猫零件…\n耳朵两只，傲娇若干。",
+        "正在清点猫猫行李…\n发夹、蝴蝶结，傲娇若干。",
         "正在把可爱装进口袋…\n超重了，也不退货！",
-        "小裙子熨烫中…\n尾巴请不要捣乱喵！",
+        "小裙子熨烫中…\n头发请不要捣乱喵！",
     ),
     "animation": (
         STAGES["animation"],
-        "尾巴平衡测试中…\n刚才打翻的杯子不算！",
+        "练习优雅转身中…\n刚才踩到裙摆的那遍不算！",
         "练习转身中…\n裙摆：我有自己的想法。",
         "正在校准傲娇角度…\n才、才不是特意来陪你的！",
         "正在排练走路姿势…\n禁止把猫步走成鸭步。",
@@ -74,7 +74,7 @@ READY_LINES = (
 )
 SLOW_LINES = (
     SLOW_MESSAGE,
-    "加载有点久，尾巴还在打结…\n可以先隐藏动画，我继续努力喵。",
+    "加载有点久，头发还在打结…\n可以先隐藏动画，我继续努力喵。",
     "加载有点久，猫娘正在深呼吸…\n可以先隐藏动画，别担心喵。",
     "加载有点久，像素们还在排队…\n可以先隐藏动画，猫娘还在准备。",
 )
@@ -83,6 +83,22 @@ SLOW_LINES = (
 ENGRAVING_STAGES = {"renderer": .12, "model": .45, "animation": .76, "display": .94}
 FINISHED_HOLD_SECONDS = .4
 FADE_OUT_SECONDS = .65
+CHAT_COLOR_SECONDS = .4
+
+CHAT_STAGE_LINES = {
+    "renderer": (
+        "猫娘调颜料中…\n小鱼干不是颜料喵！",
+        "正在挑今天的颜色…\n可爱色怎么又卖完了？",
+    ),
+    "model": (
+        "正在补一点气色…\n才不是为了见你喵。",
+        "给脸颊添一点粉…\n这叫上色，才不是害羞！",
+    ),
+    "display": (
+        "最后补一笔可爱…\n再多就要溢出来啦。",
+        "颜色就位，吐槽就绪…\n今天也请接住本猫娘！",
+    ),
+}
 
 
 def _stroke_paths(mask):
@@ -234,6 +250,78 @@ def _engraving_frames(source, size):
     return frames
 
 
+def _coloring_frames(source, size):
+    """Paint short curved strokes over the sketch, clipped to the real portrait."""
+    from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
+    import math
+
+    source = source.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
+    alpha = source.getchannel("A")
+    gray = ImageOps.grayscale(source)
+    sketch = ImageOps.colorize(gray, "#b97790", "#fff9f5").convert("RGBA")
+    edges = ImageChops.multiply(gray.filter(ImageFilter.FIND_EDGES), alpha)
+    ink = Image.new("RGBA", source.size, "#b97790")
+    ink.putalpha(edges.point(lambda v: round(v*.45)))
+    sketch = Image.alpha_composite(sketch, ink)
+    sketch.putalpha(alpha)
+
+    saturation = source.convert("RGB").convert("HSV").getchannel("S")
+    # Use the same real-contour logic as the engraving, at a smaller tracing
+    # grid. Fragments and the rough draft occupy only the first four frames.
+    grid = 96
+    outline = alpha.filter(ImageFilter.FIND_EDGES)
+    contours = ImageChops.lighter(edges, outline).resize((grid, grid), Image.Resampling.LANCZOS)
+    paths = _stroke_paths(contours.point(lambda v: 255 if v >= 25 else 0))
+    strokes = [[(round(x*size/grid), round(y*size/grid)) for x, y in path] for path in paths]
+    stroke_count = sum(len(path) for path in strokes)
+    frames = []
+    for fraction in (.3, 1.):
+        mask = Image.new("L", source.size)
+        draw = ImageDraw.Draw(mask)
+        for path in strokes[:6]:
+            start = len(path)//3
+            fragment = path[start:start+max(2, round(min(36, len(path)/3)*fraction))]
+            if len(fragment) > 1:
+                draw.line(fragment, fill=255, width=max(1, round(size/244)), joint="curve")
+        frame = Image.new("RGBA", source.size, "#b97790")
+        frame.putalpha(ImageChops.multiply(mask, alpha))
+        frames.append(frame)
+    rough_ink = gray.filter(ImageFilter.GaussianBlur(max(1., size*.006))).filter(ImageFilter.FIND_EDGES)
+    rough_ink = ImageChops.lighter(rough_ink, outline)
+    draft = Image.new("RGBA", source.size, "#b97790")
+    draft.putalpha(ImageChops.multiply(rough_ink.point(lambda v: min(255, v*3)), alpha))
+    frames.extend((draft, sketch))
+    highlight = ImageChops.multiply(saturation.point(lambda v: max(0, v-140)*2), alpha)
+    highlight = highlight.filter(ImageFilter.GaussianBlur(max(.6, size*.006)))
+
+    for i in range(19):
+        progress = i/18
+        mask = Image.new("L", source.size)
+        draw = ImageDraw.Draw(mask)
+        brush_width = max(2, round(size*.15))
+        remaining = round(stroke_count*progress)
+        for points in strokes:
+            if remaining <= 0:
+                break
+            segment = points[:remaining]
+            draw.line(segment, fill=255, width=brush_width)
+            for x, y in (segment[0], segment[-1]):
+                radius = brush_width/2
+                draw.ellipse((x-radius, y-radius, x+radius, y+radius), fill=255)
+            remaining -= len(points)
+        mask = mask.filter(ImageFilter.GaussianBlur(max(.7, size*.003)))
+        frame = Image.composite(source, sketch, mask)
+        if progress > .65:
+            strength = .22*math.sin(math.pi*(progress-.65)/.35)
+            light = Image.new("RGBA", source.size, "#fffaf1")
+            light.putalpha(highlight.point(lambda v: round(v*strength)))
+            frame = Image.alpha_composite(frame, light)
+        frame.putalpha(alpha)
+        frames.append(frame)
+    frames[-1] = source
+    return frames
+
+
 def animations_enabled() -> bool:
     if os.name == "nt":
         value = ctypes.c_int(1)
@@ -284,11 +372,12 @@ def _round_window(root, width, height, radius):
 class StartupAnimation:
     """Own one optional child and its small, bounded stream of startup events."""
 
-    def __init__(self, log=lambda _message: None, enabled=True, on_error=None):
+    def __init__(self, log=lambda _message: None, enabled=True, on_error=None, kind="pet"):
         self.proc = None
         self.log = log
         self.enabled = enabled
         self.on_error = on_error
+        self.kind = kind
 
     def __enter__(self):
         if not self.enabled:
@@ -300,6 +389,7 @@ class StartupAnimation:
                     _command(), cwd=str(root), stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL, stderr=errors,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    env={**os.environ, "NYALUME_STARTUP_KIND": self.kind},
                 )
         except Exception as exc:
             self.log(f"启动动画不可用：{exc}")
@@ -356,19 +446,32 @@ class StartupAnimation:
 
 
 class StartupWindow:
-    """The original Nyalume portrait gradually appears as a recessed engraving."""
+    """Engrave the pet portrait, or quickly color it for the chat entrance."""
 
-    def __init__(self, root):
+    stage_lines = STAGE_LINES
+    ready_lines = READY_LINES
+    slow_lines = SLOW_LINES
+    quick = False
+    color_started = None
+    prepared_frames = None
+
+    def __init__(self, root, kind="pet"):
         import tkinter as tk
         from PIL import Image, ImageDraw, ImageTk
 
         self.root = root
+        root.withdraw()
         self.events = queue.Queue()
         self.started = time.monotonic()
         self.finished = None
         self.closed = False
         self.motion = animations_enabled()
-        self.stage_messages = {"renderer": random.choice(STAGE_LINES["renderer"])}
+        self.quick = kind == "chat"
+        if kind == "chat":
+            self.stage_lines = CHAT_STAGE_LINES
+            self.ready_lines = ("开聊！猫娘的吐槽已就位。", "我来啦！心事拿来，零食也拿来。")
+            self.slow_lines = ("窗口有点害羞，还躲着喵…\n可以先隐藏动画，我去催它。",)
+        self.stage_messages = {"renderer": random.choice(self.stage_lines["renderer"])}
         self.message = self.stage_messages["renderer"]
         self.slow_message = ""
         self.engraving_target = ENGRAVING_STAGES["renderer"]
@@ -376,7 +479,7 @@ class StartupWindow:
         self.engraving_index = -1
         self.opacity = .25 if self.motion else 1.
         self.exit_alpha = self.opacity
-        root.title("Nyalume · 正在启动")
+        root.title("Nyalume · 正在打开对话" if kind == "chat" else "Nyalume · 正在启动")
         root.overrideredirect(True)
         root.attributes("-topmost", True)
         self.scale = max(1.0, root.winfo_fpixels("1i") / 96)
@@ -397,17 +500,11 @@ class StartupWindow:
         self.background = ImageTk.PhotoImage(background, master=root)
         self.canvas.create_image(0, 0, image=self.background, anchor="nw")
         size = round(244*s)
-        try:
-            with Image.open(_icon_path()) as source:
-                frames = _engraving_frames(source, size)
-        except OSError:
-            # A missing optional image must still leave a usable loading window.
-            frames = [Image.new("RGBA", (size, size))]
-        self.engraving_images = [ImageTk.PhotoImage(frame, master=root) for frame in frames]
+        self.engraving_images = [ImageTk.PhotoImage(Image.new("RGBA", (size, size)), master=root)]
         self.engraving = self.canvas.create_image(170*s, 184*s, image=self.engraving_images[0])
         self.canvas.create_text(342*s, 127*s, text="Nyalume", anchor="w", fill="#5a3c48",
             font=("Georgia", -round(43*s)))
-        self.tagline = self.canvas.create_text(344*s, 172*s, text=random.choice(TAGLINE_LINES), anchor="nw", fill="#765260",
+        self.tagline = self.canvas.create_text(344*s, 172*s, text="陪聊不限量，小鱼干另算喵。" if kind == "chat" else random.choice(TAGLINE_LINES), anchor="nw", fill="#765260",
             width=250*s, font=("Microsoft YaHei UI", -round(14*s)))
         self.status = self.canvas.create_text(344*s, 221*s, text=self.message, anchor="nw",
             width=250*s, fill="#765260", font=("Microsoft YaHei UI", -round(14*s)))
@@ -428,15 +525,37 @@ class StartupWindow:
         self.button.bind("<Leave>", lambda _event: self.button.configure(bg="#f9f5ef"))
         root.bind("<Escape>", lambda _event: self.close())
         root.protocol("WM_DELETE_WINDOW", self.close)
-        # The entrance clock starts after preparing the small cached sprites.
+        # Map a complete surface immediately; PIL work must not block Tk input.
         self.started = time.monotonic()
-        self.tick()
+        root.attributes("-alpha", self.opacity)
         _round_window(root, w, h, round(16*s))
+        root.deiconify()
+        self.tick()
+        threading.Thread(target=self._prepare_engraving, args=(size,), daemon=True).start()
+
+    def _prepare_engraving(self, size):
+        from PIL import Image
+        try:
+            with Image.open(_icon_path()) as source:
+                frames = _coloring_frames(source, size) if self.quick else _engraving_frames(source, size)
+            self.events.put({"event": "frames", "frames": frames})
+        except Exception:
+            pass  # Optional artwork must not interrupt the loading surface.
 
     def _draw_engraving(self):
         progress = self.engraving_progress if self.motion else 1.
+        if self.quick and self.motion and self.color_started is not None:
+            now = time.monotonic()
+            progress = min(1., (now-self.color_started)/CHAT_COLOR_SECONDS)
+            if self.finished is not None:
+                # An early ready accelerates the remaining fill before the short
+                # exit; it never holds a usable chat window behind the animation.
+                progress = max(progress, min(1., (now-self.finished)/.12))
         index = min(len(self.engraving_images)-1, round(progress*(len(self.engraving_images)-1)))
         if index != self.engraving_index:
+            if self.prepared_frames is not None and self.engraving_images[index] is None:
+                from PIL import ImageTk
+                self.engraving_images[index] = ImageTk.PhotoImage(self.prepared_frames[index], master=self.root)
             self.canvas.itemconfigure(self.engraving, image=self.engraving_images[index])
             self.engraving_index = index
 
@@ -452,19 +571,32 @@ class StartupWindow:
         while not self.events.empty():
             event = self.events.get_nowait()
             kind = event.get("event")
+            if kind == "frames":
+                if self.quick:
+                    # Convert only frames that actually reach the screen, so a
+                    # fast chat launch cannot stall on uploading every sprite.
+                    self.prepared_frames = event["frames"]
+                    self.engraving_images = [None]*len(self.prepared_frames)
+                else:
+                    from PIL import ImageTk
+                    self.engraving_images = [ImageTk.PhotoImage(frame, master=self.root) for frame in event["frames"]]
+                self.engraving_index = -1
+                if self.quick:
+                    now = time.monotonic()
+                    self.color_started = now
             if kind == "close":
                 self.close()
                 return
             if kind == "ready" and self.finished is None:
                 self.finished = now
                 self.exit_alpha = self.opacity
-                self.message = random.choice(READY_LINES)
+                self.message = random.choice(self.ready_lines)
                 self.engraving_progress = self.engraving_target = 1.
             elif kind == "stage" and self.finished is None:
                 stage = event.get("stage")
-                if stage in STAGE_LINES:
+                if stage in self.stage_lines:
                     if stage not in self.stage_messages:
-                        self.stage_messages[stage] = random.choice(STAGE_LINES[stage])
+                        self.stage_messages[stage] = random.choice(self.stage_lines[stage])
                     self.message = self.stage_messages[stage]
                 else:
                     self.message = event.get("message") or self.message
@@ -473,29 +605,30 @@ class StartupWindow:
         message = self.message
         if elapsed >= 30 and self.finished is None:
             if not self.slow_message:
-                self.slow_message = random.choice(SLOW_LINES)
+                self.slow_message = random.choice(self.slow_lines)
             message = self.slow_message
         self.canvas.itemconfigure(self.status, text=message)
         alpha = 1.
         if self.finished is not None:
             age = now-self.finished
-            hold = FINISHED_HOLD_SECONDS if self.motion else 0.
-            duration = FADE_OUT_SECONDS if self.motion else .1
+            hold = FINISHED_HOLD_SECONDS if self.motion and not self.quick else 0.
+            duration = (.18 if self.quick else FADE_OUT_SECONDS) if self.motion else .1
             t = min(1., max(0., age-hold)/duration)
             # Keep the completed engraving visible after the pet is already
             # interactive; an early ready continues the entrance without a flash.
-            visible_alpha = self.exit_alpha+(1-self.exit_alpha)*min(1., age/.15) if self.motion else self.exit_alpha
+            visible_alpha = self.exit_alpha+(1-self.exit_alpha)*min(1., age/.15) if self.motion and not self.quick else self.exit_alpha
             alpha = visible_alpha*(1-t)**2
             if t >= 1:
                 self.close()
                 return
         elif self.motion:
-            alpha = .25+.75*min(1, elapsed/.25)
+            alpha = .25+.75*min(1, elapsed/(.12 if self.quick else .25))
             x, y = self.home
-            offset = 16*(1-min(1, elapsed/.5))**3
+            offset = (6 if self.quick else 16)*(1-min(1, elapsed/(.18 if self.quick else .5)))**3
             self.root.geometry(f"+{x}+{y+round(offset*self.scale)}")
             self.engraving_progress += (self.engraving_target-self.engraving_progress)*.18
-            self.canvas.coords(self.gleam, (-140+820*((elapsed/7)%1))*self.scale, 0)
+            if not self.quick:
+                self.canvas.coords(self.gleam, (-140+820*((elapsed/7)%1))*self.scale, 0)
         self._draw_engraving()
         self.opacity = alpha
         try:
@@ -514,7 +647,7 @@ def main() -> None:
         except (AttributeError, OSError):
             pass
     root = tk.Tk()
-    window = StartupWindow(root)
+    window = StartupWindow(root, kind=os.environ.get("NYALUME_STARTUP_KIND", "pet"))
 
     def read_events():
         try:

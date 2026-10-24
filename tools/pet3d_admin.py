@@ -21,8 +21,6 @@ ARGS = [
 
 def main() -> int:
     """用 venv 里的 pythonw 把桌宠带起来（里面自己走 UAC 提权）。"""
-    # 游戏内互动还在调，先把调试日志开着（%TEMP%\nyalume_pet3d*.log）
-    os.environ["NYALUME_PET3D_DEBUG"] = "1"
     return subprocess.call([sys.executable, *ARGS], cwd=ROOT)
 
 

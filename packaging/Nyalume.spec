@@ -26,6 +26,7 @@ def tree_data(source, destination):
 
 
 datas = tree_data(STATIC_DIR, "nyalume/frontends/web/static")
+datas.append((str(ROOT / "nyalume/update_windows.ps1"), "nyalume"))
 
 if os.environ.get("NYALUME_BUNDLE_PERSONAL_ASSETS") != "0":
     manifest_path = PET_DIR / "manifest.json"
@@ -37,11 +38,14 @@ if os.environ.get("NYALUME_BUNDLE_PERSONAL_ASSETS") != "0":
 
 datas.extend(tree_data(PET3D_DIR / "motions", "nyalume/frontends/pet/pet3d/motions"))
 datas.append((str(PET3D_DIR / "viewer.html"), "nyalume/frontends/pet/pet3d"))
+datas.append((str(PET3D_DIR / "behavior-debug.html"), "nyalume/frontends/pet/pet3d"))
 three_dir = PET3D_DIR / "node_modules" / "three"
 for path in collect_three_files():
-    rel = Path(path).relative_to(three_dir)
-    datas.append((path, str(Path("nyalume/frontends/pet/pet3d/node_modules/three") / rel.parent)))
+    rel = Path(path).relative_to(PET3D_DIR)
+    datas.append((path, str(Path("nyalume/frontends/pet/pet3d") / rel.parent)))
 datas.append((str(three_dir / "LICENSE"), "nyalume/frontends/pet/pet3d/node_modules/three"))
+datas.append((str(PET3D_DIR / "node_modules/@pixiv/three-vrm/LICENSE"),
+              "nyalume/frontends/pet/pet3d/node_modules/@pixiv/three-vrm"))
 
 binaries = []
 hiddenimports = []
@@ -78,7 +82,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="Nyalume",
+    name="Nyalume2D",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -87,8 +91,15 @@ exe = EXE(
     icon=str(STATIC_DIR / "nyalume.ico"),
 )
 
+exe3d = EXE(
+    pyz, a.scripts, [], exclude_binaries=True, name="Nyalume3D",
+    debug=False, bootloader_ignore_signals=False, strip=False,
+    upx=True, console=False, icon=str(STATIC_DIR / "nyalume.ico"),
+)
+
 coll = COLLECT(
     exe,
+    exe3d,
     a.binaries,
     a.datas,
     strip=False,

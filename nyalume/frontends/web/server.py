@@ -17,12 +17,13 @@ from functools import partial
 from typing import Literal
 
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from nyalume import __version__
+from nyalume import updater
 
 from nyalume.core import companionship, daily_nyalume, focus, memory, personas, pursuit, skills, tracing, fantasy
 from nyalume.core.agent import run_stream
@@ -92,6 +93,57 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+def _local_update_request(request: Request) -> None:
+    # Updating executables must not be callable through a public bind or cross-site POST.
+    if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
+        raise HTTPException(status_code=403, detail="更新仅允许在本机操作。")
+    if request.url.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise HTTPException(status_code=403, detail="请通过本机地址检查更新。")
+    origin = request.headers.get("origin")
+    if origin and origin != str(request.base_url).rstrip("/"):
+        raise HTTPException(status_code=403, detail="不允许跨站更新请求。")
+    if request.method == "POST" and request.headers.get("x-nyalume-update") != "1":
+        raise HTTPException(status_code=403, detail="请从设置页面操作更新。")
+
+
+@app.get("/api/updates")
+def update_status(request: Request):
+    _local_update_request(request)
+    return updater.snapshot()
+
+
+@app.post("/api/updates/check")
+def check_update(request: Request):
+    _local_update_request(request)
+    try:
+        return updater.check()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/updates/install")
+def install_update(request: Request):
+    _local_update_request(request)
+    try:
+        return updater.install()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+class UpdateSourceIn(BaseModel):
+    mode: Literal["auto", "github", "custom"]
+    prefix: str = ""
+
+
+@app.post("/api/updates/source")
+def save_update_source(body: UpdateSourceIn, request: Request):
+    _local_update_request(request)
+    try:
+        return updater.save_source(body.mode, body.prefix)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 class FocusStartIn(BaseModel):
     goal: str
     minutes: int
@@ -134,6 +186,7 @@ _activity_lock = threading.Lock()
 _active_runs = 0
 _pet_tap_seq = 0
 _pet_meow_seq = 0
+_pet_emotion = {"seq": 0, "emotion": "", "at": 0.0}
 _we_media_path = ""
 _we_startup_available = False
 _WE_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
@@ -159,6 +212,7 @@ def activity_state():
             "working": _active_runs > 0,
             "pet_tap_seq": _pet_tap_seq,
             "pet_meow_seq": _pet_meow_seq,
+            "pet_emotion": dict(_pet_emotion),
         }
 
 
@@ -726,13 +780,16 @@ def _wallpaper_settings() -> dict:
         _we_startup_available = bool(_wallpaper_engine_tray_exe())
         if _we_startup_available:
             # 每次打开聊天窗都重新同步当前 Wallpaper Engine 壁纸；
-            # 当前壁纸不是图片/MP4（或读不到）时，回退到上次关闭前缓存的那张。
+            # 当前项目不支持或读不到时，回退到上次可播放的图片或 MP4。
             live = ""
             try:
                 live, _selected = _wallpaper_engine_selected()
             except HTTPException:
                 live = ""
             cached = cfg.get("wall_engine_media") or ""
+            if any(item.get("path") == cached and item.get("preview")
+                   for item in cfg.get("wall_engine_recent") or []):
+                cached = ""
             for candidate in (live, cached):
                 if not candidate:
                     continue
@@ -834,10 +891,18 @@ def _wallpaper_engine_media(path: str) -> tuple[str, str]:
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Wallpaper Engine 当前壁纸文件不存在")
     if ext in _WE_IMAGE_EXTS:
+        # 旧版本可能缓存了场景项目的缩略图，不再作为聊天背景提供。
+        if os.path.basename(path).lower() == "preview.jpg":
+            try:
+                with open(os.path.join(os.path.dirname(path), "project.json"), "r", encoding="utf-8-sig") as file:
+                    if json.load(file).get("type") == "scene":
+                        raise HTTPException(status_code=415, detail="场景壁纸预览图不作为聊天背景提供")
+            except (OSError, ValueError, TypeError):
+                pass
         return path, "image"
     if ext == ".mp4":
         return path, "video"
-    raise HTTPException(status_code=415, detail="当前壁纸不是图片或 MP4，第一版暂不支持")
+    raise HTTPException(status_code=415, detail="聊天背景仅支持图片或 MP4；请在 Wallpaper Engine 中切换到这两种类型后再同步")
 
 
 def _wallpaper_engine_config() -> dict:
@@ -925,17 +990,6 @@ def _wallpaper_engine_url(path: str) -> str:
     return f"/api/wallpaper-engine/media?v={version}"
 
 
-def _wallpaper_engine_recent_media(path: str) -> tuple[str, str, bool]:
-    try:
-        media, kind = _wallpaper_engine_media(path)
-        return media, kind, False
-    except HTTPException as error:
-        if error.status_code != 415:
-            raise
-    media, kind = _wallpaper_engine_media(os.path.join(os.path.dirname(path), "preview.jpg"))
-    return media, kind, True
-
-
 def _wallpaper_engine_recent_from_config() -> list[dict]:
     rows = []
     for account in _wallpaper_engine_config().values():
@@ -947,7 +1001,7 @@ def _wallpaper_engine_recent_from_config() -> list[dict]:
             screens = recent.get("config", {}).get("selectedwallpapers", {})
             slot = screens.get(monitor) or next(reversed(screens.values()), {})
             try:
-                path, kind, preview = _wallpaper_engine_recent_media(
+                path, kind = _wallpaper_engine_media(
                     str(slot.get("file") or "")
                 )
             except HTTPException:
@@ -958,7 +1012,7 @@ def _wallpaper_engine_recent_from_config() -> list[dict]:
                 "name": _wallpaper_engine_name(path, str(recent.get("title") or "")),
                 "path": path,
                 "kind": kind,
-                "preview": preview,
+                "preview": False,
             })
             if len(rows) == 10:
                 return rows
@@ -977,6 +1031,8 @@ def _wallpaper_engine_recent_items() -> list[dict]:
     rows = []
     for item in cfg.get("wall_engine_recent") or []:
         try:
+            if item.get("preview"):
+                continue
             path, kind = _wallpaper_engine_media(str(item.get("path") or ""))
         except (AttributeError, HTTPException):
             continue
@@ -1357,6 +1413,7 @@ def _chat_response(body, runner, *, working=True):
 
     def event_stream():
         gen = None
+        emotion_text = ""
         if working:
             _change_activity(1)
         try:
@@ -1385,6 +1442,14 @@ def _chat_response(body, runner, *, working=True):
                         ev = gen.send(decision)
                     except StopIteration:
                         break
+                if ev.get("type") == "text":
+                    emotion_text = (emotion_text + str(ev.get("text", "")))[-4000:]
+                elif ev.get("type") == "done":
+                    from nyalume.core.companion_emotion import expressed_emotion
+                    emotion = expressed_emotion(emotion_text) or expressed_emotion(body.message)
+                    if emotion:
+                        with _activity_lock:
+                            _pet_emotion.update(seq=_pet_emotion["seq"] + 1, emotion=emotion, at=time.time())
                 yield _frame(ev)
         finally:
             try:
@@ -1868,9 +1933,10 @@ def wallpaper_engine_action(action: str, index: int = -1):
         selected_path, selected = _wallpaper_engine_selected()
         current = _we_media_path or selected_path
         playlist = _wallpaper_engine_playlist(current, selected)
+        recent = []
         if not playlist:
-            playlist = [(item["path"], item["kind"])
-                        for item in _wallpaper_engine_recent_items()]
+            recent = _wallpaper_engine_recent_items()
+            playlist = [(item["path"], item["kind"]) for item in recent]
         if not playlist:
             raise HTTPException(status_code=404, detail="没有可切换的 JPG、其他图片或 MP4")
         paths = [item[0] for item in playlist]
@@ -1880,7 +1946,7 @@ def wallpaper_engine_action(action: str, index: int = -1):
             index = 0
         _we_media_path, kind = playlist[index % len(playlist)]
         name = _wallpaper_engine_name(_we_media_path)
-        preview = False
+        preview = any(item["path"] == _we_media_path and item["preview"] for item in recent)
     else:
         recent = _wallpaper_engine_recent_items()
         if index < 0 or index >= len(recent):
@@ -1899,6 +1965,7 @@ def wallpaper_engine_action(action: str, index: int = -1):
         "kind": kind,
         "url": _wallpaper_engine_url(_we_media_path),
         "name": name,
+        "preview": preview,
     }
 
 

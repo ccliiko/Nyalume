@@ -13,6 +13,8 @@ _SCRIPT = Path(__file__).resolve().parents[4] / "tools/check_motion_compat.mjs"
 def check(model_file: str, motions: list[str]) -> dict:
     if not model_file or not os.path.isfile(model_file):
         return {"ok": False, "error": "当前模型不可用"}
+    if model_file.lower().endswith(".vrm"):
+        return {"ok": False, "error": "VRM 使用自然待机和互动姿态，暂不支持 VMD 舞蹈"}
     if not motions:
         return {"ok": False, "error": "当前可选动作库为空，请先导入动作或调整白名单"}
     if len(motions) > 200:

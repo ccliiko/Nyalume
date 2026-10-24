@@ -1,0 +1,1 @@
+{"name":"EkuComparison.Editor","references":["EkuComparison.Runtime","UniVRM.Editor","UniGLTF","UniGLTF.Editor","VRM"],"includePlatforms":["Editor"],"autoReferenced":true}

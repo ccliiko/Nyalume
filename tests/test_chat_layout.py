@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import expect
 
 
 # 让「用户按下停止」到「前端收尾真正跑完」之间隔开一段确定的空档：
@@ -39,7 +39,7 @@ DELAYED_ABORT_SCRIPT = """() => {
 
 
 @pytest.fixture
-def chat_page(request):
+def chat_page(request, browser_context):
     html = (Path(__file__).resolve().parents[1] /
             "nyalume/frontends/web/static/index.html").read_text(encoding="utf-8")
     portrait_path = (Path(__file__).resolve().parents[1] /
@@ -206,12 +206,10 @@ def chat_page(request):
             }.get(path, [])
         route.fulfill(content_type="application/json", body=json.dumps(result))
 
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(channel="msedge", headless=True)
-        page = browser.new_page(viewport={"width": 1100, "height": 760})
-        page.on("pageerror", lambda error: errors.append(str(error)))
-        page.route("**/*", route_request)
-        page.add_init_script("""(() => {
+    page = browser_context.new_page()
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.context.route("**/*", route_request)
+    page.add_init_script("""(() => {
             const originalFetch = window.fetch;
             window.fetch = (url, options) => {
                 if (url !== '/api/chat') return originalFetch(url, options);
@@ -231,13 +229,10 @@ def chat_page(request):
                 return Promise.resolve(new Response(body, {headers: {'Content-Type': 'text/event-stream'}}));
             };
         })()""")
-        try:
-            page.goto("http://nyalume.test/" + getattr(request, 'param', ''))
-            expect(page.locator("#log .msg.user").last).to_contain_text(rows[2]["content"])
-            expect(page.locator("#persona-select")).to_have_value("nyalume")
-            yield page, errors, deletes
-        finally:
-            browser.close()
+    page.goto("http://nyalume.test/" + getattr(request, 'param', ''))
+    expect(page.locator("#log .msg.user").last).to_contain_text(rows[2]["content"])
+    expect(page.locator("#persona-select")).to_have_value("nyalume")
+    yield page, errors, deletes
 
 
 def assert_layout(page):
@@ -279,6 +274,86 @@ def test_new_chat_opens_empty_composer_directly(chat_page):
     expect(page.locator('#input')).to_be_focused()
     expect(page.locator('#log .empty-hint')).to_be_visible()
     assert not errors
+
+
+def test_new_chat_from_daily_mode_starts_a_fresh_conversation(chat_page):
+    """日常模式下点“开启新对话”必须退出日常模式，而不是回到上一次的日常对话。"""
+    page, errors, _ = chat_page
+    page.evaluate("fetch('/api/permissions', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'daily'})})")
+    page.wait_for_function("!!state.renderPerm")
+    page.locator('#chat-mode-select').select_option('daily')
+    page.wait_for_function("state.chatMode === 'daily' && state.currentId === 'nyalume-daily'")
+    page.evaluate("switchTo('demo')")
+    page.wait_for_function("state.currentId === 'demo' && state.chatMode === 'daily'")
+    with page.expect_response(
+            lambda response: response.url.endswith('/api/sessions')
+            and response.request.method == 'POST'):
+        page.locator('#new-btn').click()
+    page.wait_for_function("state.currentId === 'empty' && state.chatMode === 'workspace'")
+    expect(page.locator('#log .empty-hint')).to_be_visible()
+    expect(page.locator('#chat-mode-select')).to_have_value('work')
+    expect(page.locator('#input')).to_be_focused()
+    assert not errors
+
+
+def test_home_chat_and_focus_open_without_starting_work(chat_page, tmp_path):
+    page, errors, _ = chat_page
+    writes = []
+    page.on('request', lambda request: writes.append(request.url)
+            if request.method == 'POST' else None)
+    page.locator('#input').fill('留给这段对话的草稿')
+    page.locator('#home-nav').click()
+    expect(page.locator('#focus-details')).not_to_have_attribute('open', '')
+    expect(page.locator('#focus-goal')).to_be_hidden()
+    page.screenshot(path=str(tmp_path / 'home-desktop.png'))
+    print('PREVIEW', tmp_path / 'home-desktop.png')
+    theme = page.locator('#theme-select')
+    previous_theme = theme.input_value()
+    theme.select_option('light')
+    page.screenshot(path=str(tmp_path / 'home-desktop-day.png'))
+    print('PREVIEW', tmp_path / 'home-desktop-day.png')
+    page.set_viewport_size({'width': 480, 'height': 640})
+    page.screenshot(path=str(tmp_path / 'home-narrow-day.png'))
+    print('PREVIEW', tmp_path / 'home-narrow-day.png')
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    page.set_viewport_size({'width': 1100, 'height': 760})
+    theme.select_option(previous_theme)
+    page.locator('#home-focus-open').click()
+    expect(page.locator('#focus-details')).to_have_attribute('open', '')
+    expect(page.locator('#focus-goal')).to_be_focused()
+    expect(page.locator('#focus-running')).to_be_hidden()
+    assert not writes
+    page.locator('#home-chat-open').click()
+    expect(page.locator('#home-panel')).to_be_hidden()
+    expect(page.locator('#input')).to_be_focused()
+    expect(page.locator('#input')).to_have_value('留给这段对话的草稿')
+    assert not page.evaluate('state.busy')
+    assert not writes
+    assert not errors
+
+
+@pytest.mark.parametrize('chat_page', ['?quick=1&session=demo'], indirect=True)
+def test_quick_chat_memory_popup_preserves_current_session(chat_page):
+    page, errors, _ = chat_page
+    expect(page.locator('#chat-head #chat-mode-select')).to_be_visible()
+    page.locator('#input').fill('只保存在原窗口的草稿')
+    current = page.evaluate('state.currentId')
+    page.keyboard.press('Control+k')
+    page.locator('#command-search').fill('共同经历与记忆')
+    with page.expect_popup() as popup_info:
+        page.locator('#command-search').press('Enter')
+    popup = popup_info.value
+    popup.on('pageerror', lambda error: errors.append(str(error)))
+    expect(popup.locator('#memory-panel')).to_be_visible()
+    query = parse_qs(urlparse(popup.url).query)
+    assert query.get('memory') == ['1']
+    assert query.get('session') == [current]
+    assert popup.evaluate('state.currentId') == current
+    expect(popup.locator('#memory-context')).to_contain_text('当前对话：答辩准备')
+    expect(page.locator('#input')).to_have_value('只保存在原窗口的草稿')
+    assert not page.evaluate('state.busy')
+    assert not errors
+    popup.close()
 
 
 def test_slash_menu_keyboard_goal_stream_and_exit(chat_page, tmp_path):
@@ -460,7 +535,8 @@ def test_plan_mode_shortcuts_inline_command_and_session_reset(chat_page):
     page.wait_for_function('!state.busy')
     page.evaluate("state.renderPerm('daily')")
     expect(toggle).to_have_attribute('aria-pressed', 'false')
-    toggle.click()
+    expect(toggle).to_be_hidden()
+    page.evaluate('window._startPlanMode()')
     expect(toggle).to_have_attribute('aria-pressed', 'false')
     assert not errors
 
@@ -588,14 +664,74 @@ def test_goal_cancel_during_creation_cleans_pending_goal(chat_page):
 
 def test_goal_selection_preserves_daily_permissions(chat_page):
     page, errors, _ = chat_page
-    page.locator('#perm-btn').click()
-    page.get_by_role('button', name='日常模式', exact=True).click()
+    page.locator('#chat-mode-select').select_option('daily')
     page.wait_for_function("state.chatMode === 'daily' && state.currentId === 'nyalume-daily'")
     page.locator('#input').fill('/goal')
     page.locator('#input').press('Enter')
     expect(page.locator('#goal-mode')).to_be_hidden()
     assert page.evaluate('state.chatMode') == 'daily'
-    expect(page.locator('#task-toast')).to_contain_text('权限菜单')
+    expect(page.locator('#task-toast')).to_contain_text('工作助手')
+    assert not errors
+
+
+def test_chat_purpose_restores_work_permission_and_blocks_busy_switch(chat_page, tmp_path):
+    page, errors, _ = chat_page
+    modes = []
+    page.on('request', lambda request: modes.append(request.post_data_json['mode'])
+            if urlparse(request.url).path == '/api/permissions' and request.method == 'PUT' else None)
+    purpose = page.locator('#chat-mode-select')
+    expect(page.locator('#sidebar .side-head #chat-mode-select')).to_be_visible()
+    expect(page.locator('#draft-status, .composer-help, .brand-caption')).to_have_count(0)
+    page.locator('#perm-btn').click()
+    expect(page.locator('#perm-menu button')).to_have_count(3)
+    expect(page.locator('#perm-menu')).not_to_contain_text('日常')
+    page.get_by_role('button', name='只读工作', exact=True).click()
+    page.wait_for_function("state.chatMode === 'read_only'")
+    expect(purpose).to_be_enabled()
+    page.evaluate('window._startPursuitMode()')
+    expect(page.locator('#goal-mode')).to_be_visible()
+    purpose.select_option('daily')
+    page.wait_for_function("state.chatMode === 'daily' && state.currentId === 'nyalume-daily'")
+    expect(purpose).to_be_enabled()
+    expect(page.locator('#work-permissions')).to_be_hidden()
+    expect(page.locator('#plan-toggle')).to_be_hidden()
+    expect(page.locator('#goal-mode')).to_be_hidden()
+    expect(page.locator('#composer-caption')).to_be_hidden()
+    page.screenshot(path=str(tmp_path / 'daily-chat.png'))
+    print('PREVIEW', tmp_path / 'daily-chat.png')
+    assert page.evaluate('[state.planMode, state.pursuitMode]') == [False, False]
+    page.locator('#command-open').click()
+    expect(page.locator('#command-list')).not_to_contain_text('计划模式')
+    expect(page.locator('#command-list')).not_to_contain_text('目标模式')
+    page.locator('#command-close').click()
+    page.locator('#input').fill('/')
+    expect(page.locator('#slash-menu')).to_be_visible()
+    expect(page.locator('#slash-menu')).not_to_contain_text('计划模式')
+    expect(page.locator('#slash-menu')).not_to_contain_text('目标模式')
+    page.locator('#input').fill('/plan 日常不能开始计划')
+    page.locator('#input').press('Enter')
+    assert not page.evaluate('state.planMode || state.busy')
+    expect(page.locator('#task-toast')).to_contain_text('工作助手')
+    page.locator('#input').fill('')
+    purpose.select_option('work')
+    page.wait_for_function("state.chatMode === 'read_only' && state.currentId !== 'nyalume-daily'")
+    expect(purpose).to_be_enabled()
+    expect(page.locator('#perm-btn')).to_have_text('只读工作')
+    expect(page.locator('#plan-toggle')).to_be_visible()
+    expect(page.locator('#add-btn')).to_be_enabled()
+    assert modes == ['read_only', 'daily', 'read_only']
+    page.locator('#input').fill('正在回复时保持工作用途')
+    page.locator('#send').click()
+    page.wait_for_function('state.busy')
+    session = page.evaluate('state.currentId')
+    purpose.select_option('daily')
+    expect(purpose).to_have_value('work')
+    expect(page.locator('#task-toast')).to_contain_text('先停止')
+    assert page.evaluate('state.chatMode') == 'read_only'
+    assert page.evaluate('state.currentId') == session
+    assert modes == ['read_only', 'daily', 'read_only']
+    page.evaluate("finishReply('继续在工作助手中回答')")
+    page.wait_for_function('!state.busy')
     assert not errors
 
 
@@ -609,7 +745,7 @@ def test_work_status_is_one_line_and_outputs_fold_after_reply(chat_page, tmp_pat
     status = page.locator('.latest-turn .live-think')
     expect(status).to_contain_text('先确认文件位置')
     assert status.evaluate("el => getComputedStyle(el).userSelect") == 'none'
-    assert status.evaluate("el => getComputedStyle(el).animationDuration") == '3s'
+    assert status.evaluate("el => getComputedStyle(el).animationDuration") == '0s'
     page.evaluate("pushReply('先读一下文件，再执行验证。')")
     page.evaluate("""pushEvent({type:'tool',name:'run_code',desc:'运行命令',
       detail:'D:/projects/nyalume · python -c "print(42)" ' + '很长的参数 '.repeat(50)})""")
@@ -618,7 +754,7 @@ def test_work_status_is_one_line_and_outputs_fold_after_reply(chat_page, tmp_pat
     expect(status.locator('.work-status-tail')).to_have_text('喵')
     expect(status.locator('.work-status-text')).to_contain_text('D:/projects/nyalume · python')
     assert status.locator('.work-status-text').evaluate("el => getComputedStyle(el).textOverflow") == 'ellipsis'
-    assert status.evaluate("el => getComputedStyle(el).backgroundImage") != 'none'
+    assert status.evaluate("el => getComputedStyle(el).backgroundImage") == 'none'
     expect(page.locator('.latest-turn .proc-text')).to_be_hidden()
     assert page.locator('.latest-turn .tool-group').count() == 1
     assert page.locator('.latest-turn .exec-item').count() == 0
@@ -668,7 +804,7 @@ def test_context_compression_notice_is_visible_and_persists(chat_page):
     notice = page.locator('.latest-turn .context-notice')
     expect(notice).to_be_visible()
     expect(notice).to_contain_text('正在整理 12 条')
-    assert notice.evaluate("el => getComputedStyle(el).animationDuration") == '3s'
+    assert notice.evaluate("el => getComputedStyle(el).animationDuration") == '0s'
     page.evaluate("pushEvent({type:'context_compression',status:'completed',count:12})")
     expect(notice).to_have_attribute('data-status', 'completed')
     page.evaluate("finishReply('重点都记住了，继续吧喵。')")
@@ -776,8 +912,11 @@ def test_tables_in_history_stream_and_code(chat_page, tmp_path):
 
 def test_pet_status_panel(chat_page):
     page, errors, _ = chat_page
-    page.locator("#sec-state .side-sec-head").click()
-    expect(page.locator("#state-body")).to_contain_text("测试桌宠 · 待机 · 开心 · 柔和·浓郁 · 安静中")
+    page.locator('#config-btn').click()
+    page.locator('[data-settings-panel="pet"]').click()
+    expect(page.locator('#panel-pet')).to_be_visible()
+    expect(page.locator('#pet-state-body')).to_contain_text("测试桌宠 · 待机 · 开心 · 柔和·浓郁 · 安静中")
+    expect(page.locator('#pet-motion-check')).to_be_visible()
     assert not errors
 
 
@@ -833,13 +972,14 @@ def test_sidebar_compact_sections_and_fixed_footer(chat_page, tmp_path):
     assert recent["height"] < 180
     assert recent["y"] >= projects["y"] + projects["height"] - 1
 
-    page.locator("#sec-state .side-sec-head").click()
-    state_box = page.locator("#sec-state").bounding_box()
-    assert state_box["height"] >= 180
-    assert state_box["y"] >= recent["y"] + recent["height"] - 1
+    expect(page.locator('#sec-state')).to_have_count(0)
+    page.locator('#memory-nav').click()
+    expect(page.locator('#memory-panel')).to_be_visible()
+    assert page.locator('#memory-panel').bounding_box()['width'] > page.locator('#sidebar').bounding_box()['width']
+    expect(page.locator('#memory-panel #state-body')).to_have_count(1)
+    expect(page.locator('#log')).to_be_hidden()
     assert page.locator("#sec-projects .side-sec-head").bounding_box()["height"] == 36
     assert page.locator("#sec-recent .side-sec-head").bounding_box()["height"] == 36
-    assert page.locator("#sec-state .side-sec-head").bounding_box()["height"] == 36
     page.locator('#memory-backups summary').click()
     expect(page.locator("#backup-list")).to_contain_text("准备 Agent 面试")
     expect(page.locator("#backup-list")).not_to_contain_text("agent_20260908")
@@ -848,9 +988,8 @@ def test_sidebar_compact_sections_and_fixed_footer(chat_page, tmp_path):
     assert page.locator(".sidebar-foot").bounding_box() == footer
     assert footer["y"] + footer["height"] <= page.viewport_size["height"]
     page.locator("#sidebar-scroll").evaluate("el => el.scrollTop = 0")
-    page.locator("#sec-state .side-sec-head").click()
-    expect(page.locator("#sec-state .side-sec-head")).to_have_attribute("aria-expanded", "false")
     page.locator("#home-nav").click()
+    expect(page.locator('#memory-panel')).to_be_hidden()
     page.screenshot(path=str(tmp_path / "sidebar-home.png"))
     print("PREVIEW", tmp_path / "sidebar-home.png")
     assert not errors
@@ -865,11 +1004,13 @@ def test_sidebar_keyboard_long_list_menu_and_reload(chat_page, tmp_path):
     width = title.bounding_box()['width']
     page.locator('#session-list .session-item').first.hover()
     assert title.bounding_box()['width'] == width
-    page.locator('#sec-state .side-sec-head').click()
-    expect(page.locator('#sec-state .side-sec-head')).to_have_attribute('aria-expanded', 'true')
+    page.locator('#memory-nav').click()
+    expect(page.locator('#memory-panel')).to_be_visible()
     page.reload()
-    expect(page.locator('#sec-state .side-sec-head')).to_have_attribute('aria-expanded', 'true')
-    page.locator('#sec-state .side-sec-head').click()
+    page.locator('#memory-nav').click()
+    expect(page.locator('#memory-panel')).to_be_visible()
+    page.locator('#chat-nav').click()
+    expect(page.locator('#memory-panel')).to_be_hidden()
     page.evaluate("renderSessionList(listBox, Array.from({length: 30}, (_, i) => ({id: 'demo', title: '一段很长的对话标题，用来验证菜单和滚动 ' + i, message_count: i})))")
     footer = page.locator('.sidebar-foot').bounding_box()
     page.locator('#sidebar-scroll').evaluate('el => el.scrollTop = el.scrollHeight')
@@ -901,6 +1042,92 @@ def test_wallpaper_always_covers_the_whole_window(chat_page):
         "el => ({size: getComputedStyle(el).backgroundSize, repeat: getComputedStyle(el).backgroundRepeat})"
     )
     assert style == {"size": "cover", "repeat": "no-repeat"}
+    assert not errors
+
+
+@pytest.mark.parametrize('theme', ['light', 'dark'])
+def test_wallpaper_engine_image_is_actually_visible_behind_chat(chat_page, theme, tmp_path):
+    import io
+    from PIL import Image
+
+    page, errors, _ = chat_page
+    url = 'data:image/svg+xml;base64,' + base64.b64encode(
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
+        b'<rect width="10" height="10" fill="#ff0080"/></svg>').decode()
+    page.route('**/api/wallpaper-engine/current', lambda route: route.fulfill(
+        content_type='application/json', body=json.dumps(
+            {'ok': True, 'kind': 'image', 'url': url, 'preview': False})))
+    page.locator('#theme-select').select_option(theme)
+    page.evaluate('async url => {const image=new Image(); image.src=url; await image.decode();}', url)
+    page.locator('#wall-btn').click()
+    page.get_by_role('button', name='使用当前壁纸', exact=True).click()
+    expect(page.locator('body')).to_have_class('wall-on')
+
+    def background_pixels():
+        png = page.screenshot(animations='disabled')
+        image = Image.open(io.BytesIO(png)).convert('RGB')
+        pixels = {}
+        for selector, offsets in {'#log': (4, 4), '#chat-head': (-4, 4),
+                                  '#input-row': (16, 4), '#input': (4, 4),
+                                  '#sidebar': (4, 120)}.items():
+            rect = page.locator(selector).bounding_box()
+            if rect:
+                dx, dy = offsets
+                x = rect['x'] + (rect['width'] + dx if dx < 0 else dx)
+                pixels[selector] = image.getpixel((int(x), int(rect['y'] + dy)))
+        return pixels
+
+    for width in (1280, 390):
+        page.set_viewport_size({'width': width, 'height': 844})
+        page.evaluate("wallOpacity.value=100; wallOpacity.dispatchEvent(new Event('input'))")
+        visible = background_pixels()
+        assert visible['#log'] == (255, 0, 128)
+        page.screenshot(path=str(tmp_path / f'wall-window-{theme}-{width}.png'), animations='disabled')
+        print('PREVIEW', tmp_path / f'wall-window-{theme}-{width}.png')
+        page.evaluate("wallOpacity.value=0; wallOpacity.dispatchEvent(new Event('input'))")
+        hidden = background_pixels()
+        assert all(visible[selector] != hidden[selector] for selector in visible)
+    page.evaluate('clearWallpaperUI()')
+    expect(page.locator('body')).not_to_have_class(re.compile(r'\bwall-on\b'))
+    assert not errors
+
+
+@pytest.mark.parametrize('theme', ['light', 'dark'])
+def test_narrow_wallpaper_menu_fits_window_and_can_close(chat_page, theme):
+    page, errors, _ = chat_page
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.locator('#theme-select').select_option(theme)
+    page.keyboard.press('Control+k')
+    page.locator('#command-search').fill('聊天壁纸')
+    page.locator('#command-search').press('Enter')
+    menu = page.locator('#wall-menu')
+    expect(menu).to_be_visible()
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    bounds = menu.bounding_box()
+    assert 0 <= bounds['x'] and bounds['x'] + bounds['width'] <= 390
+    assert 0 <= bounds['y'] and bounds['y'] + bounds['height'] <= 844
+    menu.get_by_role('button', name='清除壁纸', exact=True).click()
+    expect(menu).to_be_hidden()
+    expect(page.locator('#input')).to_be_visible()
+    assert not errors
+
+
+def test_attachment_menu_text_and_icons_open_their_actions(chat_page):
+    page, errors, _ = chat_page
+    for kind in ('image', 'file', 'folder'):
+        for child in ('span', 'svg'):
+            page.locator('#add-btn').click()
+            entry = page.locator(f'#add-menu button[data-kind="{kind}"] {child}')
+            if kind == 'image':
+                with page.expect_file_chooser():
+                    entry.click()
+            else:
+                entry.click()
+                expect(page.locator('#inline-edit-modal')).to_be_visible()
+                expect(page.locator('#inline-edit-title')).to_contain_text(
+                    '文件路径' if kind == 'file' else '文件夹或文档路径')
+                page.locator('#inline-edit-cancel').click()
+            expect(page.locator('#add-menu')).not_to_have_class(re.compile(r'\bshow\b'))
     assert not errors
 
 
@@ -979,27 +1206,60 @@ def test_daily_cards_share_layers_drag_flip_and_album_art(chat_page, tmp_path):
     assert not errors
 
 
-def test_cat_head_taps_persist_and_follow_daily_score(chat_page):
+def test_cat_head_taps_persist_and_follow_daily_score(chat_page, tmp_path):
     page, errors, _ = chat_page
-    page.locator("#cat-tap-stats-btn").click()
+    expect(page.locator('#chat-head #cat-tap-btn')).to_be_visible()
+    expect(page.locator('#cat-tap-wrap + #daily-nyalume-btn')).to_be_visible()
+    assert page.locator('#send').bounding_box()['height'] < 44
+    assert page.locator('#cat-tap-btn').bounding_box()['width'] >= 44
+    page.screenshot(path=str(tmp_path / 'cat-toolbar-desktop.png'))
+    print('PREVIEW', tmp_path / 'cat-toolbar-desktop.png')
+    expect(page.locator('#cat-tap-stats-btn')).to_have_count(0)
+    cat = page.locator('#cat-tap-btn')
+    stats = page.locator('#cat-tap-stats')
+    cat.hover()
+    expect(stats).to_be_hidden()
+    expect(stats).to_be_visible()
     before_taps = int(page.locator("#cat-tap-count").inner_text().split()[0])
     before_meows = int(page.locator("#cat-meow-count").inner_text().split()[0])
     expect(page.locator("#cat-meow-chance")).to_contain_text("喵概率 20%")
-    page.locator("#cat-tap-stats-btn").click()
+    page.locator('#input').hover()
+    expect(stats).to_be_hidden()
 
     # 第一项随机数固定为 0，保证触发喵；后续随机数只控制扇形方向与距离。
     page.evaluate("Math.random = () => 0")
+    cat.hover()
+    page.wait_for_timeout(350)
     with page.expect_request("**/api/pet/tap") as request_info:
-        page.locator("#cat-tap-btn").click()
+        cat.click()
     assert request_info.value.post_data_json == {"meowed": True}
     expect(page.locator("#cat-tap-feedback")).to_have_text(f"喵次数：{before_meows + 1} 次")
     expect(page.locator(".cat-meow-particle")).to_have_count(1)
 
-    page.locator("#cat-tap-stats-btn").click()
-    expect(page.locator("#cat-tap-count")).to_have_text(f"{before_taps + 1} 次")
-    expect(page.locator("#cat-meow-count")).to_have_text(f"{before_meows + 1} 次")
+    page.wait_for_timeout(350)
+    expect(stats).to_be_hidden()
+    cat.click()
+    page.wait_for_timeout(350)
+    expect(stats).to_be_hidden()
+    expect(stats).to_be_visible()
+    expect(cat).to_have_attribute('aria-expanded', 'true')
+    expect(page.locator("#cat-tap-count")).to_have_text(f"{before_taps + 2} 次")
+    expect(page.locator("#cat-meow-count")).to_have_text(f"{before_meows + 2} 次")
     saved = page.evaluate("JSON.parse(localStorage.getItem('nyalume.catTapStats.v1'))")
-    assert saved == {"taps": before_taps + 1, "meows": before_meows + 1}
+    assert saved == {"taps": before_taps + 2, "meows": before_meows + 2}
+    expect(page.locator('#chat-head #cat-tap-wrap')).to_be_visible()
+    page.set_viewport_size({'width': 390, 'height': 844})
+    assert_layout(page)
+    cat.hover()
+    expect(stats).to_be_visible()
+    panel = page.locator('#cat-tap-stats').bounding_box()
+    assert panel['x'] >= 0 and panel['x'] + panel['width'] <= 390
+    page.screenshot(path=str(tmp_path / 'cat-toolbar-narrow.png'))
+    print('PREVIEW', tmp_path / 'cat-toolbar-narrow.png')
+    page.set_viewport_size({'width': 1100, 'height': 760})
+    page.locator('#input').hover()
+    expect(stats).to_be_hidden()
+    expect(cat).to_have_attribute('aria-expanded', 'false')
 
     page.locator("#daily-nyalume-btn").click()
     expect(page.locator("#cat-meow-chance")).to_contain_text("今日 95 分 · 喵概率 48%")
@@ -1011,6 +1271,8 @@ def test_cat_head_taps_persist_and_follow_daily_score(chat_page):
 
 def test_wallpaper_menu_has_no_builtin_character_wallpaper(chat_page):
     page, errors, _ = chat_page
+    expect(page.locator('#wall-btn')).to_have_text('壁纸')
+    expect(page.locator('#wall-btn svg')).to_have_count(1)
     page.locator("#wall-btn").click()
     expect(page.locator('#wall-menu button[data-act="char"]')).to_have_count(0)
     expect(page.locator('#wall-menu button[data-act="upload"]')).to_be_visible()
@@ -1020,11 +1282,13 @@ def test_wallpaper_menu_has_no_builtin_character_wallpaper(chat_page):
 
 def test_daily_mode_disables_files_and_shows_affection(chat_page):
     page, errors, _ = chat_page
-    page.locator("#perm-btn").click()
-    page.get_by_role("button", name="日常模式", exact=True).click()
-    expect(page.locator("#perm-btn")).to_have_text("日常模式")
+    page.locator('#chat-mode-select').select_option('daily')
+    page.wait_for_function("state.chatMode === 'daily' && state.currentId === 'nyalume-daily'")
+    expect(page.locator('#chat-mode-select')).to_be_enabled()
+    expect(page.locator('#chat-mode-select')).to_have_value('daily')
+    expect(page.locator('#work-permissions')).to_be_hidden()
     expect(page.locator("#add-btn")).to_be_disabled()
-    page.locator("#sec-state .side-sec-head").click()
+    page.locator('#memory-nav').click()
     expect(page.locator("#state-body")).to_contain_text("当前好感度：72")
     assert not errors
 
@@ -1039,20 +1303,25 @@ def test_shared_memory_controls_and_daily_session(chat_page):
         requests.append(json.loads(route.request.post_data or '{}'))
         route.fulfill(content_type='application/json', body='{"ok":true}')
     page.route('**/api/companionship/memories/mem-test', edit)
-    page.locator('#perm-btn').click()
-    page.get_by_role('button', name='日常模式', exact=True).click()
-    page.locator('#sec-state .side-sec-head').click()
+    page.locator('#chat-mode-select').select_option('daily')
+    page.wait_for_function("state.chatMode === 'daily' && state.currentId === 'nyalume-daily'")
+    expect(page.locator('#chat-mode-select')).to_be_enabled()
+    page.locator('#memory-nav').click()
     expect(page.locator('#state-body')).to_contain_text('称呼：小林')
     with page.expect_response('**/api/companionship/memories/mem-test'):
         page.locator('[data-comp-memory="mem-test"][data-action="mute"]').click()
     assert requests == [{'proactive': False}]
     page.evaluate("fetch('/api/permissions', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode:'workspace'})})")
     page.goto('http://nyalume.test/?session=nyalume-daily')
-    expect(page.locator('#perm-btn')).to_have_text('日常模式')
+    expect(page.locator('#chat-mode-select')).to_have_value('daily')
     expect(page.locator('#add-btn')).to_be_disabled()
-    with page.expect_response('**/api/companionship/daily-session'):
+    with page.expect_response(
+            lambda response: response.url.endswith('/api/sessions')
+            and response.request.method == 'POST'):
         page.locator('#new-btn').click()
-    expect(page.locator('#perm-btn')).to_have_text('日常模式')
+    page.wait_for_function("state.currentId === 'empty' && state.chatMode === 'workspace'")
+    expect(page.locator('#chat-mode-select')).to_have_value('work')
+    expect(page.locator('#input')).to_be_focused()
     assert not errors
 
 
@@ -1062,12 +1331,19 @@ def test_openai_provider_preset_fills_endpoint_and_model(chat_page):
     page.locator("#config-btn").click()
     expect(page.locator("#cfg-help")).to_have_text("?")
     expect(page.locator("#nav-discipline")).to_have_count(0)
+    expect(page.locator('#cfg-advanced')).not_to_have_attribute('open', '')
+    expect(page.locator('#cfg-input-LLM_BASE_URL')).to_be_hidden()
+    assert page.locator('[data-config-key]').evaluate_all(
+        "rows => rows.map(row => row.dataset.configKey).filter(key => ['LLM_PROVIDER', 'LLM_API_KEY', 'LLM_MODEL'].includes(key))"
+    ) == ['LLM_PROVIDER', 'LLM_API_KEY', 'LLM_MODEL']
     page.locator("#cfg-input-LLM_PROVIDER").select_option("openai")
     expect(page.locator("#cfg-input-LLM_BASE_URL")).to_have_value("https://api.openai.com/v1")
     expect(page.locator("#cfg-input-LLM_MODEL")).to_have_value("gpt-5.6-luna")
     expect(page.locator('[data-config-key="LLM_MODEL"]')).to_be_hidden()
     page.locator("#cfg-input-LLM_PROVIDER").select_option("custom")
     expect(page.locator('[data-config-key="LLM_MODEL"]')).to_be_visible()
+    page.locator('#cfg-advanced summary').click()
+    expect(page.locator('#cfg-input-LLM_BASE_URL')).to_be_visible()
     assert not errors
 
 
@@ -1148,6 +1424,20 @@ def test_wallpaper_engine_current_next_and_open(chat_page):
     expect(page.locator("#wall-bg")).to_be_hidden()
 
     page.evaluate("useWallpaperEngine('open')")
+    assert not errors
+
+
+def test_wallpaper_engine_menu_hides_legacy_scene_previews(chat_page):
+    page, errors, _ = chat_page
+    page.route('**/api/wallpaper-engine/recent', lambda route: route.fulfill(
+        content_type='application/json', body=json.dumps([
+            {'index': 0, 'name': '旧场景缩略图', 'kind': 'image', 'preview': True},
+            {'index': 1, 'name': '清晰视频', 'kind': 'video', 'preview': False}])))
+    page.locator('#wall-btn').click()
+    page.get_by_role('button', name='最近壁纸').click()
+    expect(page.locator('#we-recent-list button')).to_have_count(2)
+    expect(page.locator('#we-recent-list')).not_to_contain_text('旧场景缩略图')
+    expect(page.locator('#we-recent-list button[data-index="1"]')).to_contain_text('清晰视频')
     assert not errors
 
 
@@ -1363,7 +1653,7 @@ def test_memory_editor_prefills_and_saves_all_fields(chat_page, tmp_path):
         route.fulfill(content_type='application/json', body='{"ok":true}')
     page.route('**/api/companionship/memories/m1', save)
     page.evaluate('renderState()')
-    page.locator('#sec-state .side-sec-head').click()
+    page.locator('#memory-nav').click()
     expect(page.locator('#memory-cards')).to_contain_text('Python')
     page.locator('#memory-cards').get_by_role('button', name='编辑', exact=True).click()
     dialog = page.locator('#memory-editor')
@@ -1377,4 +1667,113 @@ def test_memory_editor_prefills_and_saves_all_fields(chat_page, tmp_path):
     assert saved[0]['summary'] == '改学 Rust' and saved[0]['keywords'] == ['Rust', '系统编程']
     page.locator('#memory-search').fill('不存在')
     expect(page.locator('#memory-cards')).to_contain_text('没有找到')
+    assert not errors
+
+
+@pytest.mark.parametrize('width', [1100, 480])
+@pytest.mark.parametrize('theme', ['light', 'dark'])
+def test_update_settings_check_retry_download_and_exit_prompt(chat_page, tmp_path, width, theme):
+    page, errors, _ = chat_page
+    page.set_viewport_size({'width': width, 'height': 760})
+    page.evaluate('theme => NyalumeTheme.set(theme)', theme)
+    status = dict(current_version='0.5.1', phase='idle', message='点击检查 GitHub 正式发行版。', installable=False)
+    posts = []
+    fail = [False]
+    def updates(route):
+        if route.request.method == 'POST':
+            assert route.request.headers['x-nyalume-update'] == '1'
+            posts.append(route.request.url)
+            if fail[0]:
+                route.fulfill(status=409, content_type='application/json', body=json.dumps({'detail': 'GitHub 请求受限'}))
+                return
+            if route.request.url.endswith('/check'):
+                status.update(phase='checked', latest_version='v0.6.0', available=True, installable=True,
+                              message='发现新版本，可下载更新。', checked_at=1792886400, metadata_source='GitHub',
+                              notes='<script>不能执行的发行说明</script>\n修复与更新')
+            else:
+                status.update(phase='downloading', installable=False, downloaded=5242880, total=10485760, message='正在下载… 50%')
+        route.fulfill(content_type='application/json', body=json.dumps(status))
+    page.route('**/api/updates**', updates)
+    if width == 480:
+        page.locator('#sidebar-toggle').click()
+    page.locator('#updates-open').click()
+    expect(page.locator('#update-version')).to_have_text('当前版本 v0.5.1')
+    expect(page.locator('#update-install')).to_be_hidden()
+    expect(page.locator('#update-source-details')).not_to_have_attribute('open', '')
+    assert not posts  # Opening settings never starts a network check or download.
+    fail[0] = True
+    page.locator('#update-check').click()
+    expect(page.locator('#update-status')).to_contain_text('GitHub 请求受限')
+    expect(page.locator('#update-check')).to_be_enabled()
+    fail[0] = False
+    page.locator('#update-check').click()
+    expect(page.locator('#update-install')).to_be_visible()
+    expect(page.locator('#update-check')).to_be_enabled()
+    expect(page.locator('#update-checked')).to_contain_text('版本信息来自 GitHub')
+    expect(page.locator('#update-latest')).to_contain_text('v0.6.0')
+    page.locator('#update-details summary').click()
+    expect(page.locator('#update-notes')).to_contain_text('<script>')
+    assert page.locator('#update-notes script').count() == 0
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    page.wait_for_timeout(200)  # Let the button's existing color transition finish.
+    page.screenshot(path=str(tmp_path / f'updates-{width}.png'))
+    print('PREVIEW', tmp_path / f'updates-{width}.png')
+    page.locator('#update-install').click()
+    expect(page.locator('#update-status')).to_contain_text('50%')
+    expect(page.locator('#update-progress')).to_have_attribute('value', '50')
+    expect(page.locator('#update-progress-text')).to_have_text('50% · 5.0 / 10.0 MB')
+    expect(page.locator('#update-check')).to_be_disabled()
+    page.screenshot(path=str(tmp_path / f'download-{width}.png'))
+    status.update(phase='ready', message='更新已准备好。请从右键菜单退出桌宠，更新完成后会自动重新启动。')
+    expect(page.locator('#update-status')).to_contain_text('请从右键菜单退出桌宠')
+    expect(page.locator('#update-heading')).to_have_text('更新已准备好')
+    expect(page.locator('#update-progress-wrap')).to_be_hidden()
+    expect(page.locator('#update-install')).to_be_hidden()
+    assert len(posts) == 3
+    assert not errors
+
+
+@pytest.mark.parametrize('width', [1100, 480])
+def test_update_source_can_be_saved_reloaded_and_failure_retried(chat_page, tmp_path, width):
+    page, errors, _ = chat_page
+    page.set_viewport_size({'width': width, 'height': 760})
+    status = dict(current_version='0.5.1', phase='idle', message='点击检查更新', installable=False,
+                  source={'mode': 'auto', 'prefix': ''})
+    saved = []
+    reject = [False]
+    def updates(route):
+        if route.request.method == 'POST':
+            assert route.request.url.endswith('/source')
+            assert route.request.headers['x-nyalume-update'] == '1'
+            saved.append(route.request.post_data_json)
+            if reject[0]:
+                route.fulfill(status=409, content_type='application/json', body=json.dumps({'detail': '更新源保存失败'}))
+                return
+            status.update(source=route.request.post_data_json, message='更新源已保存，请重新检查更新。')
+        route.fulfill(content_type='application/json', body=json.dumps(status))
+    page.route('**/api/updates**', updates)
+    page.evaluate("openSettings('updates')")
+    page.locator('#update-source-details summary').click()
+    expect(page.locator('#update-source')).to_have_value('auto')
+    expect(page.locator('#update-prefix')).to_be_hidden()
+    page.locator('#update-source').select_option('custom')
+    expect(page.locator('#update-check')).to_be_disabled()
+    page.locator('#update-prefix').fill('https://mirror.example/proxy/')
+    reject[0] = True
+    page.locator('#update-source-save').click()
+    expect(page.locator('#update-status')).to_contain_text('保存更新源失败')
+    expect(page.locator('#update-source-save')).to_be_enabled()
+    expect(page.locator('#update-prefix')).to_have_value('https://mirror.example/proxy/')
+    reject[0] = False
+    page.locator('#update-source-save').click()
+    expect(page.locator('#update-check')).to_be_enabled()
+    expect(page.locator('#update-status')).to_contain_text('更新源已保存')
+    page.locator('#settings-close').click()
+    page.evaluate("openSettings('updates')")
+    expect(page.locator('#update-source')).to_have_value('custom')
+    expect(page.locator('#update-prefix')).to_have_value('https://mirror.example/proxy/')
+    assert saved == [{'mode': 'custom', 'prefix': 'https://mirror.example/proxy/'}] * 2
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    page.screenshot(path=str(tmp_path / f'update-source-{width}.png'))
+    print('PREVIEW', tmp_path / f'update-source-{width}.png')
     assert not errors

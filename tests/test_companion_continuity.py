@@ -263,7 +263,8 @@ def test_2d_touch_records_direct_interaction_without_chat():
     from nyalume.frontends.pet.pet import PetApp
 
     app = PetApp.__new__(PetApp)
-    app.window = SimpleNamespace(poke=lambda: None, cheer=lambda _: None)
+    app.window = SimpleNamespace(poke=lambda: None, react=lambda *_: True)
+    app._last_interaction_line = ''
     app.session_id = 'legacy-pet'
     before = time.time()
     app._pet_interact('head')

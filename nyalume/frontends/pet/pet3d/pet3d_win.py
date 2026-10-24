@@ -1,7 +1,7 @@
 """3D 桌宠窗口子进程：透明无边框 pywebview 窗口 + 本机静态服务。
 
 pywebview 与 Tk 不能同线程，所以 3D 桌宠单开一个进程：窗口里是
-`viewer.html` + three.js MMDLoader，直接加载本地 .pmx，不做格式转换、
+`viewer.html` + three.js MMDLoader / VRMLoaderPlugin，直接加载本地 PMX / VRM，
 不装 Blender。窗体灰底用 color-key 做成透明，拖拽和点击都由 Python 轮询
 光标完成（不依赖 WebView2 收鼠标，因为 color-key 后窗口不再吃点击）。
 
@@ -47,6 +47,7 @@ import webview
 import numpy as np
 from PIL import Image
 from . import proactive, model_profile
+from .mouse_target import MouseTargetSampler
 from ..startup_animation import STAGES, StartupAnimation
 # 台词先关掉：有 bug 而且 OOC，保留表情+轻弹即可
 # from nyalume.frontends.pet import interactions
@@ -55,6 +56,8 @@ VIEWER_DIR = os.path.dirname(os.path.abspath(__file__))
 THREE_ENTRY = os.path.join(
     VIEWER_DIR, "node_modules", "three", "build", "three.module.js"
 )
+MODEL_EXTENSIONS = (".pmx", ".vrm")
+BUNDLED_EKU = "@bundled/Eku.vrm"
 DEFAULT_VMD = os.path.join(VIEWER_DIR, "motions", "idle.vmd")
 
 
@@ -70,7 +73,7 @@ def _app_root() -> str:
 
 
 def default_model_root() -> str:
-    """固定的模型目录：<程序根>\\models（每个模型一个子目录，也可以直接放 .pmx）。"""
+    """固定的模型目录：<程序根>\\models（每个模型一个子目录，也可直接放 PMX / VRM）。"""
     return os.path.join(_app_root(), "models")
 
 
@@ -171,8 +174,8 @@ _RAW_FROZEN_GAP = 0.25
 _HIT_PADS = (10, 25, 60, 150)
 
 
-def _pointer_scale(x: int, y: int) -> float:
-    """按下位置所在显示器的设备像素/逻辑像素比例。"""
+def _pointer_display(x: int, y: int) -> tuple[int, float]:
+    """Display identity and physical/logical pixel ratio; never called by motion hooks."""
     try:
         monitor_at = _user32.MonitorFromPoint
         monitor_at.argtypes = [wintypes.POINT, wintypes.DWORD]
@@ -183,10 +186,15 @@ def _pointer_scale(x: int, y: int) -> float:
         get_dpi.argtypes = [wintypes.HANDLE, ctypes.c_int,
                             ctypes.POINTER(wintypes.UINT), ctypes.POINTER(wintypes.UINT)]
         if get_dpi(monitor, 0, ctypes.byref(dpi_x), ctypes.byref(dpi_y)) == 0:
-            return max(1.0, dpi_x.value / 96.0)
+            return int(monitor), max(1.0, dpi_x.value / 96.0)
     except (AttributeError, OSError):
         pass
-    return 1.0
+    return 0, 1.0
+
+
+def _pointer_scale(x: int, y: int) -> float:
+    """按下位置所在显示器的设备像素/逻辑像素比例。"""
+    return _pointer_display(x, y)[1]
 
 
 def _cursor_frozen(now: float, sys_moved_at: float, gap: float = _RAW_FROZEN_GAP) -> bool:
@@ -447,12 +455,28 @@ def _raw_mouse_delta(lparam: int) -> tuple[int, int] | None:
     mouse = ctypes.cast(
         ctypes.byref(buf, hdr_size), ctypes.POINTER(_RawMouse)
     ).contents
+    # Absolute RawInput coordinates are 0..65535, not relative pixel deltas.
+    if mouse.usFlags & 0x01:
+        return None
     return mouse.lLastX, mouse.lLastY
 
 
 def _motion_url(path: str, vmd_root: str) -> str:
     rel = os.path.relpath(path, vmd_root).replace("\\", "/")
     return "/vmd/" + urllib.parse.quote(rel)
+
+
+def _quit_pet(api, win) -> None:
+    """用户主动退出（中键 / 菜单里的"退出"）：先立"正在退出"的旗，再拆窗口。
+
+    `_display_hwnd = 0` 同时也是"显示线程死了"的信号，送帧线程和 _fps_watch 会据此
+    自动重启一只新的 —— 于是用户明明是自己关的，几秒后桌宠又冒出来（日志里的表现是
+    "没有显示窗口句柄" → "显示线程不在了 → 自动重启桌宠" → "重启 → model=- vmd=-"）。
+    `_restarting` 正好是这两条自动恢复路径共用的闸门。
+    """
+    api._restarting = True
+    api._display_hwnd = 0
+    threading.Thread(target=win.destroy, daemon=True).start()
 
 
 def _display_window_thread_guarded(api, win, vmd_root: str, model_dir: str) -> None:
@@ -474,6 +498,8 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
     """
     api._display_thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
     api._display_hwnd = _create_layered_window()
+    if getattr(api, '_native_overlay_start', None):
+        api._native_overlay_start()
     motions = api._motions
     index = {"i": 0}
     state = {"spin": None}
@@ -513,13 +539,17 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
         # 系统光标真的动了才更新"有效光标"：游戏抓鼠标时送到钩子里的 pt 是冻住的
         if (x, y) != api._last_sys_pos or api._eff_cursor is None:
             api._eff_cursor = (x, y)
-            api._cursor_moved_at = api._sys_moved_at = time.time()
+            api._cursor_moved_at = time.time()
+            api._sys_moved_at = time.monotonic()
             api._locked = False  # 真光标回来了，积分出来的那个位置立刻作废
         api._last_sys_pos = (x, y)
+        if getattr(api, '_native_overlay_event', None) and api._native_overlay_event(msg, x, y):
+            return False
         # 只有"游戏把光标锁死"时才用积分位置。别的时候一律以钩子的真坐标为准：
         # 原始位移偶尔会送来离谱的增量，积分位置会被推到屏幕角上，再拿它判定就永远点不中她。
         if api._locked:
             x, y = api._eff_cursor
+        api._mouse_target.observe((x, y), 'RawIntegrated' if api._locked else 'System', time.monotonic())
         # 视线换算不在这儿做：这个回调每秒上千次，每多花一点时间就多抢一次 GIL，
         # 推帧那条链（解码 5~9ms）跟着掉帧——表现正好是"鼠标一动她就卡"。
         # 页面 40ms 来一次 poll_action，在那儿按当时的有效光标算就够了。
@@ -620,6 +650,22 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
                         elif item_id.startswith("interact:"):
                             api._note_touch()
                             api.pet_command({'action': 'interact', 'name': item_id.split(':', 1)[1]})
+                        elif item_id.startswith("face:"):
+                            api._note_touch()
+                            api.pet_command({'action': 'face', 'emotion': item_id.split(':', 1)[1], 'duration': 3})
+                        elif item_id.startswith("animation:"):
+                            api._note_touch()
+                            api.pet_command({'action': 'animation', 'name': item_id.split(':', 1)[1]})
+                        elif item_id.startswith("magnifier:"):
+                            api.pet_command({'action': 'magnifier', 'name': item_id.split(':', 1)[1]})
+                        elif item_id.startswith("voice:") and hasattr(api, 'voice_menu'):
+                            if not api.voice_menu(item_id.split(':', 1)[1]).get('ok'):
+                                api._menu_rects = menu_snapshot
+                                return False
+                        elif item_id.startswith("wardrobe:") and hasattr(api, 'wardrobe_menu'):
+                            if api.wardrobe_menu(item_id.split(':', 1)[1]).get('ok'):
+                                api._menu_rects = menu_snapshot
+                                return False
                         elif item_id == "chat":
                             # 只开聊天窗，桌宠继续留在桌面上：两个窗口并存
                             api.open_chat_from_menu()
@@ -647,8 +693,7 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
                             _log(f"auto fps {'on' if api._auto_fps else 'off'}")
                         elif item_id == "quit":
                             api._pending = {"kind": "menu_close"}
-                            api._display_hwnd = 0
-                            threading.Thread(target=win.destroy, daemon=True).start()
+                            _quit_pet(api, win)
                         else:
                             next_motion()
                         api._menu_page = "root"  # 选完回到根页，下次右键从头开始
@@ -689,15 +734,14 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
                 api._pending = {"kind": "menu", "items": api.menu_items()}
             return False
         elif msg == _WM_MBUTTONUP and over:
-            api._display_hwnd = 0
-            threading.Thread(target=win.destroy, daemon=True).start()
+            _quit_pet(api, win)
             return False
         return False
 
     def on_raw(dx: int, dy: int) -> None:
         """原始鼠标位移：系统光标被游戏锁死时（按 Alt 前）靠它积分出光标位置。"""
         cx, cy = _cursor_pos()
-        now = time.time()
+        now = time.monotonic()
         if (cx, cy) != api._last_sys_pos or api._eff_cursor is None:
             api._eff_cursor = (cx, cy)  # 系统光标能动 → 以它为准
             api._sys_moved_at = now
@@ -717,7 +761,8 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
             )
             api._locked = True  # 从现在起"有效光标"才算数
         api._last_sys_pos = (cx, cy)
-        api._cursor_moved_at = now
+        api._cursor_moved_at = time.time()
+        api._mouse_target.observe(api._eff_cursor, 'RawIntegrated' if api._locked else 'System', now)
         if api._left is not None:
             api._move_left(*api._eff_cursor)
 
@@ -788,6 +833,8 @@ def _display_window_thread(api, win, vmd_root: str, model_dir: str) -> None:
     if hook:
         _user32.UnhookWindowsHookEx(hook)
     api._finish_left(cancel=True)
+    if getattr(api, '_native_overlay_close', None):
+        api._native_overlay_close()
     _log("显示线程结束（钩子已摘）")
 
 
@@ -836,7 +883,7 @@ def _no_taskbar(hwnd: int) -> None:
 _LAYER: dict = {}  # hwnd → 常驻的全屏 DIB（窗口固定，不再每帧重建）
 
 
-def _update_layered(hwnd: int, bgra: bytes, w: int, h: int, x: int, y: int) -> bool:
+def _update_layered(hwnd: int, bgra: bytes, w: int, h: int, x: int, y: int, *, bounds=None) -> bool:
     """把"她那一块"(w×h) 贴进**固定铺满屏幕**的分层窗口里的 (x, y) 处。
 
     以前是每帧按她的大小 CreateDIBSection + UpdateLayeredWindow（顺带把窗口改成那个大小），
@@ -845,7 +892,7 @@ def _update_layered(hwnd: int, bgra: bytes, w: int, h: int, x: int, y: int) -> b
     位置（不然她移动后留残影），再把她那一块拷进去，最后整块提交。落在窗口外的部分自然
     被屏幕边缘挡掉（看不见），所以相机可以放心放大。
     """
-    wa = _work_area()
+    wa = bounds if bounds is not None else _work_area()
     if wa is None:
         return False
     win_x, win_y = wa[0], wa[1]
@@ -914,6 +961,18 @@ _ENDPOINT_PATH = os.path.join(_STATE_DIR, "pet3d_endpoint.json")
 _SETTINGS_PATH = os.path.join(_STATE_DIR, "pet3d_settings.json")
 
 
+def configure_state_directory(directory) -> None:
+    """Select this process's private desktop state before creating an API/server."""
+    global _STATE_DIR, _STATE_PATH, _ENDPOINT_PATH, _SETTINGS_PATH, _LOG_PATH
+    _STATE_DIR = os.path.abspath(directory)
+    _STATE_PATH = os.path.join(_STATE_DIR, "local-state.json")
+    _ENDPOINT_PATH = os.path.join(_STATE_DIR, "endpoint.json")
+    _SETTINGS_PATH = os.path.join(_STATE_DIR, "settings.json")
+    _LOG_PATH = os.path.join(_STATE_DIR, "desktop.log")
+    model_profile.PROFILE_DIR = os.path.join(_STATE_DIR, "profiles")
+    os.makedirs(_STATE_DIR, exist_ok=True)
+
+
 def _load_settings() -> dict:
     """界面偏好（风格档 / 自动降帧 / 主动搭话）——换模型要重启，配置得活下来。"""
     try:
@@ -936,20 +995,24 @@ def _save_settings(**kw) -> None:
 
 
 def _first_model_in(root: str) -> str:
-    """模型根目录里的第一个模型（子目录里含 .pmx）。给"不带 --model 启动"用。"""
+    """模型根目录里的第一个 PMX / VRM。给"不带 --model 启动"用。"""
     if not root or not os.path.isdir(root):
         return ""
     try:
         names = sorted(os.listdir(root))
         for name in names:
             path = os.path.join(root, name)
-            if os.path.isdir(path) and any(n.lower().endswith(".pmx") for n in os.listdir(path)):
+            if os.path.isdir(path) and any(n.lower().endswith(MODEL_EXTENSIONS) for n in os.listdir(path)):
                 return path
-        if any(n.lower().endswith(".pmx") for n in names):
+        if any(n.lower().endswith(MODEL_EXTENSIONS) for n in names):
             return root  # 根目录自己就放着 .pmx
     except OSError:
         return ""
     return ""
+
+
+def _has_bundled_eku() -> bool:
+    return os.path.isfile(os.path.join(_app_root(), "unity", "EkuPlayer.exe"))
 
 
 def _is_inside(path: str, root: str) -> bool:
@@ -968,6 +1031,8 @@ def _pick_default_model(cfg: dict) -> str:
     """
     root = default_model_root()
     last = str(cfg.get("last_model") or "")
+    if _has_bundled_eku() and (not last or last == BUNDLED_EKU):
+        return BUNDLED_EKU
     if last and os.path.exists(last) and _is_inside(last, root):
         return last
     found = _first_model_in(root)
@@ -975,6 +1040,8 @@ def _pick_default_model(cfg: dict) -> str:
         return found
     if last and os.path.exists(last):
         return last
+    if _has_bundled_eku():
+        return BUNDLED_EKU
     return _first_model_in(str(cfg.get("models_dir") or ""))
 
 
@@ -985,6 +1052,9 @@ def _remember_dirs(model_dir: str, vmd_root: str, pmx: str = "") -> None:
     否则一个目录里主模型+道具混着时会重挑一次）。
     """
     kw = {}
+    if pmx == BUNDLED_EKU:
+        _save_settings(models_dir=default_model_root(), last_model=BUNDLED_EKU)
+        return
     if model_dir:
         kw["models_dir"] = os.path.dirname(os.path.abspath(model_dir))
         kw["last_model"] = (os.path.join(os.path.abspath(model_dir), pmx) if pmx
@@ -1059,11 +1129,12 @@ class _PetState:
     不需要把事件流喂给模型。
     """
 
-    def __init__(self, path: str = _STATE_PATH) -> None:
-        self.path = path
+    def __init__(self, path: str | None = None) -> None:
+        self.path = _STATE_PATH if path is None else path
         self.lock = threading.RLock()
         self.mood = 0.6  # 0=情绪低，1=超开心
         self.energy = 1.0  # 0=累趴，1=满电
+        self.affinity = 0.5  # 长期亲近度；旧存档采用中性起点
         self.taps = 0
         self.dances = 0
         self.last_interaction = 0.0
@@ -1071,6 +1142,8 @@ class _PetState:
         self.history: list = []  # [{t, kind}]，最近 50 条
         self._dirty = False
         self._saved_at = 0.0
+        self._touch_budget = 0.02
+        self._touch_budget_at = time.monotonic()
         self._load()
 
     def _load(self) -> None:
@@ -1079,10 +1152,13 @@ class _PetState:
                 data = json.load(f)
         except (OSError, ValueError):
             return
-        for key in ("mood", "energy", "taps", "dances", "last_interaction"):
-            if isinstance(data.get(key), (int, float)):
-                setattr(self, key, float(data[key]) if key in ("mood", "energy")
-                        else int(data[key]))
+        if not isinstance(data, dict):
+            return
+        for key in ("mood", "energy", "affinity", "taps", "dances", "last_interaction"):
+            value = data.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+                setattr(self, key, max(0.0, min(1.0, float(value))) if key in ("mood", "energy", "affinity")
+                        else max(0, int(value)))
         if isinstance(data.get("history"), list):
             self.history = data["history"][-50:]
 
@@ -1120,6 +1196,18 @@ class _PetState:
                 self.energy = max(0.0, self.energy - 0.04)
             self._dirty = True
 
+    def record_contact(self, gentle_seconds: float = 0.0) -> None:
+        """Count a Unity session; mood credit has a .02 burst and refills .02/minute."""
+        with self.lock:
+            now = time.monotonic()
+            self._touch_budget = min(0.02, self._touch_budget + max(0.0, now - self._touch_budget_at) * 0.02 / 60)
+            self._touch_budget_at = now
+            seconds = max(0.0, gentle_seconds) if math.isfinite(gentle_seconds) else 0.0
+            credit = min(self._touch_budget, seconds * 0.002)
+            self._touch_budget -= credit
+            self.affinity = min(1.0, self.affinity + credit * 0.05)
+            self.bump("tap", amount=credit)
+
     def tick(self) -> None:
         """随时间自然变化：慢慢回体力、心情往中间回落。"""
         with self.lock:
@@ -1128,10 +1216,12 @@ class _PetState:
             self.last_tick = now
             if dt <= 0:
                 return
+            before = (self.mood, self.energy)
             self.energy = min(1.0, self.energy + dt * 0.0008)  # ~20 分钟回满
             target = 0.6
             if abs(self.mood - target) > 0.005:
                 self.mood += (target - self.mood) * min(1.0, dt / 900.0)
+            self._dirty |= before != (self.mood, self.energy)
             self._save()
 
     def snapshot(self) -> dict:
@@ -1139,6 +1229,7 @@ class _PetState:
             return {
                 "mood": round(self.mood, 3),
                 "energy": round(self.energy, 3),
+                "affinity": round(self.affinity, 6),
                 "taps": self.taps,
                 "dances": self.dances,
                 "last_interaction": round(self.last_interaction, 1),
@@ -1188,6 +1279,8 @@ class _NativeApi:
         self._interaction_records = {}
         self._interaction_lock = threading.RLock()
         self._interaction_polled_at = 0.0
+        self._mouse_target = MouseTargetSampler()
+        self._mouse_sample = None  # Unity bridge-owned sample; Three keeps its existing polling path.
         self._state = None
         self._web_working = False
         self._drag_dx = 0
@@ -1196,6 +1289,9 @@ class _NativeApi:
         self._zoom_steps = 0  # 滚轮档位，同理累加
         self._cursor = None  # 光标相对桌宠中心的归一化偏移（喂给页面做视线跟随）
         self._last_look = None  # 上一次发出去的视线值，没变就不再过桥
+        self._pointer_look = None  # 真实光标坐标；不从 agent 视线推测悬停。
+        self._pointer_sample_seq = 0
+        self._pointer_snapshot = None
         self._cursor_moved_at = 0.0  # 光标最后一次移动的时间
         self._sys_moved_at = 0.0  # 系统真光标最后一次移动的时间（判断游戏锁没锁鼠标）
         self._locked = False  # 光标被游戏锁死中（这时才用原始位移积分的位置）
@@ -1243,8 +1339,10 @@ class _NativeApi:
         self._timing: list = []
         self._frame_lock = threading.Lock()
         self._frame_slot = None        # 单槽：桥接线程只放"最新一帧"，呈递线程来取
+        self._magnifier_slot = None
         self._startup = None
         self._startup_finished = False
+        self._restarting = False
         self._presenter = None
         self._frames_in = 0            # 桥接线程收到了几帧（/pet_state 用来看有没有在送）
         self._last_batch = time.time()
@@ -1259,13 +1357,29 @@ class _NativeApi:
         self._anchored_size = (0, 0)  # 上次按锚点摆位时用的画布尺寸
         self._zoom_at = None  # 缩放锚点：(光标屏幕x, 光标屏幕y, 归一化x, 归一化y)
 
+    def _sample_pointer(self, x, y, origin, size, scale, active=False, left_down=False, mode=""):
+        """One source-clock sample; viewport coordinates may lie outside the window."""
+        self._pointer_sample_seq += 1
+        w, h = size
+        sample = {"sampleSeq": self._pointer_sample_seq, "at": time.monotonic(),
+                  "x": (x - origin[0]) / w, "y": (y - origin[1]) / h,
+                  "screenX": x, "screenY": y, "dpi": scale,
+                  "width": w / scale, "height": h / scale,
+                  "valid": True, "active": active, "allowAttention": active,
+                  "leftDown": left_down, "mode": mode}
+        self._pointer_snapshot = sample
+        return sample
+
     def _interaction_event(self, phase: str, left: dict) -> dict:
         x, y = left["last"]
         wx, wy = left["win"]
         w, h = left["size"]
+        sample = self._sample_pointer(x, y, (wx, wy), (w, h), left["scale"],
+                                      left_down=phase in ("begin", "update"), mode=left["mode"])
         return {"kind": "interaction", "id": left["id"], "phase": phase,
                 "x": (x - wx) / w, "y": (y - wy) / h,
-                "at": time.monotonic(), "moved": left["moved"],
+                "at": sample["at"], "sampleSeq": sample["sampleSeq"],
+                "pointer": sample, "path": left["path"], "moved": left["moved"],
                 "width": w / left["scale"], "height": h / left["scale"]}
 
     def _queue_interaction(self, event: dict) -> None:
@@ -1283,12 +1397,12 @@ class _NativeApi:
             if not self._w or not self._h:
                 return
             self._interaction_id += 1
-            self._left = left = {"id": self._interaction_id, "mode": "touch" if alt else "move",
+            self._left = left = {"id": self._interaction_id, "mode": "move" if alt else "touch",
                 "x": x, "y": y, "last": (x, y), "win": (self._x, self._y),
-                "size": (self._w, self._h), "scale": scale, "moved": 0,
+                "size": (self._w, self._h), "scale": scale, "moved": 0, "path": 0,
                 "started": time.monotonic(), "moving": False}
             self._drag_dx = self._drag_dy = 0
-            if alt:
+            if not alt:
                 self._queue_interaction(self._interaction_event("begin", left))
                 self._interaction_records[left["id"]] = {"region": None}
 
@@ -1300,6 +1414,7 @@ class _NativeApi:
                 return
             left["moved"] = max(left["moved"], math.hypot(x - left["x"], y - left["y"]) / left["scale"])
             last = left["last"]
+            left["path"] += math.hypot(x - last[0], y - last[1]) / left["scale"]
             left["last"] = (x, y)
             if left["mode"] != "move" or left["moved"] <= 6:
                 return
@@ -1311,20 +1426,23 @@ class _NativeApi:
             self._x = left["win"][0] + x - left["x"]
             self._y = left["win"][1] + y - left["y"]
 
-    def _finish_left(self, cancel: bool = False) -> None:
+    def _finish_left(self, cancel: bool = False, reason: str = "cancelled") -> None:
         with self._interaction_lock:
             left, self._left = self._left, None
             if left is None:
                 return
             if left["mode"] == "touch":
-                self._queue_interaction(self._interaction_event("cancel" if cancel else "end", left))
-            elif not cancel and not left["moving"] and left["moved"] <= 6:
-                event = self._interaction_event("end", left)
-                self._queue_interaction({"kind": "tap", "x": event["x"], "y": event["y"], "bounce": True})
+                event = self._interaction_event("cancel" if cancel else "end", left)
+                if cancel:
+                    event["reason"] = reason
+                    record = self._interaction_records.get(left["id"])
+                    if record is not None:
+                        record["cancelled"] = True
+                self._queue_interaction(event)
             if cancel:
                 self._drag_dx = self._drag_dy = 0
 
-    def interaction_info(self, gesture_id, region, phase) -> None:
+    def interaction_info(self, gesture_id, region, phase, cancelled=False, reason="", quality=None) -> None:
         """渲染器确认有效接触；一轮只记一次，更新位置不增加次数。"""
         beginning = ending = False
         with self._interaction_lock:
@@ -1333,17 +1451,26 @@ class _NativeApi:
                 return
             if phase == "begin" and region and region != "-" and not record["region"]:
                 record["region"] = region
+                record["confirmed_at"] = time.monotonic()
                 beginning = True
-            elif phase == "end":
+            elif phase in ("end", "cancel"):
                 self._interaction_records.pop(gesture_id, None)
-                ending = bool(record["region"])
+                ending = bool(record["region"]) and not (cancelled or record.get("cancelled") or phase == "cancel")
         # 陪伴记录会写数据库，不能持有鼠标热路径的锁。
         if beginning:
             with self._pet_state.lock:
                 self._pet_state.last_interaction = time.time()
                 self._pet_state._dirty = True
         if ending:
-            self._pet_state.bump("tap")
+            if quality is None:
+                self._pet_state.bump("tap")
+            else:
+                seconds = quality.get("gentleSeconds", 0)
+                if (record["region"] != "head" or isinstance(seconds, bool)
+                        or not isinstance(seconds, (int, float)) or not math.isfinite(seconds)):
+                    seconds = 0
+                duration = max(0.0, time.monotonic() - record["confirmed_at"])
+                self._pet_state.record_contact(min(max(0.0, seconds), duration))
         if beginning or ending:
             self._note_touch()
 
@@ -1353,7 +1480,10 @@ class _NativeApi:
             # 按下后的第一轮留 100ms，避免钩子与系统异步键态的交接误判。
             if (left and time.monotonic() - left["started"] > 0.1
                     and not (_user32.GetAsyncKeyState(0x01) & 0x8000)):
-                self._finish_left(cancel=True)
+                self._finish_left(cancel=True, reason="missed_release")
+            elif (left and left["mode"] == "touch"
+                  and (left["win"] != (self._x, self._y) or left["size"] != (self._w, self._h))):
+                self._finish_left(cancel=True, reason="geometry_changed")
             if self._interaction_events:
                 return self._interaction_events.popleft()
         return None
@@ -1454,6 +1584,15 @@ class _NativeApi:
 
     def _present_loop(self) -> None:
         while True:
+            if getattr(self,'magnifier',None):
+                lens_frame,self._magnifier_slot=self._magnifier_slot,None
+                try:
+                    if lens_frame:
+                        data,region=lens_frame
+                        image=Image.open(io.BytesIO(base64.b64decode(data))).convert('RGBA')
+                        if image.size==(256,256):self.magnifier.receive(image,region)
+                    self.magnifier.present()
+                except Exception as error:_log(f'放大镜呈递失败：{error}')
             frame = self._frame_slot
             if frame is None:
                 time.sleep(0.002)
@@ -1463,6 +1602,12 @@ class _NativeApi:
                 self._present_frame(*frame)
             except Exception as e:  # 呈递线程绝不能死
                 _log(f"呈递失败 {type(e).__name__}: {e}")
+
+    def set_magnifier_frame(self,b64,region):
+        lens=getattr(self,'magnifier',None)
+        if lens and lens.enabled and isinstance(region,list) and len(region)==4:
+            if all(isinstance(value,(int,float)) and math.isfinite(value) for value in region):
+                self._magnifier_slot=(b64,region)
 
     def _present_frame(
         self, b64: str, encode_ms: float = 0, display_w: int = 0, display_h: int = 0,
@@ -1487,8 +1632,16 @@ class _NativeApi:
             _log(f"帧解码恢复（停了 {time.time() - getattr(self, '_decode_fail_at', time.time()):.1f}s）")
             self._decode_fail = None
         t1 = time.perf_counter()
+        self._last_png = b64
+        self._present_bgra(bgra, w, h, alpha, encode_ms, t1 - t0, len(b64), startup_ready)
+
+    def _present_bgra(self, bgra, w, h, alpha, encode_ms=0, decode_ms=0,
+                      source_bytes=0, startup_ready=False) -> None:
+        """Shared presenter for PNG/WebView and direct Unity BGRA frames."""
+        if not self.enabled or self._restarting:
+            return
+        t1 = time.perf_counter()
         self._alpha = alpha
-        self._last_png = b64  # 只留最新一帧的引用（~100KB）：点她不中/要拍当前姿势时落盘用
         if os.environ.get("NYALUME_PET3D_DEBUG"):
             if self._fc == 200:  # 启动几秒后自留一张原图，方便量她的颜色/透明度
                 self.dump_frame(-1, -1)
@@ -1553,7 +1706,7 @@ class _NativeApi:
             _log(f"贴帧耗时异常 {spent:.1f}s（UpdateLayeredWindow/GDI）")
         gap = presented_at - self._last_present if self._last_present else 0.0
         self._last_present = presented_at
-        self._timing.append((len(b64), t1 - t0, presented_at - t1, encode_ms, gap))
+        self._timing.append((source_bytes, decode_ms, presented_at - t1, encode_ms, gap))
         if len(self._timing) >= 40:
             n = len(self._timing)
             now = time.time()
@@ -1597,9 +1750,37 @@ class _NativeApi:
         self._menu_rects = rects or []
         _log("menu rects " + json.dumps(self._menu_rects))
 
+    def _config_items(self) -> list:
+        items = [
+            {"id": "page:root", "label": "← 返回"},
+            {"id": "quiet", "label": "手动安静：" + ("开" if self._quiet else "关")},
+            {"id": "page:talk", "label": "主动搭话", "detail": proactive.TALK_LABELS[self._talk_mode]},
+            {"id": "notes", "label": "自动留便笺：" + ("开" if self._notes_enabled else "关")},
+            {"id": "autofps", "label": "全屏自动降帧：" + ("开" if self._auto_fps else "关")},
+            {"id": "pick:model_file", "label": "导入模型（PMX / VRM）…"},
+            {"id": "pick:motion_file", "label": "导入动作（选 .vmd 文件）…"},
+            {"id": "ik", "label": "脚部 IK：" + ("开" if self._ik else "关")},
+            {"id": "open:motions", "label": "打开动作目录"},
+            {"id": "open:model", "label": "打开模型目录"},
+            {"id": "open:state", "label": "打开状态/配置目录"},
+            {"id": "open:profile", "label": "模型配置（重启生效）"},
+        ]
+        eku = os.path.join(_app_root(), "models", "Eku", "Eku.vrm")
+        if os.path.normcase(self._model_file) != os.path.normcase(eku):
+            items.insert(4, {"id": "style", "label": "换风格"})
+        if self._model_file.lower().endswith(".vrm"):
+            items = [item for item in items if item["id"] not in ("pick:motion_file", "ik", "open:motions")]
+        return items
+
     def menu_items(self) -> list:
         """右键菜单。动作/模型是二级页（点标题展开），不再和"下一个"重复列两遍。"""
         page, _, number = self._menu_page.partition(":")
+        is_vrm = self._model_file.lower().endswith(".vrm")
+        lens=getattr(self,'magnifier',None)
+        if page=='magnifier' and lens:
+            return [{'id':'page:root','label':'← 返回'},
+                    {'id':'magnifier:toggle','label':'关闭放大镜' if lens.enabled else '开启放大镜'},
+                    {'id':'magnifier:move','label':'完成框选' if lens.moving else '移动框选区域'}]
 
         def paginate(items):
             content = items[1:]  # 第一项始终保留返回入口
@@ -1614,6 +1795,12 @@ class _NativeApi:
 
         if page == "motions":
             items = [{"id": "page:root", "label": "← 返回"}]
+            if is_vrm:
+                return items + [
+                    {"id": "none", "label": "自然站姿 · 自动眨眼"},
+                    {"id": "page:interactions", "label": "摸头、点头、加油 ▸"},
+                    {"id": "none", "label": "此模型暂不支持 VMD 舞蹈"},
+                ]
             if not self._motions:
                 items.append({"id": "none", "label": "（动作目录里没有 .vmd）"})
             for i, path in enumerate(self._motions):
@@ -1639,48 +1826,37 @@ class _NativeApi:
         if page == 'interactions':
             return [{'id': 'page:root', 'label': '← 返回'}] + [
                 {'id': 'interact:' + kind, 'label': label} for kind, label in
-                [('pat', '摸摸头 ♡'), ('wave', '打个招呼'), ('nod', '点点头'), ('cheer', '一起加油 ✨')]
-            ] + [{'id': 'page:help', 'label': '鼠标互动说明 ▸'}]
+                [('pat', '摸摸头'), ('nod', '点点头'), ('cheer', '一起加油')]
+            ] + [{'id': 'page:faces', 'label': '表情 ▸'}, {'id': 'page:help', 'label': '鼠标互动说明 ▸'}]
+        if page == 'faces':
+            return paginate([{'id': 'page:interactions', 'label': '← 返回'}] + [
+                {'id': 'face:' + emotion, 'label': label} for emotion, label in
+                [('neutral', '恢复自然表情'), ('happy', '开心'), ('calm', '放松'),
+                 ('angry', '生气'), ('sad', '难过'), ('surprise', '惊讶'),
+                 ('sleepy', '困困'), ('blink', '闭眼')]
+            ])
         if page == 'help':
             return [{'id': 'page:interactions', 'label': '← 返回'}] + [
                 {'id': 'none', 'label': label} for label in
-                ['左键轻点：按部位回应并轻弹', '左键按住拖动：立即移动桌宠', 'Alt＋左键单点：表情互动，不轻弹', 'Alt＋左键按住头部轻移：抚摸',
-                 'Alt＋左键按住手部：握手', 'Alt＋左键长按衣袖 / 衣摆并拉动：局部互动',
+                ['左键轻点：表情与局部动作回应', '左键按住头部轻移：抚摸', '左键按住手部：握手',
+                 '左键长按衣袖 / 衣摆并拉动：局部互动', 'Alt＋左键拖动：移动桌宠',
                  '右键拖动：旋转；轻点：菜单', '滚轮：放大 / 缩小']
             ]
         if page == "config":
-            return paginate([
-                {"id": "page:root", "label": "← 返回"},
-                {"id": "quiet", "label": "手动安静：" + ("开" if self._quiet else "关")},
-                {"id": "page:talk", "label": "主动搭话 ▸（" + proactive.TALK_LABELS[self._talk_mode] + "）"},
-                {"id": "notes", "label": "自动留便笺：" + ("开" if self._notes_enabled else "关")},
-                {"id": "home", "label": "打开桌面小窝"},
-                {"id": "autofps", "label": "全屏自动降帧：" + ("开" if self._auto_fps else "关")},
-                {"id": "pick:model_file", "label": "导入模型（选 .pmx 文件）…"},
-                {"id": "pick:motion_file", "label": "导入动作（选 .vmd 文件）…"},
-                {"id": "ik", "label": "脚部 IK：" + ("开" if self._ik else "关")},
-                {"id": "open:motions", "label": "打开动作目录"},
-                {"id": "open:model", "label": "打开模型目录"},
-                {"id": "open:state", "label": "打开状态/配置目录"},
-                {"id": "open:profile", "label": "模型配置（重启生效）"},
-            ])
-        now_motion = "无"
+            return paginate(self._config_items())
+        now_motion = "自然待机" if is_vrm else "无"
         if self._motions:
             now_motion = _clip(os.path.basename(self._motions[self._motion_index])[:-4], 12)
         items = [
             {"id": "chat", "label": "打开聊天窗口"},
-            {"id": "page:interactions", "label": "陪她玩一会儿 ▸"},
-            {"id": "fantasy", "label": "奇幻冒险 · 折月诸境"},
-            {"id": "page:motions", "label": f"动作 ▸（{now_motion}）"},
+            {"id": "page:interactions", "label": "陪她玩一会儿"},
+            {"id": "page:motions", "label": "动作", "detail": now_motion},
         ]
-        if len(self._models) > 1:
-            now_model = _clip(self._models[self._model_index][0], 12)
-            items.append({"id": "page:models", "label": f"换模型 ▸（{now_model}）"})
+        now_model = _clip(self._models[self._model_index][0], 12) if self._models else ""
+        items.append({"id": "page:models", "label": "换模型", "detail": now_model})
+        if lens:items.append({'id':'page:magnifier','label':'放大镜','detail':'开启' if lens.enabled else '关闭'})
         items += [
-            # 两边的箭头既是提示（左右半边可以点），也顺便说明这行是分半的
-            # 箭头由页面画在这行的最左/最右（贴字时点右箭头左半边会往左切），标签只给文字
-            {"id": "style", "label": "换风格"},
-            {"id": "page:config", "label": "设置与文件 ▸"},
+            {"id": "page:config", "label": "设置与文件"},
             {"id": "quit", "label": "退出"},
         ]
         return items
@@ -1731,6 +1907,11 @@ class _NativeApi:
         """
         if not self._w or not self._h:
             return
+        self._pointer_look = (round((x - self._x) / self._w, 4),
+                              round((y - self._y) / self._h, 4),
+                              not (self._locked or self._effective_quiet or self._desk.get('fullscreen')
+                                   or self._menu_rects or self._left
+                                   or time.time() - self._cursor_forced_at < 5))
         if time.time() - self._cursor_forced_at < 5:
             return  # agent 刚说过"看这边"：这 5 秒别被鼠标抢走
         box = self._bbox_all
@@ -1789,7 +1970,9 @@ class _NativeApi:
     # ---- 给 agent / 脚本用的本地控制口（HTTP：POST /pet、GET /pet_state）----
 
     def configure_model(self, filename: str, scale=None, rotate=None) -> None:
-        self._model_file = os.path.abspath(filename)
+        self._model_file = filename if filename == BUNDLED_EKU else os.path.abspath(filename)
+        if os.path.normcase(self._model_file) == os.path.normcase(os.path.join(_app_root(), "models", "Eku", "Eku.vrm")):
+            self._style_index = 0
         self._profile_path = model_profile.profile_path(filename)
         try:
             profile = model_profile.load(filename)
@@ -1804,12 +1987,17 @@ class _NativeApi:
             _log(f"模型配置无效，使用默认值且不覆盖原文件：{e}")
 
     def load_library(self, vmd_root: str, model_dir: str) -> None:
-        self._motions = [p for p in sorted(_iter_vmd(vmd_root))
-                         if model_profile.allows_motion(p, vmd_root, self._model_profile)] if vmd_root and os.path.isdir(vmd_root) else []
+        self._motions = []
+        if not self._model_file.lower().endswith(".vrm") and vmd_root and os.path.isdir(vmd_root):
+            self._motions = [p for p in sorted(_iter_vmd(vmd_root))
+                             if model_profile.allows_motion(p, vmd_root, self._model_profile)]
         self._motion_urls = [_motion_url(p, vmd_root) for p in self._motions]
         self._models = _scan_models(model_dir)
+        if _has_bundled_eku():
+            self._models.insert(0, ("Eku（内置）", BUNDLED_EKU))
         self._model_index = next(
-            (i for i, (_, path) in enumerate(self._models) if path == os.path.abspath(model_dir)), 0)
+            (i for i, (_, path) in enumerate(self._models)
+             if path == (BUNDLED_EKU if self._model_file == BUNDLED_EKU else os.path.abspath(model_dir))), 0)
         self._model_dir = os.path.abspath(model_dir)
 
     def view_info(self, zoom, view_yaw) -> dict:
@@ -1867,13 +2055,19 @@ class _NativeApi:
         {"action": "model", "name": "千咲"} / {"action": "tap_bump", "kind": "dance"}
         """
         kind = str(payload.get("action") or "").strip().lower()
+        if kind=='magnifier' and getattr(self,'magnifier',None):
+            name=str(payload.get('name','toggle'))
+            if name not in ('toggle','move','close'):return {'ok':False,'error':'未知放大镜操作'}
+            self.magnifier.command(name)
+            self._pending={'kind':'menu_close'}
+            return {'ok':True,'enabled':self.magnifier.enabled,'moving':self.magnifier.moving}
         # 带上发起方的 UA：排查"谁在指挥她"用（实测有人在反复打这串固定指令）
         _log(f"pet cmd {kind} {json.dumps(payload, ensure_ascii=False)[:120]}"
              + (f" ua={ua[:48]}" if ua else ""))
         # A controller action is not evidence of direct user interaction.
         if kind == 'interact':
             name = str(payload.get('name') or '')
-            if name not in ('pat', 'wave', 'nod', 'cheer'):
+            if name not in ('pat', 'nod', 'cheer'):
                 return {'ok': False, 'error': '未知互动'}
             self._pending = {'kind': 'interact', 'name': name}
             return {'ok': True, 'name': name}
@@ -1902,7 +2096,13 @@ class _NativeApi:
             return {"ok": True, "path": os.path.join(tempfile.gettempdir(), "nyalume_pet3d_frame.png")}
         if kind == "face":
             emotion = str(payload.get("emotion") or "happy").strip()
+            if "duration" in payload:
+                duration = payload["duration"]
+                if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not math.isfinite(duration) or not 0.2 <= duration <= 10:
+                    return {"ok": False, "error": "表情持续时间必须在 0.2–10 秒之间"}
             self._pending = {"kind": "face", "emotion": emotion}
+            if "duration" in payload:
+                self._pending["duration"] = duration
             return {"ok": True, "emotion": emotion}
         if kind == "react":
             region = str(payload.get("region") or "").strip()
@@ -2039,8 +2239,8 @@ class _NativeApi:
                 # 直接导入单个 .pmx：一个目录里塞了主模型+道具时（火花那个目录就是）
                 # 只能选文件夹会挑到道具，所以给一条"选文件"的路
                 path = filedialog.askopenfilename(
-                    title="导入模型：选 .pmx 文件",
-                    filetypes=[("MMD 模型", "*.pmx"), ("所有文件", "*.*")],
+                    title="导入模型：选 PMX 或 VRM 文件",
+                    filetypes=[("桌宠模型", "*.pmx *.vrm"), ("所有文件", "*.*")],
                 ) or ""
             elif kind == "motion_file":
                 path = filedialog.askopenfilename(
@@ -2065,22 +2265,24 @@ class _NativeApi:
             _log(f"导入动作文件 {path}")
             self.restart_with(vmd=path)
 
-    def restart_with(self, model: str = "", vmd: str = "") -> bool:
+    def restart_with(self, model: str = "", vmd: str = "", renderer: str = "") -> bool:
         """换模型/换动作目录：用新参数起一只新的，自己退出（运行期换太容易留脏状态）。"""
+        if self._restarting:
+            return False
         self._finish_left(cancel=True)
         argv = list(sys.argv[1:])
 
         def put(flag: str, value: str) -> None:
-            if flag in argv:
-                argv[argv.index(flag) + 1] = value
-            else:
-                # 用 extend，别用 argv += [...]：那是赋值，argv 会变成 put 的局部变量，
-                # 上面那行读 argv 直接 UnboundLocalError（换模型/换目录静默失败过）
-                argv.extend((flag, value))
+            for i in range(len(argv) - 1, -1, -1):
+                if argv[i] == flag:
+                    del argv[i:i + 2]
+                elif argv[i].startswith(flag + "="):
+                    del argv[i]
+            argv.extend((flag, value))
 
         if model:
             # 显式启动偏移只属于原模型，切换时采用目标模型自己的配置。
-            for flag in ("--scale", "--rotate"):
+            for flag in ("--scale", "--rotate", "--renderer"):
                 for i in range(len(argv) - 1, -1, -1):
                     if argv[i] == flag:
                         del argv[i:i + 2]
@@ -2089,6 +2291,9 @@ class _NativeApi:
             put("--model", model)
         if vmd:
             put("--vmd", vmd)
+        if renderer:
+            put("--renderer", renderer)
+        self._restarting = True  # 交接期间的旧帧不能再触发窗口恢复/自动重启。
         _release_single_instance()  # 先放掉独占，不然新起的自己会被自己挡掉
         _log(f"重启 → model={model or '-'} vmd={vmd or '-'}")
         try:
@@ -2098,6 +2303,8 @@ class _NativeApi:
                 creationflags=0x00000008 | 0x00000200,  # DETACHED_PROCESS|NEW_PROCESS_GROUP
             )
         except OSError as e:
+            _single_instance()
+            self._restarting = False
             _log(f"重启失败：{e}")
             return False
         self._display_hwnd = 0
@@ -2148,12 +2355,14 @@ class _NativeApi:
     def poll_action(self):
         """页面定时来取一条待办（拖拽/点击/菜单都走这里，Python 侧永不阻塞）。"""
         if self._pending and self._pending.get('kind') in ('menu', 'switch_model', 'zoom'):
-            self._finish_left(cancel=True)
+            self._finish_left(cancel=True, reason=self._pending['kind'])
         interaction = self._poll_interaction()
         if interaction is not None:
             return interaction
         # 视线跟随每轮现算：钩子和原始输入那两个热路径只记位置，不做换算
-        self.update_look(*(self._eff_cursor if self._locked else _cursor_pos()))
+        position = (tuple(self._mouse_sample['effectiveScreenPosition'][k] for k in ('x', 'y'))
+                    if self._mouse_sample else self._eff_cursor if self._locked else _cursor_pos())
+        self.update_look(*position)
         # 游戏把鼠标捕获住时光标是不动的（按 Alt 才给真光标），这时别一直盯着
         # "进游戏前那个位置"看——非桌面且停住超过 0.6 秒就回正看前方。
         if (
@@ -2173,6 +2382,9 @@ class _NativeApi:
                         or self._web_working or not self._proactive or not companionship.delivery_valid(action['delivery_id'])):
                     return None
             return action
+        if getattr(self,'magnifier',None):
+            command=self.magnifier.poll()
+            if command:return command
         if self._state is not None:
             # 状态变化优先级低于直接操作，但高于拖拽增量
             state, self._state = self._state, None
@@ -2199,10 +2411,18 @@ class _NativeApi:
                 return self._interaction_event("update", self._left)
         if self._cursor is not None:
             cur, self._cursor = self._cursor, None
-            if cur != self._last_look:  # 位置没变就别过桥：这一条每秒 25 次，白跑
-                self._last_look = cur
+            signature = (cur, self._pointer_look)
+            if signature != self._last_look:
+                self._last_look = signature
                 _dbg(f"look {cur[0]},{cur[1]}")
-                return {"kind": "look", "x": cur[0], "y": cur[1]}
+                action = {"kind": "look", "x": cur[0], "y": cur[1]}
+                if self._pointer_look:
+                    nx, ny, active = self._pointer_look
+                    with self._interaction_lock:
+                        px, py = position
+                        action["pointer"] = self._sample_pointer(px, py, (self._x, self._y),
+                            (self._w, self._h), _pointer_scale(px, py), active=active)
+                return action
         return None
 
     def _hit(self, screen_x: int, screen_y: int) -> bool:
@@ -2369,15 +2589,18 @@ def _pick_main_pmx(folder_path: str, found: list) -> str:
 
 
 def _resolve_model(target: str) -> tuple[str, str]:
-    """返回 (模型目录, 目录内的 .pmx 文件名)。"""
+    """返回 (模型目录, 目录内的 PMX / VRM 文件名)。"""
+    if target == BUNDLED_EKU:
+        return default_model_root(), BUNDLED_EKU
     path = os.path.abspath(target)
-    if os.path.isfile(path) and path.lower().endswith(".pmx"):
+    if os.path.isfile(path) and path.lower().endswith(MODEL_EXTENSIONS):
         return os.path.dirname(path), os.path.basename(path)
     if not os.path.isdir(path):
-        raise SystemExit(f"找不到模型目录或 .pmx：{target}")
-    found = sorted(n for n in os.listdir(path) if n.lower().endswith(".pmx"))
+        raise SystemExit(f"找不到模型目录或 PMX / VRM：{target}")
+    found = sorted(n for n in os.listdir(path) if n.lower().endswith(MODEL_EXTENSIONS)
+                   and os.path.isfile(os.path.join(path, n)))
     if not found:
-        raise SystemExit(f"{path} 里没有 .pmx 文件")
+        raise SystemExit(f"{path} 里没有 PMX / VRM 文件")
     return path, _pick_main_pmx(path, found)
 
 
@@ -2415,9 +2638,9 @@ def _scan_models(model_dir: str) -> list[tuple[str, str]]:
     这样"把另一个模型目录丢进 models/ 就能在右键菜单里换"。
     """
     model_dir = os.path.abspath(model_dir)
-    parent = os.path.dirname(model_dir)
+    parent = model_dir if model_dir == os.path.abspath(default_model_root()) else os.path.dirname(model_dir)
     out: list[tuple[str, str]] = []
-    if os.path.isdir(model_dir):
+    if os.path.isdir(model_dir) and parent != model_dir:
         out.append((os.path.basename(model_dir), model_dir))
     try:
         names = sorted(os.listdir(parent))
@@ -2427,7 +2650,7 @@ def _scan_models(model_dir: str) -> list[tuple[str, str]]:
         path = os.path.join(parent, name)
         if path == model_dir or not os.path.isdir(path):
             continue
-        if any(f.lower().endswith(".pmx") for f in os.listdir(path)):
+        if any(f.lower().endswith(MODEL_EXTENSIONS) for f in os.listdir(path)):
             out.append((name, path))
     return out
 
@@ -2440,7 +2663,7 @@ def _resolve_motion(target: str) -> tuple[str, str]:
     if os.path.isdir(path):
         found = sorted(_iter_vmd(path))
         if not found:
-            raise SystemExit(f"{path} 里没有 .vmd 文件")
+            return DEFAULT_VMD, path  # An empty user motion library still has the built-in idle.
         return found[0], path
     if not os.path.isfile(path):
         raise SystemExit(f"找不到动作文件：{target}")
@@ -2507,6 +2730,8 @@ def _state_loop(api: "_NativeApi") -> None:
             name = "working" if working else "done"
             _log(f"state: {name}")
             api._state = {"kind": "state", "name": name}
+        if hasattr(api, "activity_info"):
+            api.activity_info(data)
 
 
 def _fps_watch(api: "_NativeApi") -> None:
@@ -2554,7 +2779,8 @@ def _fps_watch(api: "_NativeApi") -> None:
         # 推帧停了 20 秒 = 页面被系统节流/卡死（日志里没有任何异常的那种"冻住"）。
         # 页面内的看门狗救不了这种情况（它自己也被停了），只能在这儿重启一只。
         if api._last_present and time.perf_counter() - api._last_present > 20:
-            if time.time() - getattr(api, "_stale_restart_at", 0) > 120:
+            # 用户主动退出时（_restarting）帧当然会停：那不是"冻住"，别重启也别记假日志。
+            if not api._restarting and time.time() - getattr(api, "_stale_restart_at", 0) > 120:
                 api._stale_restart_at = time.time()
                 _log(f"推帧停了 {time.perf_counter() - api._last_present:.0f} 秒 → 自动重启桌宠")
                 api.restart_with()
@@ -2680,7 +2906,8 @@ class _Rect(ctypes.Structure):
 
 def _cursor_pos() -> tuple[int, int]:
     p = wintypes.POINT()
-    ctypes.windll.user32.GetCursorPos(ctypes.byref(p))
+    if not ctypes.windll.user32.GetCursorPos(ctypes.byref(p)):
+        raise ctypes.WinError()
     return p.x, p.y
 
 
@@ -2937,24 +3164,45 @@ def _release_single_instance() -> None:
     """主动放掉独占（换模型要先放，新的实例才起得来）。"""
     global _MUTEX
     if _MUTEX:
-        ctypes.windll.kernel32.CloseHandle(_MUTEX)
+        close = ctypes.windll.kernel32.CloseHandle
+        close.argtypes = [ctypes.c_void_p]
+        close.restype = wintypes.BOOL
+        close(_MUTEX)
         _MUTEX = None
 
 
-def _single_instance() -> bool:
+def _single_instance(name: str = "NyalumePet3D") -> bool:
     """同一时间只许一个桌宠：重复启动会叠出多层窗口抢同一个鼠标（拖起来互相打架）。"""
     global _MUTEX
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
     k32.CreateMutexW.restype = ctypes.c_void_p
-    _MUTEX = k32.CreateMutexW(None, True, "NyalumePet3D")
-    return bool(_MUTEX) and ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
+    handle = k32.CreateMutexW(None, False, name)  # 只检查对象是否存在，不占用线程所有权。
+    if not handle:
+        return False
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        # 重复启动不能把旧实例的锁继续留活，尤其是错误弹窗还开着时。
+        k32.CloseHandle.argtypes = [ctypes.c_void_p]
+        k32.CloseHandle.restype = wintypes.BOOL
+        k32.CloseHandle(handle)
+        return False
+    _MUTEX = handle
+    return True
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    # 鼠标钩子使用物理像素；Unity 入口不经过 webview.start，必须自行关闭 DPI 坐标虚拟化。
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except (AttributeError, OSError):
+        _user32.SetProcessDPIAware()
     parser = argparse.ArgumentParser(description="Nyalume 3D 桌宠窗口")
+    parser.add_argument("--renderer", choices=("three", "unity"), default=None,
+                        help="调试时指定渲染器；默认 Eku 使用 Unity，其他模型使用 Three.js")
+    parser.add_argument("--presence-player", help="可选的原始 FBX Presence 播放器；使用独立状态与能力菜单")
+    parser.add_argument("--state-dir", help="Presence 私有状态目录；默认在所选构建目录内")
     parser.add_argument(
-        "--model", default="", help="模型目录或 .pmx 文件；不写就用程序根 models/ 里的第一个模型"
+        "--model", default="", help="模型目录或 PMX / VRM 文件；不写就用程序根 models/ 里的第一个模型"
     )
     parser.add_argument("--size", default="440x660", help="窗口尺寸，如 440x660")
     parser.add_argument("--scale", type=float, default=None, help="模型缩放；默认采用该模型配置")
@@ -2976,7 +3224,23 @@ def main() -> int:
         action="store_true",
         help="提权运行：反作弊游戏（如绝区零）是高完整性进程，不提权收不到它的鼠标输入",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    presence = None
+    if args.presence_player:
+        from .presence import PresenceConfig
+        if args.renderer == "three":
+            parser.error("Presence 需要 Unity 渲染器")
+        if args.model and os.path.realpath(args.model) != os.path.realpath(os.path.join(_app_root(), "models", "Eku", "Eku.vrm")):
+            parser.error("Presence 使用原始 Eku 场景，不能指定其他模型")
+        try:
+            presence = PresenceConfig.load(args.presence_player, args.state_dir)
+        except ValueError as error:
+            parser.error(str(error))
+        configure_state_directory(presence.state_dir)
+        args.model = os.path.join(_app_root(), "models", "Eku", "Eku.vrm")
+        args.renderer = "unity"
+    elif args.state_dir:
+        parser.error("--state-dir 需要 --presence-player")
 
     # 不带参数启动：优先用程序根下的固定目录（放进 models/ 就能跑，不需要任何选择框），
     # 那里空着才退回上次记住的目录。
@@ -2996,6 +3260,13 @@ def main() -> int:
 
     if args.admin and _elevate_if_needed():
         return 0
+
+    from .unity_pet import run, supports_model
+    if args.model == BUNDLED_EKU and args.renderer == "three":
+        _message_box("内置 Eku 使用 Unity；其他导入模型可以使用 Three.js。")
+        return 2
+    if args.renderer != "three" and supports_model(args.model):
+        return run(args, presence=presence) if presence else run(args)
 
     if not _single_instance():  # 提权之后才占坑，不然提权出来的自己会被自己挡掉
         _log("已经有一个桌宠在跑了，这次启动忽略")
@@ -3020,13 +3291,18 @@ def main() -> int:
     wa0 = _work_area()
     win_w, win_h = (wa0[2] - wa0[0], wa0[3] - wa0[1]) if wa0 else (width, height)
     model_dir, pmx = _resolve_model(args.model)
-    vmd, vmd_root = _resolve_motion(args.vmd)
+    if pmx.lower().endswith(".vrm"):
+        vmd, vmd_root = "", default_motion_root()
+    else:
+        vmd, vmd_root = _resolve_motion(args.vmd)
     # 下次不带参数也能起来。动作目录只在"这次给的是目录"时记：直接拖个 .vmd 文件
     # 进来时 vmd_root 是那个文件的父目录（可能只有一支动作），记下来会把动作库换掉。
     with StartupAnimation(_log, enabled=not args.debug, on_error=_message_box) as startup:
         _remember_dirs(model_dir, vmd_root if (not args.vmd or os.path.isdir(args.vmd)) else "", pmx)
         _log_launcher_chain()  # 谁拉起来的（排查"莫名重启一次"）
         api = _NativeApi(enabled=not args.debug, win_size=(width, height))
+        from .unity_magnifier import Magnifier
+        api.magnifier=Magnifier(api)
         api._startup = startup
         api._model_dir = os.path.abspath(model_dir)
         api.configure_model(os.path.join(model_dir, pmx), args.scale, args.rotate)
@@ -3116,4 +3392,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Unity 会按包名导入此模块；复用 -m 的实例，避免覆盖 ctypes 类型和独占状态。
+    sys.modules["nyalume.frontends.pet.pet3d.pet3d_win"] = sys.modules[__name__]
     raise SystemExit(main())

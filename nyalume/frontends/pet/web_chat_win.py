@@ -48,6 +48,30 @@ class _NativeApi:
             return False
 
 
+def _notify_visibility(win, visible: bool) -> None:
+    """Recalculate the local-clock theme when WebView2's host becomes visible."""
+    try:
+        win.evaluate_js("window.NyalumeUI?.windowVisibility(" + ("true" if visible else "false") + ")")
+    except Exception:
+        pass  # The loaded event retries when the page is ready.
+
+
+def _report_startup(event: str) -> None:
+    if sys.stdout is not None:
+        print(event, flush=True)
+    elif os.name == "nt":
+        # PyInstaller's windowed bootloader leaves sys.stdout unset even when
+        # Popen supplies a pipe. The inherited Win32 handle still carries it.
+        from ctypes import wintypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetStdHandle.restype = wintypes.HANDLE
+        kernel32.WriteFile.argtypes = (wintypes.HANDLE, ctypes.c_void_p,
+            wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p)
+        data = (event + "\n").encode("ascii")
+        written = wintypes.DWORD()
+        kernel32.WriteFile(kernel32.GetStdHandle(-11), data, len(data), ctypes.byref(written), None)
+
+
 def main() -> int:
     if os.name == "nt":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
@@ -66,11 +90,30 @@ def main() -> int:
         width=480 if quick else 1180,
         height=560 if quick else 820,
         min_size=(380, 420) if quick else (560, 640),
-        hidden=args.hidden,
+        hidden=True,  # Reveal the first page, rather than WebView2's blank host.
         background_color="#fff7fa",
         text_select=True,
         js_api=_NativeApi(),
     )
+    native_state = {"visible": not args.hidden}
+
+    def visibility(visible: bool) -> None:
+        native_state["visible"] = visible
+        _notify_visibility(win, visible)
+
+    def loaded() -> None:
+        _notify_visibility(win, native_state["visible"])
+        # One handshake per process; reloads and session navigation stay quiet.
+        if not native_state.get("ready"):
+            native_state["ready"] = True
+            if native_state["visible"]:
+                win.show()
+            _report_startup("nyalume-chat-ready")
+
+    win.events.loaded += loaded
+    win.events.minimized += lambda: visibility(False)
+    win.events.restored += lambda: visibility(True)
+    _report_startup("nyalume-chat-loading")
 
     def reader() -> None:
         for raw in sys.stdin:
@@ -79,8 +122,11 @@ def main() -> int:
                 continue
             try:
                 if cmd == "show":
-                    win.show()
+                    if native_state.get("ready"):
+                        win.show()
+                    visibility(True)
                 elif cmd == "hide":
+                    visibility(False)
                     win.hide()
                 elif cmd == "reload":
                     win.load_url(args.url)

@@ -77,7 +77,6 @@ def test_wallpaper_engine_playlist_only_reads_supported_media(monkeypatch, tmp_p
         (str(video.resolve()), "video"),
     ]
     assert server._wallpaper_engine_recent_from_config() == [
-        {"name": "场景壁纸", "path": str(preview.resolve()), "kind": "image", "preview": True},
         {"name": "动态视频", "path": str(video.resolve()), "kind": "video", "preview": False},
         {"name": "静态图", "path": str(image.resolve()), "kind": "image", "preview": False},
     ]
@@ -109,9 +108,11 @@ def test_wallpaper_engine_actions(monkeypatch, tmp_path):
 
     current = server.wallpaper_engine_action("current")
     assert current["kind"] == "image"
+    assert current["preview"] is False
 
     next_wallpaper = server.wallpaper_engine_action("next")
     assert next_wallpaper["kind"] == "video"
+    assert next_wallpaper["preview"] is False
 
     rows = server.wallpaper_engine_recent()
     assert [row["name"] for row in rows] == ["next", "current"]
@@ -153,6 +154,7 @@ def test_wallpaper_engine_next_falls_back_to_recents(monkeypatch, tmp_path):
     result = server.wallpaper_engine_action("next")
     assert result["kind"] == "image"
     assert result["name"] == "recent"
+    assert result["preview"] is False
 
 
 def test_wallpaper_settings_falls_back_to_cached_when_current_unsupported(monkeypatch, tmp_path):
@@ -238,3 +240,54 @@ def test_wallpaper_engine_open_reports_missing_tray(monkeypatch):
         server.wallpaper_engine_action("open")
     assert error.value.status_code == 404
     assert error.value.detail == "托盘中不存在"
+
+
+@pytest.mark.parametrize('entry', ['current', 'startup'])
+def test_current_scene_wallpaper_does_not_use_preview(monkeypatch, tmp_path, entry):
+    scene = tmp_path / 'scene.pkg'
+    scene.write_bytes(b'scene')
+    preview = tmp_path / 'preview.jpg'
+    preview.write_bytes(b'preview')
+    config = {'wall_mode': 'engine', 'wall_engine_media': str(preview.resolve()),
+              'wall_engine_recent': [{'path': str(preview.resolve()), 'preview': True}],
+              'wall_engine_recent_initialized': True}
+    monkeypatch.setattr(server, '_we_media_path', '')
+    monkeypatch.setattr(server, '_we_startup_available', False)
+    monkeypatch.setattr(server, 'load_config', lambda: dict(config))
+    monkeypatch.setattr(server, 'save_config', lambda value: config.update(value))
+    monkeypatch.setattr(server, '_wallpaper_engine_selected', lambda: (str(scene), []))
+    monkeypatch.setattr(server, '_wallpaper_engine_tray_exe', lambda: 'wallpaper32.exe')
+
+    if entry == 'current':
+        with pytest.raises(HTTPException) as error:
+            server.wallpaper_engine_action('current')
+        assert error.value.status_code == 415
+    else:
+        result = server._wallpaper_settings()
+        assert result['mode'] == '' and result['engine_url'] == ''
+    assert server._we_media_path == ''
+    assert server.wallpaper_engine_recent() == []
+
+
+def test_scene_previews_are_filtered_from_persisted_recents(monkeypatch, tmp_path):
+    scene_dir = tmp_path / 'scene'
+    scene_dir.mkdir()
+    preview = scene_dir / 'preview.jpg'
+    preview.write_bytes(b'preview')
+    (scene_dir / 'project.json').write_text(json.dumps({'type': 'scene', 'file': 'scene.pkg'}))
+    image = tmp_path / 'photo.jpg'
+    image.write_bytes(b'image')
+    video = tmp_path / 'loop.mp4'
+    video.write_bytes(b'video')
+    config = {'wall_engine_recent_initialized': True, 'wall_engine_recent': [
+        {'path': str(preview), 'preview': True},
+        {'path': str(preview), 'preview': False},
+        {'path': str(image), 'preview': False},
+        {'path': str(video), 'preview': False}]}
+    monkeypatch.setattr(server, 'load_config', lambda: dict(config))
+    assert [row['path'] for row in server._wallpaper_engine_recent_items()] == [
+        str(image.resolve()), str(video.resolve())]
+    monkeypatch.setattr(server, '_wallpaper_engine_tray_exe', lambda: 'wallpaper32.exe')
+    monkeypatch.setattr(server, '_wallpaper_engine_selected', lambda: (str(scene_dir / 'scene.pkg'), []))
+    config.update(wall_mode='engine', wall_engine_media=str(preview))
+    assert server._wallpaper_settings()['engine_url'] == ''

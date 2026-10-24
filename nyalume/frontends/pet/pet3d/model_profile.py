@@ -20,7 +20,7 @@ def defaults() -> dict:
 
 
 def profile_path(model: str) -> str:
-    identity = os.path.normcase(os.path.realpath(model))
+    identity = model if model == "@bundled/Eku.vrm" else os.path.normcase(os.path.realpath(model))
     key = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
     return os.path.join(PROFILE_DIR, key + ".json")
 
@@ -58,7 +58,7 @@ def load(model: str) -> dict:
 def save(model: str, **updates) -> dict:
     with _LOCK:
         data = validate({**load(model), **updates})
-        data["model"] = os.path.realpath(model)  # 方便在配置目录中识别；不传给 LLM
+        data["model"] = model if model == "@bundled/Eku.vrm" else os.path.realpath(model)
         os.makedirs(PROFILE_DIR, exist_ok=True)
         fd, temp = tempfile.mkstemp(prefix=".profile-", suffix=".tmp", dir=PROFILE_DIR)
         try:

@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import sync_playwright
 
 from nyalume.frontends.pet.pet3d import model_profile as profiles, pet3d_win as pet
 
@@ -126,7 +125,7 @@ def test_menu_pages_keep_all_motion_choices():
 
 
 @pytest.mark.parametrize("box,dpr", [("440x660", 1), ("198x297", 2)])
-def test_menu_is_readable_and_within_frame(tmp_path, box, dpr):
+def test_menu_is_readable_and_within_frame(browser, tmp_path, box, dpr):
     model_dir = ROOT / "models/野餐式MikuQ"
     if not model_dir.exists():
         pytest.skip("本地模型未安装")
@@ -135,35 +134,33 @@ def test_menu_is_readable_and_within_frame(tmp_path, box, dpr):
     api.configure_model(str(Path(model_dir) / pmx))
     api._models = [("野餐式MikuQ", model_dir), ("锁暝", model_dir)]
     port = pet.start_server(model_dir, api=api)
-    with sync_playwright() as p:
-        browser = p.chromium.launch(channel="msedge", headless=True)
-        page = browser.new_page(viewport={"width": 700, "height": 740}, device_scale_factor=dpr)
-        page.add_init_script("window.pywebview = {api: {menu_rects: rs => { window.rects = rs; }}}")
-        try:
-            from urllib.parse import quote
-            page.goto(f"http://127.0.0.1:{port}/viewer.html?pmx=/model/{quote(pmx)}&box={box}&physics=0")
-            page.wait_for_function("document.querySelector('#tip').textContent === ''")
-            for kind in ("root", "config:1"):
-                api._menu_page = kind
-                items = api.menu_items()
-                page.evaluate("items => window.__menu(items)", items)
-                rects = page.evaluate("window.rects")
-                width, height = [int(v) * dpr for v in box.split("x")]
-                assert len(rects) == len(items)
-                assert min(r["y"] for r in rects) > height * 0.22
-                for r in rects:
-                    assert r["h"] >= 24 * dpr - 0.1
-                    assert 0 <= r["x"] < r["x"] + r["w"] <= width
-                    assert 0 <= r["y"] < r["y"] + r["h"] <= height
-                page.screenshot(path=str(tmp_path / f"menu-{kind.replace(':', '-')}.png"))
-            page.evaluate("window.__menu_close()")
-            assert page.evaluate("window.rects") == []
-        finally:
-            browser.close()
+    page = browser.new_page(viewport={"width": 700, "height": 740}, device_scale_factor=dpr)
+    page.add_init_script("window.pywebview = {api: {menu_rects: rs => { window.rects = rs; }}}")
+    try:
+        from urllib.parse import quote
+        page.goto(f"http://127.0.0.1:{port}/viewer.html?pmx=/model/{quote(pmx)}&box={box}&physics=0")
+        page.wait_for_function("document.querySelector('#tip').textContent === ''")
+        for kind in ("root", "config:1"):
+            api._menu_page = kind
+            items = api.menu_items()
+            page.evaluate("items => window.__menu(items)", items)
+            rects = page.evaluate("window.rects")
+            width, height = [int(v) * dpr for v in box.split("x")]
+            assert len(rects) == len(items)
+            assert min(r["y"] for r in rects) > height * 0.22
+            for r in rects:
+                assert r["h"] >= 24 * dpr - 0.1
+                assert 0 <= r["x"] < r["x"] + r["w"] <= width
+                assert 0 <= r["y"] < r["y"] + r["h"] <= height
+            page.screenshot(path=str(tmp_path / f"menu-{kind.replace(':', '-')}.png"))
+        page.evaluate("window.__menu_close()")
+        assert page.evaluate("window.rects") == []
+    finally:
+        page.close()
 
 
 @pytest.mark.parametrize("folder,physics", [("野餐式MikuQ", 0), ("锁瞑", 1)])
-def test_real_renderer_restores_view_and_custom_expression(tmp_path, folder, physics):
+def test_real_renderer_restores_view_and_custom_expression(browser, tmp_path, folder, physics):
     model_dir = ROOT / "models" / folder
     if not model_dir.exists():
         pytest.skip("本地模型未安装")
@@ -173,38 +170,36 @@ def test_real_renderer_restores_view_and_custom_expression(tmp_path, folder, phy
     api = pet._NativeApi(enabled=False)
     api.configure_model(filename)
     port = pet.start_server(model_dir, api=api)
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(channel="msedge", headless=True)
-        page = browser.new_page(viewport={"width": 700, "height": 800})
-        errors = []
-        page.on("pageerror", lambda error: errors.append(str(error)))
-        page.expose_function("saveView", lambda zoom, yaw: api.view_info(zoom, yaw))
-        page.add_init_script("""window.actions = []; window.pywebview = {api: {
-          view_info: async (...args) => {
-            const result = await window.saveView(...args); window.savedView = args; return result;
-          },
-          poll_action: async () => window.actions.shift() || null
-        }}""")
-        try:
-            from urllib.parse import quote
-            url = f"http://127.0.0.1:{port}/viewer.html?pmx=/model/{quote(pmx)}&box=440x660&physics={physics}&idle=1"
-            page.goto(url)
-            page.wait_for_function("document.querySelector('#tip').textContent === ''", timeout=60000)
-            assert page.locator("canvas").first.evaluate("el => el.style.width") == "528px"
-            assert page.evaluate("window.__face('happy')")
-            page.evaluate("window.__react('head', '')")
-            assert page.evaluate("window.__lastReact") == ["head", ""]
-            page.evaluate("window.actions.push({kind: 'zoom', steps: 1}, {kind: 'spin', dx: 100})")
-            page.wait_for_function("document.querySelector('canvas').style.width === '570px'")
-            page.wait_for_function("window.savedView && window.savedView[0] > 1.29 && window.savedView[1] > 35")
-            assert profiles.load(filename)["zoom"] == pytest.approx(1.296), (
-                api._model_file, profiles.profile_path(filename), pet.model_profile is profiles,
-                api._model_profile, api._profile_error)
-            page.reload()
-            page.wait_for_function("document.querySelector('#tip').textContent === ''", timeout=60000)
-            assert page.locator("canvas").first.evaluate("el => el.style.width") == "570px"
-            page.screenshot(path=str(tmp_path / "restored-model.png"))
-            print("PREVIEW", tmp_path / "restored-model.png")
-            assert not errors
-        finally:
-            browser.close()
+    page = browser.new_page(viewport={"width": 700, "height": 800})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.expose_function("saveView", lambda zoom, yaw: api.view_info(zoom, yaw))
+    page.add_init_script("""window.actions = []; window.pywebview = {api: {
+      view_info: async (...args) => {
+        const result = await window.saveView(...args); window.savedView = args; return result;
+      },
+      poll_action: async () => window.actions.shift() || null
+    }}""")
+    try:
+        from urllib.parse import quote
+        url = f"http://127.0.0.1:{port}/viewer.html?pmx=/model/{quote(pmx)}&box=440x660&physics={physics}&idle=1"
+        page.goto(url)
+        page.wait_for_function("document.querySelector('#tip').textContent === ''", timeout=60000)
+        assert page.locator("canvas").first.evaluate("el => el.style.width") == "528px"
+        assert page.evaluate("window.__face('happy')")
+        page.evaluate("window.__react('head', '')")
+        assert page.evaluate("window.__lastReact") == ["head", ""]
+        page.evaluate("window.actions.push({kind: 'zoom', steps: 1}, {kind: 'spin', dx: 100})")
+        page.wait_for_function("document.querySelector('canvas').style.width === '570px'")
+        page.wait_for_function("window.savedView && window.savedView[0] > 1.29 && window.savedView[1] > 35")
+        assert profiles.load(filename)["zoom"] == pytest.approx(1.296), (
+            api._model_file, profiles.profile_path(filename), pet.model_profile is profiles,
+            api._model_profile, api._profile_error)
+        page.reload()
+        page.wait_for_function("document.querySelector('#tip').textContent === ''", timeout=60000)
+        assert page.locator("canvas").first.evaluate("el => el.style.width") == "570px"
+        page.screenshot(path=str(tmp_path / "restored-model.png"))
+        print("PREVIEW", tmp_path / "restored-model.png")
+        assert not errors
+    finally:
+        page.close()

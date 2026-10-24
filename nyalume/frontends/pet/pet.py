@@ -1,6 +1,7 @@
 """桌宠主程序：python -m nyalume.frontends.pet.pet（或仓库根 python pet.py）。"""
 
 import json
+import logging
 import os
 import queue
 import tempfile
@@ -10,7 +11,7 @@ import tkinter as tk
 import ctypes
 from urllib.request import urlopen
 
-from nyalume.core import memory, personas
+from nyalume.core import companionship, memory, personas
 
 from . import interactions
 from .web_chat import WEB_PORT, WebChat
@@ -39,6 +40,7 @@ class PetApp:
         self.session_id = self.cfg.get("session_id") or "pet"
         self.pet_id = self.cfg.get("pet") or "nyalume"
         self._cheer_idx = 0
+        self._last_interaction_line = ""
 
         self.chat = WebChat(on_event=self._on_chat_event)
         self.window: PetWindow | None = None
@@ -100,13 +102,29 @@ class PetApp:
                 self.window.hint("聊天窗打开失败，看日志再试喵", 4000)
 
     def _pet_interact(self, region: str) -> None:
-        """单击不同部位：本地即时台词与短表情，不保存关系数值。"""
+        """真实手势 → 本地反馈 → 两分钟内可接话的记录，不保存关系数值。"""
         if not self.window:
             return
-        memory.companion_time("interaction")
         self.window.poke()
-        line = interactions.pick_line(region, self.session_id)
-        self.window.cheer(line)
+        try:
+            preferences = companionship.desktop_preferences()
+        except Exception:
+            # 记忆读取失败时保守回应，不恢复默认亲昵称呼。
+            preferences = {"boundaries": ["先安静陪伴"]}
+        if personas.resolve_persona_id() != "nyalume":
+            preferences = {"boundaries": ["普通陪伴"]}
+        reaction = interactions.pick_reaction(
+            region, self.session_id, previous=self._last_interaction_line, preferences=preferences)
+        if not self.window.react(reaction["text"], reaction["mood"]):
+            return
+        self._last_interaction_line = reaction["text"]
+        if region in companionship.DESKTOP_INTERACTIONS:
+            try:
+                memory.companion_time("interaction")
+                companionship.record_desktop_interaction(
+                    region, reaction["text"], reserved=reaction["reserved"], preferences=preferences)
+            except Exception:
+                logging.getLogger(__name__).exception("桌宠互动记录保存失败")
 
     def _on_folder_drop(self, paths: list[str]) -> None:
         """把文件夹拖到桌宠上 = 吃进肚子里建项目，再打开对应会话。"""
@@ -123,7 +141,8 @@ class PetApp:
             self.window.cheer("文件夹……啃不动喵（建项目失败）")
             return
         self.window.cheer("啊呜——文件夹进肚啦喵！")
-        self.chat.open_session(session_id)
+        if self.chat.open_session(session_id):
+            self.window.return_to_idle()
 
     def _popup_menu(self, event) -> None:
         menu = tk.Menu(self.root, tearoff=0)
@@ -191,6 +210,9 @@ class PetApp:
         elif kind in ("text", "error", "done"):
             self.window.set_working(False)
         elif kind == "cheer":
+            if self.pet_id == "nyalume":
+                self._pet_interact("cheer")
+                return
             phrases = cheer_phrases(get_pet(self.pet_id))
             if phrases:
                 phrase = phrases[self._cheer_idx % len(phrases)]
