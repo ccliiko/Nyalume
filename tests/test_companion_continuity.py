@@ -222,7 +222,8 @@ def test_supplier_usage_counts_and_unknown_cache(monkeypatch):
 def test_stream_receives_actual_usage_from_final_empty_chunk(monkeypatch):
     class Stream:
         def __iter__(self):
-            yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content='喵', tool_calls=[], reasoning=None))], usage=None)
+            yield SimpleNamespace(choices=[SimpleNamespace(finish_reason=None, delta=SimpleNamespace(content='喵', tool_calls=[], reasoning=None))], usage=None)
+            yield SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop', delta=SimpleNamespace(content=None, tool_calls=[], reasoning=None))], usage=None)
             yield SimpleNamespace(choices=[], usage={'prompt_tokens': 100, 'prompt_cache_hit_tokens': 70})
         def close(self):
             pass

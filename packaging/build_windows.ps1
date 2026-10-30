@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$Version = "0.5.2",
+    [string]$Version = "0.5.3",
     # 本机构建默认保留原有 2D 角色；排除 2D 素材显式传 -PersonalAssets:$false。
     [switch]$PersonalAssets = $true,
     # README 允许注明作者后二配的模型，默认明文附带；不走 -WithModels 的私人素材流程。

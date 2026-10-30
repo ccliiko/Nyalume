@@ -19,6 +19,19 @@ load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
 LLM_TIMEOUT_SECONDS = 90.0
 
 
+class IncompleteResponseError(RuntimeError):
+    """The provider ended a stream without a complete response."""
+
+    def __init__(self, finish_reason=None):
+        self.finish_reason = finish_reason
+        reason = {
+            "length": "回复达到模型长度上限，尚未完成。可以缩小问题后重试。",
+            "content_filter": "回复被模型服务的内容过滤中止，尚未完成。可以调整问题后重试。",
+            None: "模型连接已结束，但没有收到完整回复的结束标记。可以重试。",
+        }.get(finish_reason, "模型未完整结束这次回复或工具调用。可以重试。")
+        super().__init__(reason + " 已显示的部分保留在当前对话中，本次未作为完整回复保存。")
+
+
 def record_usage(usage, started: float, first_token_ms=None) -> None:
     try:
         _record_usage(usage, started, first_token_ms)
@@ -101,6 +114,7 @@ def chat_stream(
 
     - {"kind": "content", "text": "..."}       正文增量
     - {"kind": "tool_delta", "index", "id", "name", "arguments"}  工具调用增量
+    不完整结束抛出 IncompleteResponseError；已产出的增量不撤回。
     """
     kwargs = {"model": get_model(), "messages": messages, "stream": True,
               "stream_options": {"include_usage": True}}
@@ -112,6 +126,8 @@ def chat_stream(
     started = time.perf_counter()
     first_token_ms = None
     usage = None
+    finish_reason = None
+    tool_calls = {}
     stream = get_client().chat.completions.create(**kwargs)
     watcher_done = threading.Event()
 
@@ -131,7 +147,10 @@ def chat_stream(
                 break
             if not chunk.choices:
                 continue
-            delta = chunk.choices[0].delta
+            choice = chunk.choices[0]
+            if choice.finish_reason is not None:
+                finish_reason = choice.finish_reason
+            delta = choice.delta
             reasoning = getattr(delta, "reasoning_content", None) or getattr(
                 delta, "reasoning", None
             )
@@ -139,19 +158,36 @@ def chat_stream(
                 first_token_ms = round((time.perf_counter() - started) * 1000, 2)
             if reasoning:
                 yield {"kind": "reasoning", "text": reasoning}
-                continue
             if delta.content:
                 yield {"kind": "content", "text": delta.content}
             if delta.tool_calls:
                 for tc in delta.tool_calls:
                     fn = tc.function
+                    index = tc.index if tc.index is not None else 0
+                    call = tool_calls.setdefault(index, {"name": "", "arguments": ""})
+                    if fn and fn.name:
+                        call["name"] = fn.name
+                    if fn and fn.arguments:
+                        call["arguments"] += fn.arguments
                     yield {
                         "kind": "tool_delta",
-                        "index": tc.index if tc.index is not None else 0,
+                        "index": index,
                         "id": tc.id or "",
                         "name": fn.name if fn and fn.name else "",
                         "arguments": fn.arguments if fn and fn.arguments else "",
                     }
+        if cancel_event is None or not cancel_event.is_set():
+            complete = finish_reason == "stop" and not tool_calls
+            if finish_reason == "tool_calls" and tool_calls:
+                try:
+                    complete = all(
+                        call["name"] and isinstance(json.loads(call["arguments"] or "{}"), dict)
+                        for call in tool_calls.values()
+                    )
+                except (ValueError, TypeError):
+                    complete = False
+            if not complete:
+                raise IncompleteResponseError(finish_reason)
     except Exception:
         if cancel_event is None or not cancel_event.is_set():
             raise

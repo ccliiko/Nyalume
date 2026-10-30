@@ -1208,8 +1208,14 @@ def get_session_messages(session_id: str):
 @app.delete("/api/sessions/{session_id}")
 def delete_session(session_id: str):
     """删除会话及其消息与摘要。"""
-    memory.delete_session(session_id)
-    return {"ok": True}
+    lock = _session_run_lock(session_id)
+    if not lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="这个会话还在回复或工作，请先停止，结束后再删除。")
+    try:
+        memory.delete_session(session_id)
+        return {"ok": True}
+    finally:
+        lock.release()
 
 
 @app.post("/api/sessions/{session_id}/workspace/open")

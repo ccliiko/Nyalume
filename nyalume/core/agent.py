@@ -909,6 +909,18 @@ def _run_stream(
             "message": _TASK_TIMEOUT_MESSAGE,
             "run_id": trace.run_id,
         }
+    except llm.IncompleteResponseError as error:
+        _check_run(cancel_event, deadline)
+        if reasoning_open:
+            yield {"type": "reasoning_end"}
+        if daily_mode and pending_tail:
+            _, tail = _strip_daily_affection(pending_tail)
+            if tail:
+                yield {"type": "text", "text": tail}
+        trace.status = "error"
+        trace.error_type = type(error).__name__
+        trace.finish()
+        yield {"type": "error", "message": str(error), "run_id": trace.run_id}
     except Exception as e:
         if time.monotonic() >= deadline:
             trace.status = "timeout"

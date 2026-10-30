@@ -91,3 +91,39 @@ def test_server_isolates_run_locks_by_session_and_cancel_is_idempotent():
     finally:
         with server._RUNS_LOCK:
             server._RUN_CANCEL_EVENTS.pop("run-test", None)
+
+
+def test_delete_session_waits_for_its_run_and_keeps_other_sessions_independent(runtime_db):
+    active = memory.create_session("active deletion test")
+    other = memory.create_session("other deletion test")
+    memory.save_message(active, "user", "keep this request")
+    lock = server._session_run_lock(active)
+    assert lock.acquire(blocking=False)
+    try:
+        with pytest.raises(HTTPException) as error:
+            server.delete_session(active)
+        assert error.value.status_code == 409
+        assert [row["content"] for row in memory.session_messages(active)] == ["keep this request"]
+        assert server.delete_session(other) == {"ok": True}
+        assert other not in {row["id"] for row in memory.list_sessions()}
+        # The active writer finishes before releasing the same lock used by DELETE.
+        memory.save_message(active, "assistant", "completed reply")
+    finally:
+        lock.release()
+    assert server.delete_session(active) == {"ok": True}
+    assert active not in {row["id"] for row in memory.list_sessions()}
+    assert memory.session_messages(active) == []
+    assert lock.acquire(blocking=False)
+    lock.release()
+
+
+def test_delete_session_releases_run_lock_when_storage_fails(monkeypatch):
+    session_id = "delete-storage-failure"
+    def fail(_):
+        raise OSError("synthetic storage failure")
+    monkeypatch.setattr(memory, "delete_session", fail)
+    with pytest.raises(OSError, match="synthetic storage failure"):
+        server.delete_session(session_id)
+    lock = server._session_run_lock(session_id)
+    assert lock.acquire(blocking=False)
+    lock.release()

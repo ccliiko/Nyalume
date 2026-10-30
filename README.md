@@ -1,12 +1,12 @@
 # Nyalume
 
-**v0.5.2** · 面向 Windows 的 AI 助手与二次元桌宠
+**v0.5.3** · 面向 Windows 的 AI 助手与二次元桌宠
 
 Nyalume 将 AI 对话、桌面陪伴与日常工具放在一起。你可以通过桌宠、网页或命令行与它交流，使用长期记忆、文件处理、资料检索、陪伴专注等功能。
 
 ## 功能
 
-独立的 **网页小窝预览版** 支持公开注册、自带 Key 聊天、账号隔离的陪伴记忆，
+独立的 **网页小窝预览版** 支持邮箱验证注册、自带阿里云百炼中国内地（北京地域）的千问 API Key 聊天、账号隔离的陪伴记忆，调用额度由自己的百炼账号承担，
 以及浏览器本地 PMX/VMD 导入、互动与保存。公网入口不提供 Agent 工具；桌面入口维持原有能力。
 Docker 部署、更新和备份见 [网页部署说明](cloud_service/WEB_DEPLOYMENT.md)。
 
@@ -18,7 +18,7 @@ Docker 部署、更新和备份见 [网页部署说明](cloud_service/WEB_DEPLOY
 - **记忆与陪伴**：长期便签、对话摘要、每日卡片、小窝故事和专注记录。
 - **记忆卡片**：按用户、主题和领域管理记忆，查看更新时间、摘要、关键词与来源，支持编辑和跨对话召回。
 - **实用工具**：安全计算、网页搜索、项目文件操作，以及 PDF、Word、Excel、PPT 处理。
-- **模型选择**：支持 DeepSeek、OpenAI、OpenRouter、硅基流动及其他 OpenAI 兼容服务。
+- **桌面模型选择**：支持 DeepSeek、OpenAI、OpenRouter、硅基流动及其他 OpenAI 兼容服务；网页小窝仅支持上述百炼千问入口。
 
 ## 快速开始
 
@@ -50,7 +50,7 @@ python -m nyalume.frontends.pet.pet3d.pet3d_win --model <模型目录或.pmx或.
 
 源码目录保留三个双击入口：`启动Eku桌宠.cmd`（正式 Unity Eku）、`启动桌宠3D-管理员.cmd`（需要管理员权限的游戏内互动）、`start_pet.bat`（2D 桌宠）。材质候选、组合预览及重复的 Unity/MToon 入口已移除；开发记录中提到的旧入口仅代表当时状态。
 
-3D 模型、动作和 2D 自定义皮肤由用户自行准备。模型与动作使用说明见[3D 桌宠指南](docs/3D桌宠说明.md)，配置字段见[模型配置说明](docs/model-profiles.md)。
+Windows 便携版默认附带内置 Unity Eku 与野餐式 MikuQ；其他 3D 模型、动作和 2D 自定义皮肤由用户自行准备。源码运行 Unity Eku 需要本地播放器构建。模型与动作使用说明见[3D 桌宠指南](docs/3D桌宠说明.md)，配置字段见[模型配置说明](docs/model-profiles.md)。
 
 ## Windows 便携版
 
@@ -64,4 +64,4 @@ python -m nyalume.frontends.pet.pet3d.pet3d_win --model <模型目录或.pmx或.
 
 当前版本为本地单用户应用。对话、记忆、配置和文件保存在运行设备上；云服务组件不参与桌面版启动。请勿将包含个人数据或 API Key 的运行目录分享给他人。
 
-Nyalume 为源码可见的商业软件，许可条款见 [LICENSE](LICENSE) 和 [EULA](EULA.md)。隐私处理见 [PRIVACY.md](PRIVACY.md)，第三方依赖及素材使用要求见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。公开仓库和发行包不附带第三方 PMX/VMD 模型或动作；使用素材前请确认其授权范围。
+Nyalume 为源码可见的商业软件，许可条款见 [LICENSE](LICENSE) 和 [EULA](EULA.md)。隐私处理见 [PRIVACY.md](PRIVACY.md)，第三方依赖及素材使用要求见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。公开源码仓库不附带个人模型与动作；Windows 便携版默认提供的 Eku、MikuQ 及其说明以随包素材声明和借物表为准，其他 PMX/VRM/VMD 素材由用户自行准备。

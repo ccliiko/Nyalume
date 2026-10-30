@@ -1387,48 +1387,65 @@ def _human_size(size: int) -> str:
 _UNDO_TEXT_LIMIT = 200 * 1024
 
 
-def _record_undo(kind: str, path: str, prev: str = "") -> None:
+def _record_undo(kind: str, path: str, prev: str = "", *, snapshot_state: str = "legacy") -> None:
     """记录一次文件操作（只在有会话上下文时记，便于 Web 里撤销/查看）。"""
     session_id = _session_id()
     if not session_id:
         return
     op_id = "undo-" + uuid.uuid4().hex[:10]
-    add_undo(op_id, session_id, kind, path, prev)
+    add_undo(op_id, session_id, kind, path, prev, snapshot_state=snapshot_state)
 
 
-def _readable_prev(path: str) -> str:
-    """读文件原文做撤销快照；超限/二进制返回空（表示无法完整恢复）。"""
+def _readable_prev(path: str) -> str | None:
+    """空文本是有效快照；超限、二进制或读取失败返回 None。"""
     try:
-        if os.path.getsize(path) > _UNDO_TEXT_LIMIT:
-            return ""
-        return _read_text(path, limit=_UNDO_TEXT_LIMIT)
+        with open(path, "rb") as fh:
+            raw = fh.read(_UNDO_TEXT_LIMIT + 1)
+        if len(raw) > _UNDO_TEXT_LIMIT:
+            return None
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("gb18030")
+        if any(ord(char) < 32 and char not in "\t\r\n\f" for char in text):
+            return None
+        return text
     except (OSError, ValueError):
-        return ""
+        return None
+
+
+def _undo_snapshot_state(op: dict) -> str:
+    state = op.get("snapshot_state", "legacy")
+    if state == "legacy":
+        return "text" if op.get("prev") else "unavailable"
+    return state if state in {"text", "missing", "unavailable"} else "unavailable"
 
 
 def apply_undo(op_id: str) -> str:
-    """执行一次撤销（server 端点用），返回结果文本。"""
+    """执行一次撤销；文本内容按 UTF-8 恢复，不恢复原编码或文件元数据。"""
     op = get_undo(op_id)
     if not op or op.get("applied"):
         return f"没有可撤销的操作 {op_id}"
     path = op.get("path") or ""
     prev = op.get("prev") or ""
     kind = op.get("kind") or ""
+    snapshot_state = _undo_snapshot_state(op)
+    if kind in {"write", "delete"} and (
+        snapshot_state == "unavailable" or (kind == "delete" and snapshot_state != "text")
+    ):
+        return "无法自动撤销：没有可恢复的完整文本快照（旧记录、超限、二进制或读取失败）；当前文件保持不变"
     try:
         if kind == "write":
-            if prev:
+            if snapshot_state == "text":
                 os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "w", encoding="utf-8") as fh:
+                with open(path, "w", encoding="utf-8", newline="") as fh:
                     fh.write(prev)
             elif os.path.isfile(path):
                 os.remove(path)  # 新建文件：撤销=删掉
         elif kind == "delete":
-            if prev:
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "w", encoding="utf-8") as fh:
-                    fh.write(prev)
-            else:
-                return "该文件删除前不是文本，无法自动恢复；磁盘文件已无法找回"
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="") as fh:
+                fh.write(prev)
         elif kind == "delete_dir":
             os.makedirs(path, exist_ok=True)
         elif kind == "move":
@@ -1440,7 +1457,8 @@ def apply_undo(op_id: str) -> str:
     except OSError as e:
         return f"撤销失败：{e}"
     mark_undo_applied(op_id)
-    return f"已撤销「{kind}」：{path}"
+    suffix = "（文本按 UTF-8 恢复）" if kind in {"write", "delete"} and snapshot_state == "text" else ""
+    return f"已撤销「{kind}」：{path}{suffix}"
 
 
 def preview_undo(op_id: str) -> str:
@@ -1454,15 +1472,24 @@ def preview_undo(op_id: str) -> str:
         return f"移动前位置：{op.get('prev')}\n当前：{path}"
     if kind == "mkdir":
         return f"创建的目录：{path}"
+    if kind == "delete_dir":
+        return f"删除的空目录：{path}"
+    state = _undo_snapshot_state(op)
+    if state == "unavailable":
+        return f"文件：{path}\n无法自动撤销：没有可恢复的完整快照（旧记录、超限、二进制或读取失败）"
+    previous = op.get("prev") if state == "text" else "（新建文件，无先前内容）"
+    previous = previous or "（空文本文件）"
     if kind == "delete":
-        return f"删除的文件：{path}\n\n—— 删除前内容 ——\n{op.get('prev') or '（非文本，无快照）'}"
-    return f"文件：{path}\n\n—— 写入前内容 ——\n{op.get('prev') or '（新建文件，无先前内容）'}"
+        return f"删除的文件：{path}\n\n—— 删除前内容 ——\n{previous}"
+    return f"文件：{path}\n\n—— 写入前内容（文本按 UTF-8 恢复）——\n{previous}"
 
 
 def diff_undo(op_id: str) -> dict | None:
     """按行对比撤销快照与当前文件，输出 +/- 行数与带上下文的分块。"""
     op = get_undo(op_id)
     if not op or op.get("kind") not in ("write", "delete"):
+        return None
+    if _undo_snapshot_state(op) == "unavailable":
         return None
     path = op.get("path") or ""
     prev_text = op.get("prev") or ""
@@ -1615,10 +1642,13 @@ def _file_write(path: str, content: str) -> str:
     try:
         target = _path_in_workspace(path)
         os.makedirs(os.path.dirname(target), exist_ok=True)
-        prev = _readable_prev(target) if os.path.isfile(target) else ""
+        existed = os.path.isfile(target)
+        prev = _readable_prev(target) if existed else ""
         with open(target, "w", encoding="utf-8") as fh:
             fh.write(content or "")
-        _record_undo("write", target, prev)
+        _record_undo("write", target, prev or "", snapshot_state=(
+            "missing" if not existed else "text" if prev is not None else "unavailable"
+        ))
     except (ValueError, OSError) as e:
         return f"写入失败：{e}"
     return f"已写入 {_display(target)}（{len(content or '')} 字符）"
@@ -1690,7 +1720,8 @@ def _file_delete(path: str) -> str:
         if os.path.isfile(target):
             prev = _readable_prev(target)
             os.remove(target)
-            _record_undo("delete", target, prev)
+            _record_undo("delete", target, prev or "",
+                         snapshot_state="text" if prev is not None else "unavailable")
             return f"已删除文件 {_display(target)}"
         os.rmdir(target)  # 只删空目录；非空会抛 OSError
         _record_undo("delete_dir", target)
@@ -2114,7 +2145,7 @@ def _pdf_ocr(path: str, output: str, pages: str = "") -> str:
         os.makedirs(os.path.dirname(target), exist_ok=True)
         with open(target, "w", encoding="utf-8") as fh:
             fh.write(body)
-        _record_undo("write", target)
+        _record_undo("write", target, snapshot_state="missing")
     except (OSError, ValueError) as exc:
         return f"PDF OCR 失败：{exc}"
     except Exception as exc:

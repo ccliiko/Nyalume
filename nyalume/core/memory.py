@@ -165,6 +165,7 @@ def init_db() -> None:
                 kind TEXT,
                 path TEXT,
                 prev TEXT DEFAULT '',
+                snapshot_state TEXT NOT NULL DEFAULT 'legacy',
                 applied INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS daily_nyalume (
@@ -225,6 +226,10 @@ def init_db() -> None:
         proj_cols = {row["name"] for row in conn.execute("PRAGMA table_info(projects)")}
         if "folders" not in proj_cols:
             conn.execute("ALTER TABLE projects ADD COLUMN folders TEXT DEFAULT '[]'")
+        undo_cols = {row["name"] for row in conn.execute("PRAGMA table_info(undo_ops)")}
+        if "snapshot_state" not in undo_cols:
+            # Old empty snapshots cannot tell a new file from an unavailable backup.
+            conn.execute("ALTER TABLE undo_ops ADD COLUMN snapshot_state TEXT NOT NULL DEFAULT 'legacy'")
         msg_cols = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
         if "attachments" not in msg_cols:
             conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT DEFAULT '[]'")
@@ -1120,16 +1125,19 @@ def delete_project(project_id: str) -> None:
 
 # ---------- 文件操作撤销（写/删/移/建目录前留快照） ----------
 
-def add_undo(op_id: str, session_id: str, kind: str, path: str, prev: str = "") -> None:
+def add_undo(
+    op_id: str, session_id: str, kind: str, path: str, prev: str = "",
+    *, snapshot_state: str = "legacy",
+) -> None:
     """记录一次可撤销的文件操作（kind: write/delete/move/mkdir）。"""
     with _conn() as conn:
         conn.execute(
             "DELETE FROM undo_ops WHERE id = ?", (op_id,)
         )
         conn.execute(
-            "INSERT INTO undo_ops (id, session_id, ts, kind, path, prev, applied) "
-            "VALUES (?, ?, ?, ?, ?, ?, 0)",
-            (op_id, session_id, time.time(), kind, path, prev),
+            "INSERT INTO undo_ops (id, session_id, ts, kind, path, prev, snapshot_state, applied) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+            (op_id, session_id, time.time(), kind, path, prev, snapshot_state),
         )
         # 每会话只留最近 40 条可撤销记录
         conn.execute(
